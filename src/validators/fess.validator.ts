@@ -44,6 +44,8 @@ export const GetFessesQuerySchema = z.object({
   base: z.string().optional(),
   status: z.enum(['published', 'pending', 'rejected']).optional(),
   query: z.string().optional(),
+  /** Feed "Mengikuti": hanya fess dari base yang diikuti user. */
+  following: z.enum(['true', 'false']).optional(),
   sort: z.enum(['newest', 'popular']).default('newest'),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),

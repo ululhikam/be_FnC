@@ -123,6 +123,7 @@ model Fess {
   reports       Report[]
 
   @@index([baseHandle, status, createdAt])
+  @@index([baseId, status, createdAt])
   @@index([status, createdAt])
   @@index([userId])
   @@index([upvotes(sort: Desc)])

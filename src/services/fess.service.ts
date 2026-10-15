@@ -1,7 +1,27 @@
 import { prisma } from '../config/prisma.js';
 import { normalizeHandle } from '../utils/format.util.js';
+import { TOPICS } from '../constants/topics.js';
 import { InstagramService } from './instagram.service.js';
 import { CanvasService } from './canvas.service.js';
+
+/** Fess counters only track publicly visible confessions. */
+const PUBLISHED_STATUSES = ['published', 'approved'];
+
+/** Comment fields rendered by the cards — avoids shipping unused columns. */
+const COMMENT_PREVIEW_SELECT = {
+  id: true,
+  author: true,
+  text: true,
+  createdAt: true,
+} as const;
+
+/** Latest comments preview attached to list / vote / moderation payloads. */
+const COMMENT_PREVIEW_INCLUDE = {
+  comments: { take: 3, orderBy: { createdAt: 'desc' }, select: COMMENT_PREVIEW_SELECT },
+} as const;
+
+/** topic id → human label (constants are the source of truth for topics). */
+const TOPIC_LABELS = new Map(TOPICS.map((t) => [t.id, t.label]));
 
 export class FessService {
   /**
@@ -12,6 +32,7 @@ export class FessService {
       base?: string;
       status?: string;
       query?: string;
+      following?: 'true' | 'false';
       sort?: 'newest' | 'popular';
       page?: number;
       limit?: number;
@@ -40,6 +61,21 @@ export class FessService {
       where.content = { contains: params.query, mode: 'insensitive' };
     }
 
+    // "Mengikuti" feed: restrict to bases followed by the signed-in user.
+    if (params.following === 'true') {
+      const emptyPage = { data: [], total: 0, page, limit, total_pages: 1 };
+      if (!currentUserId) return emptyPage;
+
+      const follows = await prisma.follow.findMany({
+        where: { userId: currentUserId },
+        select: { baseId: true },
+      });
+      const followedBaseIds = follows.map((f) => f.baseId);
+      if (followedBaseIds.length === 0) return emptyPage;
+
+      where.baseId = { in: followedBaseIds };
+    }
+
     const orderBy: any =
       params.sort === 'popular'
         ? [{ upvotes: 'desc' }, { createdAt: 'desc' }]
@@ -56,6 +92,7 @@ export class FessService {
           comments: {
             take: 3,
             orderBy: { createdAt: 'desc' },
+            select: COMMENT_PREVIEW_SELECT,
           },
         },
       }),
@@ -135,23 +172,10 @@ export class FessService {
         tag: payload.tag || null,
         status: initialStatus,
       },
-      include: {
-        comments: true,
-      },
     });
 
-    // Update base fess count
-    await prisma.base.update({
-      where: { id: base.id },
-      data: { fessCount: { increment: 1 } },
-    });
-
-    if (userId) {
-      await prisma.user.update({
-        where: { id: userId },
-        data: { fessCount: { increment: 1 } },
-      });
-    }
+    // NOTE: fess counters are published-only — they are incremented in
+    // approveFess() when a pending confession actually goes live.
 
     // Notify base creator/admin of new confession
     if (base.creatorId) {
@@ -179,6 +203,7 @@ export class FessService {
       include: {
         comments: {
           orderBy: { createdAt: 'asc' },
+          select: COMMENT_PREVIEW_SELECT,
         },
       },
     });
@@ -230,54 +255,59 @@ export class FessService {
 
     let newVoteType: string | null = null;
 
-    await prisma.$transaction(async (tx) => {
+    // Single transaction round-trip: the mutation and the refreshed row
+    // (with its comment preview) come back together — no extra SELECT.
+    const updated = await prisma.$transaction(async (tx) => {
       if (existingVote) {
         if (existingVote.type === type) {
           // Toggle off: cancel existing vote
           await tx.vote.delete({ where: { id: existingVote.id } });
-          await tx.fess.update({
+          newVoteType = null;
+          return tx.fess.update({
             where: { id },
             data: {
               ...(type === 'up'
                 ? { upvotes: { decrement: 1 } }
                 : { downvotes: { decrement: 1 } }),
             },
+            include: COMMENT_PREVIEW_INCLUDE,
           });
-          newVoteType = null;
-        } else {
-          // Switch vote: up -> down or down -> up
-          await tx.vote.update({
-            where: { id: existingVote.id },
-            data: { type },
-          });
-          await tx.fess.update({
-            where: { id },
-            data: {
-              upvotes: type === 'up' ? { increment: 1 } : { decrement: 1 },
-              downvotes: type === 'down' ? { increment: 1 } : { decrement: 1 },
-            },
-          });
-          newVoteType = type;
         }
-      } else {
-        // Create new vote
-        await tx.vote.create({
-          data: {
-            fessId: id,
-            userId,
-            type,
-          },
-        });
-        await tx.fess.update({
-          where: { id },
-          data: {
-            ...(type === 'up'
-              ? { upvotes: { increment: 1 } }
-              : { downvotes: { increment: 1 } }),
-          },
+
+        // Switch vote: up -> down or down -> up
+        await tx.vote.update({
+          where: { id: existingVote.id },
+          data: { type },
         });
         newVoteType = type;
+        return tx.fess.update({
+          where: { id },
+          data: {
+            upvotes: type === 'up' ? { increment: 1 } : { decrement: 1 },
+            downvotes: type === 'down' ? { increment: 1 } : { decrement: 1 },
+          },
+          include: COMMENT_PREVIEW_INCLUDE,
+        });
       }
+
+      // Create new vote
+      await tx.vote.create({
+        data: {
+          fessId: id,
+          userId,
+          type,
+        },
+      });
+      newVoteType = type;
+      return tx.fess.update({
+        where: { id },
+        data: {
+          ...(type === 'up'
+            ? { upvotes: { increment: 1 } }
+            : { downvotes: { increment: 1 } }),
+        },
+        include: COMMENT_PREVIEW_INCLUDE,
+      });
     });
 
     // Notify author if upvote and author is registered
@@ -293,11 +323,6 @@ export class FessService {
         },
       });
     }
-
-    const updated = await prisma.fess.findUnique({
-      where: { id },
-      include: { comments: true },
-    });
 
     return this.serializeFess(updated, newVoteType);
   }
@@ -328,11 +353,18 @@ export class FessService {
       throw err;
     }
 
+    const wasPublished = PUBLISHED_STATUSES.includes(fess.status);
+
     const updated = await prisma.fess.update({
       where: { id },
       data: { status: 'published' },
-      include: { comments: true },
+      include: COMMENT_PREVIEW_INCLUDE,
     });
+
+    // Counters track published fesses only — bump them on the transition.
+    if (!wasPublished) {
+      await this.adjustFessCounters(fess, 1);
+    }
 
     // Auto-post trigger to social media (Instagram, Twitter, Telegram)
     try {
@@ -384,11 +416,18 @@ export class FessService {
       throw err;
     }
 
+    const wasPublished = PUBLISHED_STATUSES.includes(fess.status);
+
     const updated = await prisma.fess.update({
       where: { id },
       data: { status: 'rejected' },
-      include: { comments: true },
+      include: COMMENT_PREVIEW_INCLUDE,
     });
+
+    // A published fess was pulled from the public feed — adjust counters.
+    if (wasPublished) {
+      await this.adjustFessCounters(fess, -1);
+    }
 
     // Notify author
     if (fess.userId) {
@@ -456,6 +495,11 @@ export class FessService {
 
     await prisma.fess.delete({ where: { id } });
 
+    // Removing a published fess must not leave a stale published count.
+    if (PUBLISHED_STATUSES.includes(fess.status)) {
+      await this.adjustFessCounters(fess, -1);
+    }
+
     return { ok: true };
   }
 
@@ -482,7 +526,7 @@ export class FessService {
         skip,
         take: limit,
         orderBy: { createdAt: 'desc' },
-        include: { comments: true },
+        include: COMMENT_PREVIEW_INCLUDE,
       }),
     ]);
 
@@ -495,6 +539,30 @@ export class FessService {
       limit,
       total_pages: Math.ceil(total / limit) || 1,
     };
+  }
+
+  /**
+   * Keep the published-fess counters in sync for a base and its author.
+   * delta: +1 when a fess goes live, -1 when it stops being published.
+   */
+  private static async adjustFessCounters(
+    fess: { baseId?: string | null; baseHandle: string; userId?: string | null },
+    delta: number
+  ) {
+    const guard = delta < 0 ? { fessCount: { gt: 0 } } : {};
+    const baseWhere = fess.baseId ? { id: fess.baseId } : { handle: fess.baseHandle };
+
+    await prisma.base.updateMany({
+      where: { ...baseWhere, ...guard },
+      data: { fessCount: { increment: delta } },
+    });
+
+    if (fess.userId) {
+      await prisma.user.updateMany({
+        where: { id: fess.userId, ...guard },
+        data: { fessCount: { increment: delta } },
+      });
+    }
   }
 
   /**
@@ -521,6 +589,7 @@ export class FessService {
         : [],
       media: (fess.media as any) || [],
       topic: fess.topic || undefined,
+      topic_label: fess.topic ? TOPIC_LABELS.get(fess.topic) || fess.topic : undefined,
       song: fess.song || undefined,
       template: fess.template || 'default',
       quoted_fess: fess.quotedFess || undefined,

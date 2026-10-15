@@ -62,6 +62,7 @@ model Base {
   bio            String?
   rules          String[]  @default([])
   igAccount      String?
+  postMode       String    @default("moderated") // "auto" (langsung terbit + filter NLP) | "moderated" (antrean review)
   verified       Boolean   @default(false)
   established    String?   @default("2024")
   membersCount   Int       @default(0)
@@ -109,6 +110,8 @@ model Fess {
   template      String?   @default("default")
   tag           String?   // "Cerita", "Tanya"
   postedToIg    Boolean   @default(false)
+  autoFlagged   Boolean   @default(false) // terindikasi konten negatif oleh filter NLP saat auto post
+  flagReason    String?   // alasan flag dari filter NLP (mis. "ujaran kebencian, ancaman")
   scheduledAt   DateTime?
   media         Json?     // [{ type, url, thumbnail, duration, caption }]
   song          Json?     // { id, title, artist, cover, preview_url }
@@ -165,6 +168,8 @@ model Notification {
   fessId      String?
   fessContent String?
   actor       String?
+  actors      Json?    // daftar username yang terlibat (agregasi notifikasi like ala Instagram)
+  actorCount  Int      @default(1)
   text        String
   read        Boolean  @default(false)
   createdAt   DateTime @default(now())

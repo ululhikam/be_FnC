@@ -3,6 +3,8 @@ import { normalizeHandle } from '../utils/format.util.js';
 import { TOPICS } from '../constants/topics.js';
 import { InstagramService } from './instagram.service.js';
 import { CanvasService } from './canvas.service.js';
+import { ModerationService } from './moderation.service.js';
+import { invalidateCache } from '../utils/cache.util.js';
 
 /** Fess counters only track publicly visible confessions. */
 const PUBLISHED_STATUSES = ['published', 'approved'];
@@ -155,7 +157,24 @@ export class FessService {
     }
 
     const scheduledDate = payload.scheduled_at ? new Date(payload.scheduled_at) : null;
-    const initialStatus = scheduledDate && scheduledDate > new Date() ? 'pending' : 'pending';
+    const isScheduled = Boolean(scheduledDate && scheduledDate > new Date());
+
+    // Mode "auto" pada base: fess langsung terbit, KECUALI filter NLP
+    // menemukan indikasi konten negatif (ujaran kebencian, ancaman, dll.) —
+    // konten seperti itu tetap masuk antrean moderasi dengan alasan flag.
+    let initialStatus = 'pending';
+    let autoFlagged = false;
+    let flagReason: string | null = null;
+
+    if (!isScheduled && base.postMode === 'auto') {
+      const verdict = ModerationService.classify(payload.content);
+      if (verdict.flagged) {
+        autoFlagged = true;
+        flagReason = verdict.reasons.join(', ');
+      } else {
+        initialStatus = 'published';
+      }
+    }
 
     const fess = await prisma.fess.create({
       data: {
@@ -171,11 +190,36 @@ export class FessService {
         quotedFess: payload.quoted_fess || undefined,
         tag: payload.tag || null,
         status: initialStatus,
+        autoFlagged,
+        flagReason,
       },
     });
 
-    // NOTE: fess counters are published-only — they are incremented in
-    // approveFess() when a pending confession actually goes live.
+    // Counter hanya menghitung fess terbit: mode moderasi menaikkannya di
+    // approveFess(); mode auto post menaikkannya tepat di sini karena fess
+    // sudah live sejak dibuat.
+    if (initialStatus === 'published') {
+      await this.adjustFessCounters(fess, 1);
+      invalidateCache('bases:');
+
+      // Efek publikasi yang sama dengan approveFess (auto-post sosmed).
+      try {
+        await CanvasService.exportFessCanvas(fess.id, fess.template || 'default', 'story');
+      } catch {
+        // Non-blocking
+      }
+    }
+
+    // Log audit agar admin bisa menelusuri kenapa sebuah fess tidak auto-terbit.
+    if (autoFlagged) {
+      await prisma.systemLog.create({
+        data: {
+          source: 'AI_FILTER',
+          message: `Auto post ${cleanHandle} di-flag NLP (${flagReason}): "${payload.content.slice(0, 60)}"`,
+          tone: 'error',
+        },
+      });
+    }
 
     // Kirim fess ke base → pengirim otomatis mengikuti base tersebut.
     // Lewati jika pengirim adalah pemilik/creator base (tidak mengikuti base sendiri).
@@ -213,7 +257,12 @@ export class FessService {
           fessId: fess.id,
           fessContent: fess.content.slice(0, 60),
           actor: 'Anonim',
-          text: `Confession baru masuk antrean moderasi ${cleanHandle}`,
+          text:
+            initialStatus === 'published'
+              ? `Confession baru terbit otomatis di ${cleanHandle}`
+              : autoFlagged
+                ? `Confession baru terindikasi "${flagReason}" — masuk antrean moderasi ${cleanHandle}`
+                : `Confession baru masuk antrean moderasi ${cleanHandle}`,
         },
       });
     }
@@ -261,7 +310,7 @@ export class FessService {
   /**
    * Vote on a fess (toggle logic)
    */
-  static async voteFess(id: string, type: 'up' | 'down', userId: string) {
+  static async voteFess(id: string, type: 'up' | 'down', userId: string, actorName?: string) {
     const fess = await prisma.fess.findUnique({ where: { id } });
 
     if (!fess) {
@@ -337,21 +386,82 @@ export class FessService {
       });
     });
 
-    // Notify author if upvote and author is registered
-    if (newVoteType === 'up' && fess.userId && fess.userId !== userId) {
-      await prisma.notification.create({
-        data: {
-          userId: fess.userId,
-          type: 'vote',
-          fessId: fess.id,
-          fessContent: fess.content.slice(0, 60),
-          actor: 'Anonim',
-          text: 'Fess kamu mendapat upvote!',
-        },
-      });
+    // Agregasi notifikasi like ala Instagram: satu baris per fess penerima,
+    // "Budi dan 3 lainnya menyukai fess kamu." — bukan satu notif per orang.
+    const likeDelta = (newVoteType === 'up' ? 1 : 0) - (existingVote?.type === 'up' ? 1 : 0);
+    if (likeDelta !== 0 && fess.userId && fess.userId !== userId) {
+      await this.updateLikeNotification(fess, likeDelta as 1 | -1, actorName || 'Seseorang');
     }
 
     return this.serializeFess(updated, newVoteType);
+  }
+
+  /**
+   * Bangun/perbarui notifikasi like teragregasi (satu baris per penerima+fess).
+   * delta +1 saat like bertambah, -1 saat like dibatalkan (baris dihapus bila
+   * tidak ada lagi yang menyukai). `actors` menyimpan daftar username sehingga
+   * jumlah "dan N lainnya" selalu konsisten walau user berulang kali toggle.
+   */
+  private static async updateLikeNotification(
+    fess: { id: string; userId?: string | null; content: string },
+    delta: 1 | -1,
+    actorName: string
+  ) {
+    if (!fess.userId) return;
+
+    const existing = await prisma.notification.findFirst({
+      where: { userId: fess.userId, fessId: fess.id, type: 'vote' },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const previous = Array.isArray(existing?.actors) ? (existing!.actors as string[]) : [];
+
+    if (delta > 0) {
+      const actors = previous.includes(actorName) ? previous : [...previous, actorName];
+      const count = actors.length;
+      const text = count > 1 ? `dan ${count - 1} lainnya menyukai fess kamu.` : 'menyukai fess kamu.';
+
+      if (existing) {
+        // Refresh posisi ke atas + tandai belum dibaca lagi (aktivitas baru).
+        await prisma.notification.update({
+          where: { id: existing.id },
+          data: { actor: actorName, actors, actorCount: count, text, read: false, createdAt: new Date() },
+        });
+      } else {
+        await prisma.notification.create({
+          data: {
+            userId: fess.userId,
+            type: 'vote',
+            fessId: fess.id,
+            fessContent: fess.content.slice(0, 60),
+            actor: actorName,
+            actors,
+            actorCount: count,
+            text,
+          },
+        });
+      }
+      return;
+    }
+
+    // Batal like → keluarkan aktor; hapus baris bila tidak ada sisa.
+    if (!existing) return;
+    const actors = previous.filter((a) => a !== actorName);
+    if (actors.length === 0) {
+      await prisma.notification.deleteMany({ where: { id: existing.id } });
+      return;
+    }
+
+    const count = actors.length;
+    await prisma.notification.update({
+      where: { id: existing.id },
+      data: {
+        actors,
+        actorCount: count,
+        actor: actors[actors.length - 1],
+        text: count > 1 ? `dan ${count - 1} lainnya menyukai fess kamu.` : 'menyukai fess kamu.',
+      },
+    });
   }
 
   /**
@@ -391,6 +501,7 @@ export class FessService {
     // Counters track published fesses only — bump them on the transition.
     if (!wasPublished) {
       await this.adjustFessCounters(fess, 1);
+      invalidateCache('bases:');
     }
 
     // Auto-post trigger to social media (Instagram, Twitter, Telegram)
@@ -454,6 +565,7 @@ export class FessService {
     // A published fess was pulled from the public feed — adjust counters.
     if (wasPublished) {
       await this.adjustFessCounters(fess, -1);
+      invalidateCache('bases:');
     }
 
     // Notify author
@@ -525,6 +637,31 @@ export class FessService {
     // Removing a published fess must not leave a stale published count.
     if (PUBLISHED_STATUSES.includes(fess.status)) {
       await this.adjustFessCounters(fess, -1);
+      invalidateCache('bases:');
+    }
+
+    // Take down oleh admin (bukan penulis): beri tahu penulis + catat audit.
+    if (!isAuthor) {
+      if (fess.userId) {
+        await prisma.notification.create({
+          data: {
+            userId: fess.userId,
+            type: 'moderation',
+            fessId: fess.id,
+            fessContent: fess.content.slice(0, 60),
+            actor: fess.baseHandle,
+            text: `Fess kamu di ${fess.baseHandle} diturunkan (take down) oleh moderator.`,
+          },
+        });
+      }
+
+      await prisma.systemLog.create({
+        data: {
+          source: 'MODERATION',
+          message: `Take down fess ${fess.id} dari ${fess.baseHandle} oleh ${currentUser.role} (${currentUser.id}).`,
+          tone: 'info',
+        },
+      });
     }
 
     return { ok: true };
@@ -628,6 +765,8 @@ export class FessService {
       scheduled_at: fess.scheduledAt ? new Date(fess.scheduledAt).toISOString() : null,
       tag: fess.tag || undefined,
       posted_to_ig: fess.postedToIg ?? false,
+      auto_flagged: fess.autoFlagged ?? false,
+      flag_reason: fess.flagReason || undefined,
     };
   }
 }

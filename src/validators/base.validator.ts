@@ -37,6 +37,7 @@ export const UpdateBaseSettingsSchema = z.object({
   avatar: z.string().url().optional().nullable(),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   rules: z.array(z.string()).optional(),
+  postMode: z.enum(['auto', 'moderated']).optional(),
 });
 
 export const BaseFessesQuerySchema = z.object({

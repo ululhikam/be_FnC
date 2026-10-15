@@ -35,6 +35,9 @@ vi.mock('../src/config/prisma.js', () => ({
     },
     notification: {
       create: vi.fn(),
+      findFirst: vi.fn(),
+      update: vi.fn(),
+      deleteMany: vi.fn(),
     },
     report: {
       create: vi.fn(),
@@ -270,6 +273,86 @@ describe('FessService Unit Tests', () => {
       expect(prisma.follow.findUnique).not.toHaveBeenCalled();
       expect(prisma.follow.create).not.toHaveBeenCalled();
     });
+
+    it('should auto-publish on mode "auto" when NLP finds no negative content', async () => {
+      vi.mocked(prisma.base.findUnique).mockResolvedValueOnce({
+        id: 'base_1',
+        handle: '@codememfess',
+        creatorId: 'mod_1',
+        postMode: 'auto',
+      } as any);
+
+      vi.mocked(prisma.fess.create).mockResolvedValueOnce({
+        id: 'fess_new',
+        baseHandle: '@codememfess',
+        baseId: 'base_1',
+        userId: 'usr_1',
+        content: 'Confession bersih tanpa kata kasar',
+        status: 'published',
+        upvotes: 0,
+        downvotes: 0,
+        createdAt: new Date(),
+        comments: [],
+      } as any);
+
+      vi.mocked(prisma.follow.findUnique).mockResolvedValueOnce({ id: 'follow_1' } as any);
+
+      const fess = await FessService.createFess(
+        { base_handle: '@codememfess', content: 'Confession bersih tanpa kata kasar' },
+        'usr_1'
+      );
+
+      expect(fess.status).toBe('published');
+      expect(prisma.base.updateMany).toHaveBeenCalledWith({
+        where: { id: 'base_1' },
+        data: { fessCount: { increment: 1 } },
+      });
+      expect(prisma.user.updateMany).toHaveBeenCalledWith({
+        where: { id: 'usr_1' },
+        data: { fessCount: { increment: 1 } },
+      });
+      expect(prisma.notification.create).toHaveBeenCalled();
+    });
+
+    it('should keep fess pending + flag it when NLP detects negative content in mode "auto"', async () => {
+      vi.mocked(prisma.base.findUnique).mockResolvedValueOnce({
+        id: 'base_1',
+        handle: '@codememfess',
+        creatorId: 'mod_1',
+        postMode: 'auto',
+      } as any);
+
+      vi.mocked(prisma.fess.create).mockResolvedValueOnce({
+        id: 'fess_new',
+        baseHandle: '@codememfess',
+        baseId: 'base_1',
+        userId: 'usr_1',
+        content: 'dasar anjing',
+        status: 'pending',
+        upvotes: 0,
+        downvotes: 0,
+        createdAt: new Date(),
+        comments: [],
+      } as any);
+
+      vi.mocked(prisma.follow.findUnique).mockResolvedValueOnce({ id: 'follow_1' } as any);
+
+      await FessService.createFess({ base_handle: '@codememfess', content: 'dasar anjing' }, 'usr_1');
+
+      expect(prisma.fess.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: 'pending',
+            autoFlagged: true,
+            flagReason: expect.stringContaining('ujaran kebencian'),
+          }),
+        })
+      );
+      expect(prisma.base.updateMany).not.toHaveBeenCalled();
+      expect(prisma.systemLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ source: 'AI_FILTER' }) })
+      );
+    });
   });
 
   describe('getUserFesses', () => {
@@ -399,6 +482,121 @@ describe('FessService Unit Tests', () => {
       expect(prisma.vote.update).toHaveBeenCalled();
       expect(result.user_vote).toBe('down');
     });
+
+    it('should create ONE aggregated like notification on first upvote', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_1',
+        userId: 'usr_author',
+        content: 'Content',
+        upvotes: 0,
+        downvotes: 0,
+      } as any);
+
+      vi.mocked(prisma.vote.findUnique).mockResolvedValueOnce(null);
+
+      vi.mocked(prisma.fess.update).mockResolvedValueOnce({
+        id: 'fess_1',
+        baseHandle: '@codememfess',
+        content: 'Content',
+        upvotes: 1,
+        downvotes: 0,
+        status: 'published',
+        createdAt: new Date(),
+        comments: [],
+      } as any);
+
+      await FessService.voteFess('fess_1', 'up', 'usr_1', 'Budi');
+
+      expect(prisma.notification.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          type: 'vote',
+          actor: 'Budi',
+          actorCount: 1,
+          actors: ['Budi'],
+          text: 'menyukai fess kamu.',
+        }),
+      });
+    });
+
+    it('should aggregate into "dan N lainnya" when the fess already has likers', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_1',
+        userId: 'usr_author',
+        content: 'Content',
+        upvotes: 1,
+        downvotes: 0,
+      } as any);
+
+      vi.mocked(prisma.vote.findUnique).mockResolvedValueOnce(null);
+
+      vi.mocked(prisma.fess.update).mockResolvedValueOnce({
+        id: 'fess_1',
+        baseHandle: '@codememfess',
+        content: 'Content',
+        upvotes: 2,
+        downvotes: 0,
+        status: 'published',
+        createdAt: new Date(),
+        comments: [],
+      } as any);
+
+      vi.mocked(prisma.notification.findFirst).mockResolvedValueOnce({
+        id: 'notif_1',
+        actors: ['Budi'],
+        actorCount: 1,
+      } as any);
+
+      await FessService.voteFess('fess_1', 'up', 'usr_2', 'Rani');
+
+      expect(prisma.notification.update).toHaveBeenCalledWith({
+        where: { id: 'notif_1' },
+        data: expect.objectContaining({
+          actor: 'Rani',
+          actorCount: 2,
+          actors: ['Budi', 'Rani'],
+          text: 'dan 1 lainnya menyukai fess kamu.',
+          read: false,
+        }),
+      });
+    });
+
+    it('should delete the like notification when the last liker unlikes', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_1',
+        userId: 'usr_author',
+        content: 'Content',
+        upvotes: 1,
+        downvotes: 0,
+      } as any);
+
+      vi.mocked(prisma.vote.findUnique).mockResolvedValueOnce({
+        id: 'vote_1',
+        fessId: 'fess_1',
+        userId: 'usr_1',
+        type: 'up',
+      } as any);
+
+      vi.mocked(prisma.fess.update).mockResolvedValueOnce({
+        id: 'fess_1',
+        baseHandle: '@codememfess',
+        content: 'Content',
+        upvotes: 0,
+        downvotes: 0,
+        status: 'published',
+        createdAt: new Date(),
+        comments: [],
+      } as any);
+
+      vi.mocked(prisma.notification.findFirst).mockResolvedValueOnce({
+        id: 'notif_1',
+        actors: ['Budi'],
+        actorCount: 1,
+      } as any);
+
+      await FessService.voteFess('fess_1', 'up', 'usr_1', 'Budi');
+
+      expect(prisma.notification.deleteMany).toHaveBeenCalledWith({ where: { id: 'notif_1' } });
+    });
   });
 
   describe('moderation: approveFess & rejectFess', () => {
@@ -499,6 +697,64 @@ describe('FessService Unit Tests', () => {
       const result = await FessService.reportFess('fess_1', 'spam', 'Spam link', 'usr_reporter');
       expect(prisma.report.create).toHaveBeenCalled();
       expect(result.ok).toBe(true);
+    });
+  });
+
+  describe('deleteFess (take down oleh admin)', () => {
+    it('should remove fess, adjust counters, notify author, and log the take down', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_1',
+        baseHandle: '@codememfess',
+        baseId: 'base_1',
+        userId: 'usr_author',
+        content: 'Konten melanggar',
+        status: 'published',
+      } as any);
+
+      const result = await FessService.deleteFess('fess_1', {
+        id: 'mod_1',
+        role: 'Base Admin',
+        managedBases: ['@codememfess'],
+      });
+
+      expect(result.ok).toBe(true);
+      expect(prisma.fess.delete).toHaveBeenCalledWith({ where: { id: 'fess_1' } });
+      expect(prisma.base.updateMany).toHaveBeenCalledWith({
+        where: { id: 'base_1', fessCount: { gt: 0 } },
+        data: { fessCount: { increment: -1 } },
+      });
+      expect(prisma.notification.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            userId: 'usr_author',
+            type: 'moderation',
+            text: expect.stringContaining('take down'),
+          }),
+        })
+      );
+      expect(prisma.systemLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ source: 'MODERATION' }) })
+      );
+    });
+
+    it('should NOT notify nor log when the author deletes their own fess', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_1',
+        baseHandle: '@codememfess',
+        baseId: 'base_1',
+        userId: 'usr_author',
+        content: 'Konten sendiri',
+        status: 'published',
+      } as any);
+
+      await FessService.deleteFess('fess_1', {
+        id: 'usr_author',
+        role: 'User',
+        managedBases: [],
+      });
+
+      expect(prisma.notification.create).not.toHaveBeenCalled();
+      expect(prisma.systemLog.create).not.toHaveBeenCalled();
     });
   });
 });

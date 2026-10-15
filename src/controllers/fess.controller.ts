@@ -37,7 +37,7 @@ export class FessController {
       if (!req.user) {
         return errorResponse(res, 'Autentikasi dibutuhkan untuk vote', 401, 'UNAUTHORIZED');
       }
-      const updated = await FessService.voteFess(id, req.body.type, req.user.id);
+      const updated = await FessService.voteFess(id, req.body.type, req.user.id, req.user.username);
       return successResponse(res, updated, 200);
     } catch (error) {
       next(error);

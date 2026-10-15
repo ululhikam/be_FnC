@@ -1,5 +1,6 @@
 import { prisma } from '../config/prisma.js';
 import { formatMembers, getInitials, normalizeHandle } from '../utils/format.util.js';
+import { getOrSet, invalidateCache } from '../utils/cache.util.js';
 
 export class BaseService {
   /**
@@ -40,33 +41,37 @@ export class BaseService {
       };
     }
 
-    const [total, bases, userFollows] = await Promise.all([
-      prisma.base.count({ where }),
-      prisma.base.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: [{ membersCount: 'desc' }, { createdAt: 'desc' }],
-      }),
-      currentUserId
-        ? prisma.follow.findMany({
-            where: { userId: currentUserId },
-            select: { baseId: true },
-          })
-        : [],
-    ]);
+    // Cache TTL pendek (20 detik): direktori base jarang berubah tapi sering
+    // dibaca; semua mutasi base/fess memanggil invalidateCache('bases:').
+    return getOrSet(`bases:${currentUserId || 'anon'}:${JSON.stringify(params)}`, 20_000, async () => {
+      const [total, bases, userFollows] = await Promise.all([
+        prisma.base.count({ where }),
+        prisma.base.findMany({
+          where,
+          skip,
+          take: limit,
+          orderBy: [{ membersCount: 'desc' }, { createdAt: 'desc' }],
+        }),
+        currentUserId
+          ? prisma.follow.findMany({
+              where: { userId: currentUserId },
+              select: { baseId: true },
+            })
+          : [],
+      ]);
 
-    const followedSet = new Set(userFollows.map((f) => f.baseId));
+      const followedSet = new Set(userFollows.map((f) => f.baseId));
 
-    const data = bases.map((b) => this.serializeBase(b, followedSet.has(b.id)));
+      const data = bases.map((b) => this.serializeBase(b, followedSet.has(b.id)));
 
-    return {
-      data,
-      total,
-      page,
-      limit,
-      total_pages: Math.ceil(total / limit) || 1,
-    };
+      return {
+        data,
+        total,
+        page,
+        limit,
+        total_pages: Math.ceil(total / limit) || 1,
+      };
+    });
   }
 
   /**
@@ -115,6 +120,8 @@ export class BaseService {
         creatorId: userId,
       },
     });
+
+    invalidateCache('bases:');
 
     return this.serializeBase(base, false);
   }
@@ -194,6 +201,7 @@ export class BaseService {
         }),
       ]);
 
+      invalidateCache('bases:');
       return { is_following: false };
     } else {
       // Follow
@@ -214,6 +222,7 @@ export class BaseService {
         }),
       ]);
 
+      invalidateCache('bases:');
       return { is_following: true };
     }
   }
@@ -232,6 +241,7 @@ export class BaseService {
       avatar?: string | null;
       color?: string;
       rules?: string[];
+      postMode?: 'auto' | 'moderated';
     }
   ) {
     const cleanHandle = normalizeHandle(handle);
@@ -269,8 +279,11 @@ export class BaseService {
         ...(data.avatar !== undefined ? { avatar: data.avatar } : {}),
         ...(data.color ? { color: data.color } : {}),
         ...(data.rules ? { rules: data.rules } : {}),
+        ...(data.postMode ? { postMode: data.postMode } : {}),
       },
     });
+
+    invalidateCache('bases:');
 
     return this.serializeBase(updated, false);
   }
@@ -351,6 +364,7 @@ export class BaseService {
       is_verified: base.verified ?? false,
       established: base.established || '2024',
       initial: base.initial || 'BA',
+      post_mode: base.postMode || 'moderated',
     };
   }
 }

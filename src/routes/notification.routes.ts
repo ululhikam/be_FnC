@@ -11,5 +11,7 @@ const router = Router();
 
 router.get('/', requireAuth, validateQuery(GetNotificationsQuerySchema), NotificationController.getNotifications);
 router.post('/read', requireAuth, validateBody(MarkNotificationsReadSchema), NotificationController.markNotificationsRead);
+router.post('/read-all', requireAuth, NotificationController.markAllRead);
+router.delete('/:id', requireAuth, NotificationController.deleteNotification);
 
 export default router;

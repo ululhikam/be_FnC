@@ -33,6 +33,17 @@ describe('Auth Validators', () => {
     expect(res.success).toBe(true);
   });
 
+  it('should accept handles containing dots', () => {
+    const valid = {
+      email: 'user@gmail.com',
+      password: 'password123',
+      username: 'Alex Pratama',
+      handle: '@alex.reader',
+    };
+    const res = RegisterUserSchema.safeParse(valid);
+    expect(res.success).toBe(true);
+  });
+
   it('should reject invalid handle pattern in RegisterUser', () => {
     const invalid = {
       email: 'user@gmail.com',

@@ -177,6 +177,33 @@ export class FessService {
     // NOTE: fess counters are published-only — they are incremented in
     // approveFess() when a pending confession actually goes live.
 
+    // Kirim fess ke base → pengirim otomatis mengikuti base tersebut.
+    // Lewati jika pengirim adalah pemilik/creator base (tidak mengikuti base sendiri).
+    if (userId && base.creatorId !== userId) {
+      try {
+        const existingFollow = await prisma.follow.findUnique({
+          where: { userId_baseId: { userId, baseId: base.id } },
+          select: { id: true },
+        });
+
+        if (!existingFollow) {
+          await prisma.$transaction([
+            prisma.follow.create({ data: { userId, baseId: base.id } }),
+            prisma.base.update({
+              where: { id: base.id },
+              data: { membersCount: { increment: 1 } },
+            }),
+            prisma.user.update({
+              where: { id: userId },
+              data: { followingCount: { increment: 1 } },
+            }),
+          ]);
+        }
+      } catch {
+        // Non-critical: fess tetap terkirim walau auto-follow gagal (mis. race).
+      }
+    }
+
     // Notify base creator/admin of new confession
     if (base.creatorId) {
       await prisma.notification.create({
@@ -508,7 +535,7 @@ export class FessService {
    */
   static async getUserFesses(
     userId: string,
-    params: { status?: string; page?: number; limit?: number }
+    params: { status?: string; sort?: 'newest' | 'popular'; page?: number; limit?: number }
   ) {
     const page = params.page || 1;
     const limit = params.limit || 20;
@@ -519,13 +546,18 @@ export class FessService {
       where.status = params.status;
     }
 
+    const orderBy: any =
+      params.sort === 'popular'
+        ? [{ upvotes: 'desc' }, { createdAt: 'desc' }]
+        : [{ createdAt: 'desc' }];
+
     const [total, fesses] = await Promise.all([
       prisma.fess.count({ where }),
       prisma.fess.findMany({
         where,
         skip,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy,
         include: COMMENT_PREVIEW_INCLUDE,
       }),
     ]);

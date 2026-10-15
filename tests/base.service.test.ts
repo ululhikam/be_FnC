@@ -11,6 +11,7 @@ vi.mock('../src/config/prisma.js', () => ({
       update: vi.fn(),
     },
     follow: {
+      count: vi.fn(),
       findMany: vi.fn(),
       findUnique: vi.fn(),
       create: vi.fn(),
@@ -99,6 +100,46 @@ describe('BaseService Unit Tests', () => {
 
       const result = await BaseService.toggleFollow('@codebase', 'usr_1');
       expect(result.is_following).toBe(false);
+    });
+  });
+
+  describe('getFollowingBases', () => {
+    it('should paginate followed bases with search + sort', async () => {
+      vi.mocked(prisma.follow.count).mockResolvedValueOnce(1);
+      vi.mocked(prisma.follow.findMany).mockResolvedValueOnce([
+        {
+          createdAt: new Date(),
+          base: {
+            id: 'base_1',
+            name: 'Code Base',
+            handle: '@codebase',
+            membersCount: 10,
+            category: 'Hobi',
+          },
+        },
+      ] as any);
+
+      const result = await BaseService.getFollowingBases('usr_1', {
+        page: 1,
+        limit: 10,
+        sort: 'name',
+        search: 'code',
+      });
+
+      expect(result.total).toBe(1);
+      expect(result.data[0].handle).toBe('@codebase');
+      expect(prisma.follow.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          skip: 0,
+          take: 10,
+          orderBy: [{ base: { name: 'asc' } }],
+        })
+      );
+      expect(prisma.follow.count).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ userId: 'usr_1' }),
+        })
+      );
     });
   });
 

@@ -12,7 +12,7 @@ export const RegisterUserSchema = z.object({
   username: z.string().min(3, 'Username minimal 3 karakter').max(30, 'Username maksimal 30 karakter'),
   handle: z
     .string()
-    .regex(/^@?[a-zA-Z0-9_]{3,20}$/, 'Handle harus 3-20 karakter alfanumerik atau underscore'),
+    .regex(/^@?[a-zA-Z0-9_.]{3,20}$/, 'Handle harus 3-20 karakter (huruf, angka, underscore, atau titik)'),
   avatar: z.string().url('URL avatar tidak valid').optional().nullable(),
   bio: z.string().max(160, 'Bio maksimal 160 karakter').optional().nullable(),
 });
@@ -23,7 +23,7 @@ export const RegisterBaseSchema = z.object({
   name: z.string().min(3, 'Nama Base minimal 3 karakter').max(50, 'Nama Base maksimal 50 karakter'),
   handle: z
     .string()
-    .regex(/^@?[a-zA-Z0-9_]{3,20}$/, 'Handle harus 3-20 karakter alfanumerik atau underscore'),
+    .regex(/^@?[a-zA-Z0-9_.]{3,20}$/, 'Handle harus 3-20 karakter (huruf, angka, underscore, atau titik)'),
   avatar: z.string().url('URL avatar tidak valid').optional().nullable(),
   bio: z.string().max(300, 'Bio maksimal 300 karakter').optional().nullable(),
   igAccount: z.string().optional().nullable(),

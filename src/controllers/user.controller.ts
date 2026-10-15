@@ -44,7 +44,7 @@ export class UserController {
       if (!req.user) {
         return errorResponse(res, 'Autentikasi dibutuhkan', 401, 'UNAUTHORIZED');
       }
-      const result = await BaseService.getFollowingBases(req.user.id);
+      const result = await BaseService.getFollowingBases(req.user.id, req.query as any);
       return res.status(200).json(result);
     } catch (error) {
       next(error);

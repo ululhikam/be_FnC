@@ -5,8 +5,10 @@ import { prisma } from '../src/config/prisma.js';
 vi.mock('../src/config/prisma.js', () => ({
   prisma: {
     notification: {
+      count: vi.fn(),
       findMany: vi.fn(),
       updateMany: vi.fn(),
+      deleteMany: vi.fn(),
     },
   },
 }));
@@ -17,6 +19,7 @@ describe('NotificationService Unit Tests', () => {
   });
 
   it('should list notifications for user', async () => {
+    vi.mocked(prisma.notification.count).mockResolvedValueOnce(1);
     vi.mocked(prisma.notification.findMany).mockResolvedValueOnce([
       {
         id: 'n_1',
@@ -31,6 +34,8 @@ describe('NotificationService Unit Tests', () => {
     expect(result.data.length).toBe(1);
     expect(result.data[0].id).toBe('n_1');
     expect(result.data[0].read).toBe(false);
+    expect(result.total).toBe(1);
+    expect(result.total_pages).toBe(1);
   });
 
   it('should mark notifications as read', async () => {
@@ -45,5 +50,37 @@ describe('NotificationService Unit Tests', () => {
       },
       data: { read: true },
     });
+  });
+
+  it('should mark all unread notifications as read', async () => {
+    vi.mocked(prisma.notification.updateMany).mockResolvedValueOnce({ count: 3 } as any);
+
+    const result = await NotificationService.markAllAsRead('usr_1');
+
+    expect(prisma.notification.updateMany).toHaveBeenCalledWith({
+      where: { userId: 'usr_1', read: false },
+      data: { read: true },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.updated).toBe(3);
+  });
+
+  it('should delete an owned notification', async () => {
+    vi.mocked(prisma.notification.deleteMany).mockResolvedValueOnce({ count: 1 } as any);
+
+    const result = await NotificationService.deleteNotification('usr_1', 'n_1');
+
+    expect(prisma.notification.deleteMany).toHaveBeenCalledWith({
+      where: { id: 'n_1', userId: 'usr_1' },
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it('should throw 404 when deleting a missing notification', async () => {
+    vi.mocked(prisma.notification.deleteMany).mockResolvedValueOnce({ count: 0 } as any);
+
+    await expect(NotificationService.deleteNotification('usr_1', 'n_missing')).rejects.toThrow(
+      'tidak ditemukan'
+    );
   });
 });

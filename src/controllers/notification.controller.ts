@@ -29,4 +29,33 @@ export class NotificationController {
       next(error);
     }
   }
+
+  static async markAllRead(req: Request, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) {
+        return errorResponse(res, 'Autentikasi dibutuhkan', 401, 'UNAUTHORIZED');
+      }
+
+      const result = await NotificationService.markAllAsRead(req.user.id);
+      return successResponse(res, result, 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async deleteNotification(req: Request, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) {
+        return errorResponse(res, 'Autentikasi dibutuhkan', 401, 'UNAUTHORIZED');
+      }
+
+      const result = await NotificationService.deleteNotification(
+        req.user.id,
+        String(req.params.id)
+      );
+      return successResponse(res, result, 200);
+    } catch (error) {
+      next(error);
+    }
+  }
 }

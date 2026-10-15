@@ -23,6 +23,8 @@ vi.mock('../src/config/prisma.js', () => ({
     },
     follow: {
       findMany: vi.fn(),
+      findUnique: vi.fn(),
+      create: vi.fn(),
     },
     vote: {
       findMany: vi.fn(),
@@ -169,11 +171,141 @@ describe('FessService Unit Tests', () => {
 
       expect(fess.id).toBe('fess_new');
       expect(fess.status).toBe('pending');
-      // Counters track published fesses only — nothing to bump while pending.
-      expect(prisma.base.update).not.toHaveBeenCalled();
+      // Fess counters track published fesses only — nothing to bump while pending.
       expect(prisma.base.updateMany).not.toHaveBeenCalled();
       expect(prisma.user.updateMany).not.toHaveBeenCalled();
       expect(prisma.notification.create).toHaveBeenCalled();
+    });
+
+    it('should auto-follow the base when the sender does not follow it yet', async () => {
+      vi.mocked(prisma.base.findUnique).mockResolvedValueOnce({
+        id: 'base_1',
+        handle: '@codememfess',
+        creatorId: 'mod_1',
+      } as any);
+
+      vi.mocked(prisma.fess.create).mockResolvedValueOnce({
+        id: 'fess_new',
+        baseHandle: '@codememfess',
+        content: 'New confession',
+        status: 'pending',
+        upvotes: 0,
+        downvotes: 0,
+        createdAt: new Date(),
+        comments: [],
+      } as any);
+
+      vi.mocked(prisma.follow.findUnique).mockResolvedValueOnce(null);
+
+      await FessService.createFess(
+        { base_handle: '@codememfess', content: 'New confession' },
+        'usr_1'
+      );
+
+      expect(prisma.follow.create).toHaveBeenCalledWith({
+        data: { userId: 'usr_1', baseId: 'base_1' },
+      });
+      expect(prisma.base.update).toHaveBeenCalledWith({
+        where: { id: 'base_1' },
+        data: { membersCount: { increment: 1 } },
+      });
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'usr_1' },
+        data: { followingCount: { increment: 1 } },
+      });
+    });
+
+    it('should not auto-follow again when the sender already follows the base', async () => {
+      vi.mocked(prisma.base.findUnique).mockResolvedValueOnce({
+        id: 'base_1',
+        handle: '@codememfess',
+        creatorId: 'mod_1',
+      } as any);
+
+      vi.mocked(prisma.fess.create).mockResolvedValueOnce({
+        id: 'fess_new',
+        baseHandle: '@codememfess',
+        content: 'New confession',
+        status: 'pending',
+        upvotes: 0,
+        downvotes: 0,
+        createdAt: new Date(),
+        comments: [],
+      } as any);
+
+      vi.mocked(prisma.follow.findUnique).mockResolvedValueOnce({ id: 'follow_1' } as any);
+
+      await FessService.createFess(
+        { base_handle: '@codememfess', content: 'New confession' },
+        'usr_1'
+      );
+
+      expect(prisma.follow.create).not.toHaveBeenCalled();
+      expect(prisma.base.update).not.toHaveBeenCalled();
+    });
+
+    it('should not auto-follow when the sender owns the base', async () => {
+      vi.mocked(prisma.base.findUnique).mockResolvedValueOnce({
+        id: 'base_1',
+        handle: '@codememfess',
+        creatorId: 'usr_1',
+      } as any);
+
+      vi.mocked(prisma.fess.create).mockResolvedValueOnce({
+        id: 'fess_new',
+        baseHandle: '@codememfess',
+        content: 'New confession',
+        status: 'pending',
+        upvotes: 0,
+        downvotes: 0,
+        createdAt: new Date(),
+        comments: [],
+      } as any);
+
+      await FessService.createFess(
+        { base_handle: '@codememfess', content: 'New confession' },
+        'usr_1'
+      );
+
+      expect(prisma.follow.findUnique).not.toHaveBeenCalled();
+      expect(prisma.follow.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getUserFesses', () => {
+    it('should sort by popular (upvotes) when requested', async () => {
+      vi.mocked(prisma.fess.count).mockResolvedValueOnce(0);
+      vi.mocked(prisma.fess.findMany).mockResolvedValueOnce([]);
+
+      await FessService.getUserFesses('usr_1', { sort: 'popular', page: 1, limit: 10 });
+
+      expect(prisma.fess.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderBy: [{ upvotes: 'desc' }, { createdAt: 'desc' }],
+        })
+      );
+    });
+
+    it('should filter by status when provided', async () => {
+      vi.mocked(prisma.fess.count).mockResolvedValueOnce(1);
+      vi.mocked(prisma.fess.findMany).mockResolvedValueOnce([
+        {
+          id: 'fess_1',
+          baseHandle: '@codememfess',
+          content: 'Pending one',
+          upvotes: 0,
+          downvotes: 0,
+          status: 'pending',
+          createdAt: new Date(),
+          comments: [],
+        } as any,
+      ]);
+
+      const result = await FessService.getUserFesses('usr_1', { status: 'pending' });
+
+      expect(prisma.fess.count).toHaveBeenCalledWith({ where: { userId: 'usr_1', status: 'pending' } });
+      expect(result.total).toBe(1);
+      expect(result.data[0].status).toBe('pending');
     });
   });
 

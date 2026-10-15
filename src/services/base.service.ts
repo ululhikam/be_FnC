@@ -276,20 +276,54 @@ export class BaseService {
   }
 
   /**
-   * Get bases followed by current user
+   * Get bases followed by current user — paginated, searchable, and sortable
+   * (sort by follow date, base name, or member count).
    */
-  static async getFollowingBases(userId: string) {
-    const follows = await prisma.follow.findMany({
-      where: { userId },
-      include: { base: true },
-      orderBy: { createdAt: 'desc' },
-    });
+  static async getFollowingBases(
+    userId: string,
+    params: { search?: string; sort?: 'newest' | 'name' | 'members'; page?: number; limit?: number } = {}
+  ) {
+    const page = params.page || 1;
+    const limit = params.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const where: any = { userId };
+    const search = params.search?.trim();
+    if (search) {
+      where.base = {
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { handle: { contains: search, mode: 'insensitive' } },
+        ],
+      };
+    }
+
+    const orderBy: any =
+      params.sort === 'name'
+        ? [{ base: { name: 'asc' } }]
+        : params.sort === 'members'
+          ? [{ base: { membersCount: 'desc' } }]
+          : [{ createdAt: 'desc' }];
+
+    const [total, follows] = await Promise.all([
+      prisma.follow.count({ where }),
+      prisma.follow.findMany({
+        where,
+        include: { base: true },
+        orderBy,
+        skip,
+        take: limit,
+      }),
+    ]);
 
     const data = follows.map((f) => this.serializeBase(f.base, true));
 
     return {
       data,
-      total: data.length,
+      total,
+      page,
+      limit,
+      total_pages: Math.ceil(total / limit) || 1,
     };
   }
 

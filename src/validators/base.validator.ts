@@ -16,7 +16,7 @@ export const CreateBaseSchema = z.object({
   name: z.string().min(3, 'Nama base minimal 3 karakter').max(50, 'Nama base maksimal 50 karakter'),
   handle: z
     .string()
-    .regex(/^@?[a-zA-Z0-9_]{3,20}$/, 'Handle 3-20 karakter (huruf, angka, underscore)'),
+    .regex(/^@?[a-zA-Z0-9_.]{3,20}$/, 'Handle 3-20 karakter (huruf, angka, underscore, atau titik)'),
   category: z.enum(['Kampus', 'Kota', 'Hobi', 'Umum']).default('Umum'),
   color: z
     .string()
@@ -31,7 +31,7 @@ export const CreateBaseSchema = z.object({
 
 export const UpdateBaseSettingsSchema = z.object({
   name: z.string().min(3).max(50).optional(),
-  handle: z.string().regex(/^@?[a-zA-Z0-9_]{3,20}$/).optional(),
+  handle: z.string().regex(/^@?[a-zA-Z0-9_.]{3,20}$/).optional(),
   keywords: z.string().optional().nullable(),
   bio: z.string().max(300).optional().nullable(),
   avatar: z.string().url().optional().nullable(),

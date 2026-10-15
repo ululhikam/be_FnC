@@ -1,0 +1,47 @@
+import { z } from 'zod';
+
+export const LoginSchema = z.object({
+  identifier: z.string().min(1, 'Email atau username wajib diisi'),
+  password: z.string().min(8, 'Password minimal 8 karakter'),
+  role: z.enum(['User', 'Base Admin', 'Super Admin']).default('User'),
+});
+
+export const RegisterUserSchema = z.object({
+  email: z.string().email('Format email tidak valid'),
+  password: z.string().min(8, 'Password minimal 8 karakter'),
+  username: z.string().min(3, 'Username minimal 3 karakter').max(30, 'Username maksimal 30 karakter'),
+  handle: z
+    .string()
+    .regex(/^@?[a-zA-Z0-9_]{3,20}$/, 'Handle harus 3-20 karakter alfanumerik atau underscore'),
+  avatar: z.string().url('URL avatar tidak valid').optional().nullable(),
+  bio: z.string().max(160, 'Bio maksimal 160 karakter').optional().nullable(),
+});
+
+export const RegisterBaseSchema = z.object({
+  email: z.string().email('Format email tidak valid'),
+  password: z.string().min(8, 'Password minimal 8 karakter'),
+  name: z.string().min(3, 'Nama Base minimal 3 karakter').max(50, 'Nama Base maksimal 50 karakter'),
+  handle: z
+    .string()
+    .regex(/^@?[a-zA-Z0-9_]{3,20}$/, 'Handle harus 3-20 karakter alfanumerik atau underscore'),
+  avatar: z.string().url('URL avatar tidak valid').optional().nullable(),
+  bio: z.string().max(300, 'Bio maksimal 300 karakter').optional().nullable(),
+  igAccount: z.string().optional().nullable(),
+  category: z.enum(['Kampus', 'Kota', 'Hobi', 'Umum']).optional(),
+  color: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/, 'Format warna harus hex 6 digit (#RRGGBB)')
+    .optional(),
+  keyword: z.string().optional().nullable(),
+});
+
+export const GoogleAuthSchema = z.object({
+  id_token: z.string().min(1, 'Google ID token wajib diisi'),
+  role: z.enum(['User', 'Base Admin']).default('User'),
+});
+
+export const InstagramVerifySchema = z.object({
+  token: z.string().optional(),
+  code: z.string().optional(),
+  handle: z.string().optional(),
+});

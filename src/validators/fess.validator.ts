@@ -1,0 +1,60 @@
+import { z } from 'zod';
+
+export const MediaItemSchema = z.object({
+  type: z.enum(['image', 'video']),
+  url: z.string().url('URL media tidak valid'),
+  thumbnail: z.string().url('URL thumbnail tidak valid').optional().nullable(),
+  duration: z.string().optional().nullable(),
+  caption: z.string().optional().nullable(),
+});
+
+export const SongAttachmentSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  artist: z.string(),
+  cover: z.string().url().optional().nullable(),
+  preview_url: z.string().optional().nullable(),
+});
+
+export const QuotedFessSchema = z.object({
+  id: z.union([z.string(), z.number()]),
+  handle: z.string(),
+  content: z.string(),
+  time: z.string().optional().nullable(),
+  avatar_bg: z.string().optional().nullable(),
+  avatar_text: z.string().optional().nullable(),
+});
+
+export const CreateFessSchema = z.object({
+  base_handle: z.string().min(1, 'Base tujuan wajib dipilih'),
+  content: z.string().min(1, 'Konten confession minimal 1 karakter').max(2000, 'Konten maksimal 2000 karakter'),
+  media: z.array(MediaItemSchema).max(4, 'Maksimal 4 file media').optional().default([]),
+  topic: z.string().optional().nullable(),
+  scheduled_at: z.string().datetime().optional().nullable(),
+  song: SongAttachmentSchema.optional().nullable(),
+  template: z
+    .enum(['default', 'midnight', 'sunset', 'forest', 'noir', 'paper', 'ocean', 'violet'])
+    .optional()
+    .default('default'),
+  quoted_fess: QuotedFessSchema.optional().nullable(),
+  tag: z.enum(['Cerita', 'Tanya']).optional().nullable(),
+});
+
+export const GetFessesQuerySchema = z.object({
+  base: z.string().optional(),
+  status: z.enum(['published', 'pending', 'rejected']).optional(),
+  query: z.string().optional(),
+  sort: z.enum(['newest', 'popular']).default('newest'),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
+
+export const VoteSchema = z.object({
+  type: z.enum(['up', 'down']),
+});
+
+export const ReportSchema = z.object({
+  fess_id: z.string().min(1, 'ID fess wajib diisi'),
+  reason: z.enum(['spam', 'sara', 'pelecehan', 'dewasa', 'hoaks']),
+  note: z.string().max(250, 'Catatan maksimal 250 karakter').optional().nullable(),
+});

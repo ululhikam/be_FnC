@@ -1,0 +1,47 @@
+import { z } from 'zod';
+
+export const GetBasesQuerySchema = z.object({
+  search: z.string().optional(),
+  following: z.enum(['true', 'false']).optional(),
+  category: z.enum(['Semua', 'Kampus', 'Kota', 'Hobi', 'Umum']).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
+
+/**
+ * Create a base for an existing signed-in Base Admin (onboarding wizard).
+ * Mirrors the base fields accepted by POST /auth/register/base.
+ */
+export const CreateBaseSchema = z.object({
+  name: z.string().min(3, 'Nama base minimal 3 karakter').max(50, 'Nama base maksimal 50 karakter'),
+  handle: z
+    .string()
+    .regex(/^@?[a-zA-Z0-9_]{3,20}$/, 'Handle 3-20 karakter (huruf, angka, underscore)'),
+  category: z.enum(['Kampus', 'Kota', 'Hobi', 'Umum']).default('Umum'),
+  color: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/)
+    .optional(),
+  keyword: z.string().max(30).optional().nullable(),
+  bio: z.string().max(300).optional().nullable(),
+  avatar: z.string().url().optional().nullable(),
+  ig_account: z.string().max(50).optional().nullable(),
+  rules: z.array(z.string().max(160)).max(10).optional(),
+});
+
+export const UpdateBaseSettingsSchema = z.object({
+  name: z.string().min(3).max(50).optional(),
+  handle: z.string().regex(/^@?[a-zA-Z0-9_]{3,20}$/).optional(),
+  keywords: z.string().optional().nullable(),
+  bio: z.string().max(300).optional().nullable(),
+  avatar: z.string().url().optional().nullable(),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  rules: z.array(z.string()).optional(),
+});
+
+export const BaseFessesQuerySchema = z.object({
+  status: z.enum(['published', 'approved', 'pending', 'rejected']).optional(),
+  sort: z.enum(['newest', 'popular']).default('newest'),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});

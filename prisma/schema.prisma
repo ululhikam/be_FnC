@@ -1,0 +1,261 @@
+// Prisma Schema for Fess n Curious Backend
+// Compatible with Supabase PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id             String    @id @default(cuid())
+  email          String?   @unique
+  password       String?
+  username       String
+  handle         String    @unique
+  role           String    @default("User") // "User", "Base Admin", "Super Admin"
+  avatar         String?
+  level          Int       @default(1)
+  bio            String?
+  badges         String[]  @default(["NEW MEMBER"])
+  igAccount      String?
+  followersCount Int       @default(0)
+  followingCount Int       @default(0)
+  fessCount      Int       @default(0)
+  balance        Float     @default(0)
+  revenue        Float     @default(0)
+  isBanned       Boolean   @default(false)
+  banReason      String?
+  banExpiresAt   DateTime?
+  googleId       String?   @unique
+  instagramId    String?   @unique
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  managedBases   Base[]               @relation("BaseCreator")
+  following      Follow[]
+  fesses         Fess[]
+  votes          Vote[]
+  comments       Comment[]
+  notifications  Notification[]
+  reports        Report[]
+  payouts        Payout[]
+  connections    PlatformConnection[]
+
+  @@index([role])
+  @@index([createdAt])
+}
+
+model Base {
+  id             String    @id @default(cuid())
+  name           String
+  handle         String    @unique
+  category       String    @default("Umum") // Kampus, Kota, Hobi, Umum, Komunitas
+  color          String    @default("#0055FF")
+  keyword        String?
+  avatar         String?
+  initial        String?
+  bio            String?
+  rules          String[]  @default([])
+  igAccount      String?
+  verified       Boolean   @default(false)
+  established    String?   @default("2024")
+  membersCount   Int       @default(0)
+  fessCount      Int       @default(0)
+  balance        Float     @default(0)
+  revenue        Float     @default(0)
+  creatorId      String?
+  creator        User?     @relation("BaseCreator", fields: [creatorId], references: [id], onDelete: SetNull)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  followers      Follow[]
+  fesses         Fess[]
+  connections    PlatformConnection[]
+
+  @@index([category])
+  @@index([handle])
+  @@index([createdAt])
+}
+
+model Follow {
+  id        String   @id @default(cuid())
+  userId    String
+  baseId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  base      Base     @relation(fields: [baseId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, baseId])
+  @@index([userId])
+  @@index([baseId])
+}
+
+model Fess {
+  id            String    @id @default(cuid())
+  baseHandle    String
+  baseId        String?
+  userId        String?
+  content       String
+  status        String    @default("pending") // "pending", "published", "approved", "rejected"
+  upvotes       Int       @default(0)
+  downvotes     Int       @default(0)
+  commentsCount Int       @default(0)
+  topic         String?
+  template      String?   @default("default")
+  tag           String?   // "Cerita", "Tanya"
+  postedToIg    Boolean   @default(false)
+  scheduledAt   DateTime?
+  media         Json?     // [{ type, url, thumbnail, duration, caption }]
+  song          Json?     // { id, title, artist, cover, preview_url }
+  quotedFess    Json?     // { id, handle, content, time, avatar_bg, avatar_text }
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  base          Base?     @relation(fields: [baseId], references: [id], onDelete: SetNull)
+  author        User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  votes         Vote[]
+  comments      Comment[]
+  reports       Report[]
+
+  @@index([baseHandle, status, createdAt])
+  @@index([status, createdAt])
+  @@index([userId])
+  @@index([upvotes(sort: Desc)])
+}
+
+model Vote {
+  id        String   @id @default(cuid())
+  fessId    String
+  userId    String
+  type      String   // "up" or "down"
+  createdAt DateTime @default(now())
+
+  fess      Fess     @relation(fields: [fessId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([fessId, userId])
+  @@index([fessId])
+  @@index([userId])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  fessId    String
+  userId    String?
+  author    String   @default("Anonim")
+  text      String
+  createdAt DateTime @default(now())
+
+  fess      Fess     @relation(fields: [fessId], references: [id], onDelete: Cascade)
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([fessId, createdAt])
+}
+
+model Notification {
+  id          String   @id @default(cuid())
+  userId      String
+  type        String   // comment, vote, mention, moderation, system
+  fessId      String?
+  fessContent String?
+  actor       String?
+  text        String
+  read        Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read, createdAt])
+}
+
+model Report {
+  id        String   @id @default(cuid())
+  fessId    String
+  userId    String?
+  reason    String
+  note      String?
+  status    String   @default("pending")
+  createdAt DateTime @default(now())
+
+  fess      Fess     @relation(fields: [fessId], references: [id], onDelete: Cascade)
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([fessId])
+}
+
+model Topic {
+  id        String   @id
+  label     String
+  category  String
+  color     String
+  createdAt DateTime @default(now())
+}
+
+model Song {
+  id         String   @id
+  title      String
+  artist     String
+  cover      String?
+  previewUrl String?
+  duration   Int      @default(0)
+  genre      String?
+  popularity Int      @default(50)
+  createdAt  DateTime @default(now())
+}
+
+model PlatformConnection {
+  id            String   @id @default(cuid())
+  baseId        String?
+  userId        String?
+  platform      String   // "twitter", "instagram", "telegram"
+  name          String
+  status        String   @default("idle")
+  connected     Boolean  @default(false)
+  accountHandle String?
+  accessToken   String?
+  refreshToken  String?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  base          Base?    @relation(fields: [baseId], references: [id], onDelete: Cascade)
+  user          User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, platform])
+  @@index([platform])
+}
+
+model SystemSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+model SystemLog {
+  id        String   @id @default(cuid())
+  source    String   // RATE_LIMITER, CANVAS_WORKER, AUTO_BASE, REDIS_CACHE, AI_FILTER
+  message   String
+  tone      String   @default("info") // ok, info, muted, error
+  createdAt DateTime @default(now())
+
+  @@index([source, createdAt])
+}
+
+model Payout {
+  id          String   @id @default(cuid())
+  userId      String
+  baseId      String?
+  amount      Float
+  destination String
+  status      String   @default("pending")
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}

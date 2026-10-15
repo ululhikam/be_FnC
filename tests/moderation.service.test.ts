@@ -62,4 +62,40 @@ describe('ModerationService (filter NLP auto post)', () => {
     const verdict = ModerationService.classify('anj\u200bing');
     expect(verdict.flagged).toBe(true);
   });
+
+  it('should flag custom banned words from the base blacklist', () => {
+    const verdict = ModerationService.classify('Promo tiket konser ada di bio!', ['konser']);
+    expect(verdict.flagged).toBe(true);
+    expect(verdict.reasons).toContain('kata terlarang');
+    expect(verdict.matches).toContain('konser');
+  });
+
+  it('should match banned words case-insensitively and with leetspeak', () => {
+    const verdict = ModerationService.classify('IKLANNYA 4dag4n murah', ['iklan', 'adag4n']);
+    expect(verdict.flagged).toBe(true);
+    expect(verdict.reasons).toContain('kata terlarang');
+  });
+
+  it('should match banned phrases (multi-word)', () => {
+    const verdict = ModerationService.classify('Jangan lupa beli tiket cepat ya', [
+      'beli tiket cepat',
+    ]);
+    expect(verdict.flagged).toBe(true);
+  });
+
+  it('should keep word boundaries for banned words (substring is safe)', () => {
+    const verdict = ModerationService.classify('Promosi produk lokal keren banget', ['promo']);
+    expect(verdict.flagged).toBe(false);
+  });
+
+  it('should ignore empty banned word entries', () => {
+    const verdict = ModerationService.classify('Hari ini cerah sekali', ['', '   ']);
+    expect(verdict.flagged).toBe(false);
+    expect(verdict.reasons).toEqual([]);
+  });
+
+  it('should not flag when bannedWord list is not provided', () => {
+    const verdict = ModerationService.classify('Obat herbal promo besar-besaran');
+    expect(verdict.flagged).toBe(false);
+  });
 });

@@ -159,5 +159,29 @@ describe('BaseService Unit Tests', () => {
         )
       ).rejects.toThrow('tidak memiliki izin');
     });
+
+    it('should sanitize, dedupe and persist banned words', async () => {
+      vi.mocked(prisma.base.findUnique).mockResolvedValueOnce({
+        id: 'base_1',
+        handle: '@codebase',
+        creatorId: 'usr_1',
+      } as any);
+      vi.mocked(prisma.base.update).mockResolvedValueOnce({
+        id: 'base_1',
+        handle: '@codebase',
+        bannedWords: ['judi', 'slot'],
+      } as any);
+
+      const result = await BaseService.updateSettings(
+        '@codebase',
+        { id: 'usr_1', role: 'Base Admin', managedBases: ['@codebase'] },
+        { bannedWords: [' Judi ', 'slot', 'judi', ''] }
+      );
+
+      const updateCall = vi.mocked(prisma.base.update).mock.calls[0][0] as any;
+      // Duplikat case-insensitive dipangkas; varian terakhir yang menang.
+      expect(updateCall.data.bannedWords).toEqual(['judi', 'slot']);
+      expect(result.banned_words).toEqual(['judi', 'slot']);
+    });
   });
 });

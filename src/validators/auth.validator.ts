@@ -40,6 +40,25 @@ export const GoogleAuthSchema = z.object({
   role: z.enum(['User', 'Base Admin']).default('User'),
 });
 
+// --- Reset kata sandi via OTP email (3 langkah terpisah) ---
+
+export const ForgotPasswordSchema = z.object({
+  email: z.string().email('Format email tidak valid'),
+});
+
+export const VerifyResetOtpSchema = z.object({
+  email: z.string().email('Format email tidak valid'),
+  otp: z
+    .string()
+    .regex(/^\d{6}$/, 'Kode OTP harus 6 digit angka'),
+});
+
+export const ResetPasswordSchema = z.object({
+  email: z.string().email('Format email tidak valid'),
+  reset_token: z.string().min(32, 'Token reset tidak valid'),
+  password: z.string().min(8, 'Kata sandi minimal 8 karakter'),
+});
+
 export const InstagramVerifySchema = z.object({
   token: z.string().optional(),
   code: z.string().optional(),

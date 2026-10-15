@@ -4,6 +4,9 @@ import {
   RegisterUserSchema,
   RegisterBaseSchema,
   GoogleAuthSchema,
+  ForgotPasswordSchema,
+  VerifyResetOtpSchema,
+  ResetPasswordSchema,
 } from '../src/validators/auth.validator.js';
 import { CreateFessSchema, VoteSchema, ReportSchema } from '../src/validators/fess.validator.js';
 import { AddCommentSchema } from '../src/validators/comment.validator.js';
@@ -75,6 +78,36 @@ describe('Auth Validators', () => {
   });
 });
 
+describe('Password Reset Validators (OTP email)', () => {
+  it('should validate forgot-password email', () => {
+    expect(ForgotPasswordSchema.safeParse({ email: 'user@gmail.com' }).success).toBe(true);
+    expect(ForgotPasswordSchema.safeParse({ email: 'not-an-email' }).success).toBe(false);
+  });
+
+  it('should only accept 6-digit OTP codes', () => {
+    expect(
+      VerifyResetOtpSchema.safeParse({ email: 'user@gmail.com', otp: '123456' }).success
+    ).toBe(true);
+    expect(
+      VerifyResetOtpSchema.safeParse({ email: 'user@gmail.com', otp: '12345' }).success
+    ).toBe(false);
+    expect(
+      VerifyResetOtpSchema.safeParse({ email: 'user@gmail.com', otp: 'abcdef' }).success
+    ).toBe(false);
+  });
+
+  it('should validate reset-password payload', () => {
+    const valid = {
+      email: 'user@gmail.com',
+      reset_token: 'a'.repeat(64),
+      password: 'newpassword123',
+    };
+    expect(ResetPasswordSchema.safeParse(valid).success).toBe(true);
+    expect(ResetPasswordSchema.safeParse({ ...valid, reset_token: 'short' }).success).toBe(false);
+    expect(ResetPasswordSchema.safeParse({ ...valid, password: '123' }).success).toBe(false);
+  });
+});
+
 describe('Fess Validators', () => {
   it('should validate valid CreateFess payload', () => {
     const valid = {
@@ -117,5 +150,25 @@ describe('Comment & Base Settings Validators', () => {
       color: '#FF0055',
     };
     expect(UpdateBaseSettingsSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('should validate banned words (2-40 chars, max 50 entries)', () => {
+    expect(UpdateBaseSettingsSchema.safeParse({ bannedWords: ['judi', 'promo pinjol'] }).success).toBe(
+      true
+    );
+    expect(UpdateBaseSettingsSchema.safeParse({ bannedWords: ['a'] }).success).toBe(false);
+    expect(
+      UpdateBaseSettingsSchema.safeParse({ bannedWords: ['x'.repeat(41)] }).success
+    ).toBe(false);
+    expect(
+      UpdateBaseSettingsSchema.safeParse({
+        bannedWords: Array.from({ length: 50 }, (_, i) => `kata${i}`),
+      }).success
+    ).toBe(true);
+    expect(
+      UpdateBaseSettingsSchema.safeParse({
+        bannedWords: Array.from({ length: 51 }, (_, i) => `kata${i}`),
+      }).success
+    ).toBe(false);
   });
 });

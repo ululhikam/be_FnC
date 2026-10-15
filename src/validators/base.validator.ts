@@ -38,6 +38,17 @@ export const UpdateBaseSettingsSchema = z.object({
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   rules: z.array(z.string()).optional(),
   postMode: z.enum(['auto', 'moderated']).optional(),
+  // Blacklist kata milik base — dipakai filter NLP saat mode auto post.
+  bannedWords: z
+    .array(
+      z
+        .string()
+        .trim()
+        .min(2, 'Kata terlarang minimal 2 karakter')
+        .max(40, 'Kata terlarang maksimal 40 karakter')
+    )
+    .max(50, 'Maksimal 50 kata terlarang')
+    .optional(),
 });
 
 export const BaseFessesQuerySchema = z.object({

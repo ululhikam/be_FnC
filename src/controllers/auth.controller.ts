@@ -51,6 +51,39 @@ export class AuthController {
     }
   }
 
+  /** Langkah 1: minta kode OTP reset kata sandi via email. */
+  static async forgotPassword(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { email } = req.body;
+      const result = await AuthService.forgotPassword(email);
+      return successResponse(res, result, 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Langkah 2: verifikasi kode OTP → terima token reset sekali pakai. */
+  static async verifyResetOtp(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { email, otp } = req.body;
+      const result = await AuthService.verifyResetOtp(email, otp);
+      return successResponse(res, result, 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Langkah 3: simpan kata sandi baru memakai token reset. */
+  static async resetPassword(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { email, reset_token, password } = req.body;
+      const result = await AuthService.resetPassword(email, reset_token, password);
+      return successResponse(res, result, 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
   static async getMe(req: Request, res: Response, next: NextFunction) {
     try {
       if (!req.user) {

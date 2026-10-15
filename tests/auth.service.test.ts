@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import crypto from 'node:crypto';
 import { AuthService } from '../src/services/auth.service.js';
 import { prisma } from '../src/config/prisma.js';
 import * as passwordUtil from '../src/utils/password.util.js';
@@ -14,6 +15,12 @@ vi.mock('../src/config/prisma.js', () => ({
     base: {
       findUnique: vi.fn(),
       create: vi.fn(),
+    },
+    passwordReset: {
+      findUnique: vi.fn(),
+      upsert: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
     },
     $transaction: vi.fn(),
   },
@@ -164,6 +171,160 @@ describe('AuthService Unit Tests', () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(null);
 
       await expect(AuthService.getMe('nonexistent')).rejects.toThrow('Pengguna tidak ditemukan');
+    });
+  });
+
+  describe('forgotPassword / verifyResetOtp / resetPassword (OTP email)', () => {
+    const sha256 = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
+
+    it('should return a generic message for unknown email (anti-enumeration)', async () => {
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce(null);
+
+      const res: any = await AuthService.forgotPassword('ghost@mail.com');
+      expect(res.message).toContain('Jika email tersebut terdaftar');
+      expect(res.dev_otp).toBeUndefined();
+      expect(prisma.passwordReset.upsert).not.toHaveBeenCalled();
+    });
+
+    it('should store a hashed OTP and expose dev_otp when SMTP is not configured', async () => {
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({
+        id: 'usr_1',
+        email: 'alex@mail.com',
+      } as any);
+      vi.mocked(prisma.passwordReset.upsert).mockResolvedValueOnce({} as any);
+
+      const res: any = await AuthService.forgotPassword('alex@mail.com');
+      expect(res.dev_otp).toMatch(/^\d{6}$/);
+
+      const upsertCall: any = vi.mocked(prisma.passwordReset.upsert).mock.calls[0][0];
+      expect(upsertCall.where).toEqual({ userId: 'usr_1' });
+      expect(upsertCall.create.otpHash).toBe(sha256(res.dev_otp));
+      expect(upsertCall.update.otpHash).toBe(sha256(res.dev_otp));
+    });
+
+    it('should increment attempts and reject a wrong OTP', async () => {
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({ id: 'usr_1' } as any);
+      vi.mocked(prisma.passwordReset.findUnique).mockResolvedValueOnce({
+        userId: 'usr_1',
+        otpHash: sha256('123456'),
+        otpExpiresAt: new Date(Date.now() + 60_000),
+        attempts: 0,
+      } as any);
+
+      await expect(AuthService.verifyResetOtp('alex@mail.com', '000000')).rejects.toThrow(
+        'Kode OTP salah'
+      );
+
+      const updateCall: any = vi.mocked(prisma.passwordReset.update).mock.calls[0][0];
+      expect(updateCall.data.attempts).toEqual({ increment: 1 });
+    });
+
+    it('should reject an expired OTP', async () => {
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({ id: 'usr_1' } as any);
+      vi.mocked(prisma.passwordReset.findUnique).mockResolvedValueOnce({
+        userId: 'usr_1',
+        otpHash: sha256('123456'),
+        otpExpiresAt: new Date(Date.now() - 1000),
+        attempts: 0,
+      } as any);
+
+      await expect(AuthService.verifyResetOtp('alex@mail.com', '123456')).rejects.toThrow(
+        'kedaluwarsa'
+      );
+    });
+
+    it('should reject when max attempts are exhausted', async () => {
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({ id: 'usr_1' } as any);
+      vi.mocked(prisma.passwordReset.findUnique).mockResolvedValueOnce({
+        userId: 'usr_1',
+        otpHash: sha256('123456'),
+        otpExpiresAt: new Date(Date.now() + 60_000),
+        attempts: 5,
+      } as any);
+
+      await expect(AuthService.verifyResetOtp('alex@mail.com', '123456')).rejects.toThrow(
+        'Terlalu banyak percobaan'
+      );
+    });
+
+    it('should issue a single-use reset token for the correct OTP', async () => {
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({ id: 'usr_1' } as any);
+      vi.mocked(prisma.passwordReset.findUnique).mockResolvedValueOnce({
+        userId: 'usr_1',
+        otpHash: sha256('424242'),
+        otpExpiresAt: new Date(Date.now() + 60_000),
+        attempts: 0,
+      } as any);
+      vi.mocked(prisma.passwordReset.update).mockResolvedValueOnce({} as any);
+
+      const res = await AuthService.verifyResetOtp('alex@mail.com', '424242');
+      expect(res.reset_token).toMatch(/^[0-9a-f]{64}$/);
+
+      const updateCall: any = vi.mocked(prisma.passwordReset.update).mock.calls[0][0];
+      expect(updateCall.data.resetTokenHash).toBe(sha256(res.reset_token));
+    });
+
+    it('should reject an invalid reset token', async () => {
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({ id: 'usr_1' } as any);
+      vi.mocked(prisma.passwordReset.findUnique).mockResolvedValueOnce({
+        userId: 'usr_1',
+        resetTokenHash: sha256('valid-token'),
+        resetTokenExpiresAt: new Date(Date.now() + 60_000),
+      } as any);
+
+      await expect(
+        AuthService.resetPassword('alex@mail.com', 'wrong-token', 'newpassword123')
+      ).rejects.toThrow('Sesi reset tidak valid');
+    });
+
+    it('should update the password hash and consume the token on success', async () => {
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({ id: 'usr_1' } as any);
+      vi.mocked(prisma.passwordReset.findUnique).mockResolvedValueOnce({
+        userId: 'usr_1',
+        resetTokenHash: sha256('valid-token'),
+        resetTokenExpiresAt: new Date(Date.now() + 60_000),
+      } as any);
+      vi.spyOn(passwordUtil, 'hashPassword').mockResolvedValueOnce('hashed_new_pw' as any);
+      vi.mocked(prisma.$transaction).mockResolvedValueOnce([] as any);
+
+      const res = await AuthService.resetPassword('alex@mail.com', 'valid-token', 'newpassword123');
+      expect(res.ok).toBe(true);
+
+      const userUpdateCall: any = vi.mocked(prisma.user.update).mock.calls[0][0];
+      expect(userUpdateCall.data.password).toBe('hashed_new_pw');
+      expect(prisma.passwordReset.delete).toHaveBeenCalledWith({ where: { userId: 'usr_1' } });
+    });
+  });
+
+  describe('login security for passwordless accounts', () => {
+    it('should reject password login for Google-only account', async () => {
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({
+        id: 'usr_g',
+        email: 'g@mail.com',
+        password: null,
+        googleId: 'google_123',
+        isBanned: false,
+        role: 'User',
+      } as any);
+
+      await expect(AuthService.login('g@mail.com', 'whatever123', 'User')).rejects.toThrow(
+        'terdaftar dengan Google'
+      );
+    });
+
+    it('should reject password login when account has no password and no Google link', async () => {
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({
+        id: 'usr_n',
+        email: 'n@mail.com',
+        password: null,
+        googleId: null,
+        isBanned: false,
+        role: 'User',
+      } as any);
+
+      await expect(AuthService.login('n@mail.com', 'whatever123', 'User')).rejects.toThrow(
+        'belum memiliki kata sandi'
+      );
     });
   });
 });

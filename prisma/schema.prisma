@@ -45,6 +45,7 @@ model User {
   reports        Report[]
   payouts        Payout[]
   connections    PlatformConnection[]
+  passwordReset  PasswordReset?
 
   @@index([role])
   @@index([createdAt])
@@ -63,6 +64,7 @@ model Base {
   rules          String[]  @default([])
   igAccount      String?
   postMode       String    @default("moderated") // "auto" (langsung terbit + filter NLP) | "moderated" (antrean review)
+  bannedWords    String[]  @default([]) // blacklist kata ala admin (dicek filter NLP saat auto post)
   verified       Boolean   @default(false)
   established    String?   @default("2024")
   membersCount   Int       @default(0)
@@ -177,6 +179,22 @@ model Notification {
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, read, createdAt])
+}
+
+model PasswordReset {
+  id                  String    @id @default(cuid())
+  userId              String    @unique
+  otpHash             String    // sha256 dari kode OTP 6 digit (bukan plaintext)
+  otpExpiresAt        DateTime
+  attempts            Int       @default(0) // salah OTP berulang → tolak sementara
+  resetTokenHash      String?   // sha256 token yang dipakai di langkah reset password
+  resetTokenExpiresAt DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([otpExpiresAt])
 }
 
 model Report {

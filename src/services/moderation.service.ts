@@ -115,14 +115,30 @@ export class ModerationService {
   /**
    * Klasifikasi konten fess. Mobile/back-end memakai hasil `flagged` untuk
    * memutuskan auto publish vs masuk antrean moderasi.
+   *
+   * @param bannedWords daftar kata terlarang milik base (blacklist admin).
+   *   Satu kata terlarang yang muncul (word-boundary, tahan leetspeak) sudah
+   *   cukup untuk menandai konten.
    */
-  static classify(content: string): ModerationVerdict {
+  static classify(content: string, bannedWords: string[] = []): ModerationVerdict {
     const normalized = normalize(content);
     const padded = ` ${normalized} `;
 
     const reasons: string[] = [];
     const matches: string[] = [];
     let score = 0;
+
+    // 0) Blacklist kata base — prioritas tertinggi, langsung flag (bobot penuh).
+    for (const raw of bannedWords) {
+      const word = normalize(raw);
+      if (!word) continue;
+      if (!padded.includes(` ${word} `)) continue;
+      score += FLAG_THRESHOLD;
+      if (!reasons.includes('kata terlarang')) reasons.push('kata terlarang');
+      if (!matches.includes(String(raw).trim()) && matches.length < 5) {
+        matches.push(String(raw).trim());
+      }
+    }
 
     for (const rule of LEXICONS) {
       const hit = rule.terms.find((term) => padded.includes(` ${term} `));

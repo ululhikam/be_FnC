@@ -9,6 +9,9 @@ import {
   RegisterBaseSchema,
   GoogleAuthSchema,
   InstagramVerifySchema,
+  ForgotPasswordSchema,
+  VerifyResetOtpSchema,
+  ResetPasswordSchema,
 } from '../validators/auth.validator.js';
 import { generateToken } from '../utils/jwt.util.js';
 import { ENV } from '../config/env.js';
@@ -23,6 +26,11 @@ router.post('/register/base', validateBody(RegisterBaseSchema), AuthController.r
 router.post('/logout', requireAuth, AuthController.logout);
 router.get('/me', requireAuth, AuthController.getMe);
 router.post('/refresh', requireAuth, AuthController.refreshToken);
+
+// Reset kata sandi via kode OTP email (3 langkah, tanpa sesi login)
+router.post('/forgot-password', validateBody(ForgotPasswordSchema), AuthController.forgotPassword);
+router.post('/verify-reset-otp', validateBody(VerifyResetOtpSchema), AuthController.verifyResetOtp);
+router.post('/reset-password', validateBody(ResetPasswordSchema), AuthController.resetPassword);
 
 // Instagram Verification via Meta for Developers App
 router.post('/instagram/verify', requireAuth, validateBody(InstagramVerifySchema), AuthController.verifyInstagram);

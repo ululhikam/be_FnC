@@ -242,6 +242,7 @@ export class BaseService {
       color?: string;
       rules?: string[];
       postMode?: 'auto' | 'moderated';
+      bannedWords?: string[];
     }
   ) {
     const cleanHandle = normalizeHandle(handle);
@@ -269,6 +270,20 @@ export class BaseService {
       throw err;
     }
 
+    // Sanitasi blacklist: trim, buang kosong, dan dedupe case-insensitive
+    // supaya filter NLP tidak menyimpan kata dobel.
+    const bannedWords =
+      data.bannedWords !== undefined
+        ? Array.from(
+            new Map(
+              data.bannedWords
+                .map((w) => String(w).trim())
+                .filter(Boolean)
+                .map((w) => [w.toLowerCase(), w])
+            ).values()
+          )
+        : undefined;
+
     const updated = await prisma.base.update({
       where: { id: base.id },
       data: {
@@ -280,6 +295,7 @@ export class BaseService {
         ...(data.color ? { color: data.color } : {}),
         ...(data.rules ? { rules: data.rules } : {}),
         ...(data.postMode ? { postMode: data.postMode } : {}),
+        ...(bannedWords !== undefined ? { bannedWords } : {}),
       },
     });
 
@@ -365,6 +381,7 @@ export class BaseService {
       established: base.established || '2024',
       initial: base.initial || 'BA',
       post_mode: base.postMode || 'moderated',
+      banned_words: base.bannedWords || [],
     };
   }
 }

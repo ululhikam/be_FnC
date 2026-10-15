@@ -17,9 +17,17 @@ const COMMENT_PREVIEW_SELECT = {
   createdAt: true,
 } as const;
 
+/** Identitas visual base yang dipakai kartu fess (foto profil / warna / inisial). */
+const BASE_PREVIEW_SELECT = {
+  avatar: true,
+  color: true,
+  initial: true,
+} as const;
+
 /** Latest comments preview attached to list / vote / moderation payloads. */
 const COMMENT_PREVIEW_INCLUDE = {
   comments: { take: 3, orderBy: { createdAt: 'desc' }, select: COMMENT_PREVIEW_SELECT },
+  base: { select: BASE_PREVIEW_SELECT },
 } as const;
 
 /** topic id → human label (constants are the source of truth for topics). */
@@ -96,6 +104,7 @@ export class FessService {
             orderBy: { createdAt: 'desc' },
             select: COMMENT_PREVIEW_SELECT,
           },
+          base: { select: BASE_PREVIEW_SELECT },
         },
       }),
     ]);
@@ -167,7 +176,7 @@ export class FessService {
     let flagReason: string | null = null;
 
     if (!isScheduled && base.postMode === 'auto') {
-      const verdict = ModerationService.classify(payload.content);
+      const verdict = ModerationService.classify(payload.content, base.bannedWords || []);
       if (verdict.flagged) {
         autoFlagged = true;
         flagReason = verdict.reasons.join(', ');
@@ -267,7 +276,7 @@ export class FessService {
       });
     }
 
-    return this.serializeFess(fess, null);
+    return this.serializeFess({ ...fess, base }, null);
   }
 
   /**
@@ -281,6 +290,7 @@ export class FessService {
           orderBy: { createdAt: 'asc' },
           select: COMMENT_PREVIEW_SELECT,
         },
+        base: { select: BASE_PREVIEW_SELECT },
       },
     });
 
@@ -767,6 +777,11 @@ export class FessService {
       posted_to_ig: fess.postedToIg ?? false,
       auto_flagged: fess.autoFlagged ?? false,
       flag_reason: fess.flagReason || undefined,
+      // Foto profil base untuk avatar kartu fess. `avatar` bisa berupa
+      // URL/data-URL foto ATAU inisial teks — frontend membedakan keduanya.
+      base_avatar: fess.base?.avatar || undefined,
+      base_color: fess.base?.color || undefined,
+      base_initial: fess.base?.initial || undefined,
     };
   }
 }

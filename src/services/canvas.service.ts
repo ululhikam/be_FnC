@@ -147,23 +147,23 @@ export class CanvasService {
   <!-- Avatar -->
   <circle cx="${PAD + 74}" cy="${PAD + 74}" r="38" fill="${accentColor}" opacity="0.25"/>
   <circle cx="${PAD + 74}" cy="${PAD + 74}" r="32" fill="${accentColor}"/>
-  <text x="${PAD + 74}" y="${PAD + 83}" font-family="Arial,sans-serif" font-size="22"
+  <text x="${PAD + 74}" y="${PAD + 83}" font-family="Noto Sans, Arial, sans-serif" font-size="22"
         font-weight="900" fill="#fff" text-anchor="middle">${escapeXml(baseInitial)}</text>
 
   <!-- Base name & handle -->
-  <text x="${PAD + 126}" y="${PAD + 63}" font-family="Arial,sans-serif" font-size="26"
+  <text x="${PAD + 126}" y="${PAD + 63}" font-family="Noto Sans, Arial, sans-serif" font-size="26"
         font-weight="900" fill="${textColor}">${escapeXml(baseName)}</text>
-  <text x="${PAD + 126}" y="${PAD + 93}" font-family="Arial,sans-serif" font-size="18"
+  <text x="${PAD + 126}" y="${PAD + 93}" font-family="Noto Sans, Arial, sans-serif" font-size="18"
         font-weight="600" fill="${subtextColor}">${escapeXml(fess.baseHandle)} Â· Fess n Curious</text>
 
   <!-- Tag pill -->
   <rect x="${PAD + cardW - 130}" y="${PAD + 50}" width="106" height="34" rx="17"
         fill="${accentColor}" opacity="0.22"/>
-  <text x="${PAD + cardW - 77}" y="${PAD + 73}" font-family="Arial,sans-serif" font-size="14"
+  <text x="${PAD + cardW - 77}" y="${PAD + 73}" font-family="Noto Sans, Arial, sans-serif" font-size="14"
         font-weight="800" fill="${accentColor}" text-anchor="middle">${escapeXml(fess.tag || 'Confession')}</text>
 
   <!-- Opening quote -->
-  <text x="${PAD + 52}" y="${PAD + 172}" font-family="serif" font-size="72"
+  <text x="${PAD + 52}" y="${PAD + 172}" font-family="Noto Sans, serif" font-size="72"
         font-weight="bold" fill="${accentColor}" opacity="0.28">"</text>
 
   <!-- Confession text -->
@@ -174,9 +174,9 @@ export class CanvasService {
         stroke="${cardBorder}" stroke-width="1.5"/>
 
   <!-- Footer branding -->
-  <text x="${PAD + 58}" y="${PAD + cardH - 36}" font-family="Arial,sans-serif" font-size="17"
+  <text x="${PAD + 58}" y="${PAD + cardH - 36}" font-family="Noto Sans, Arial, sans-serif" font-size="17"
         font-weight="800" fill="${textColor}">Instagram Feed Â· ${escapeXml(baseIg)}</text>
-  <text x="${PAD + cardW - 58}" y="${PAD + cardH - 36}" font-family="Arial,sans-serif" font-size="15"
+  <text x="${PAD + cardW - 58}" y="${PAD + cardH - 36}" font-family="Noto Sans, Arial, sans-serif" font-size="15"
         font-weight="600" fill="${subtextColor}" text-anchor="end">fessncurious.vercel.app</text>
 </svg>`;
 
@@ -312,7 +312,7 @@ function buildTextLines(
     )
     .join('\n    ');
 
-  return `<text x="${x}" y="${y}" font-family="Arial,sans-serif" font-size="${fontSize}"
+  return `<text x="${x}" y="${y}" font-family="Noto Sans, Arial, sans-serif" font-size="${fontSize}"
       font-weight="600" fill="${color}" xml:space="preserve">
     ${tspans}
   </text>`;

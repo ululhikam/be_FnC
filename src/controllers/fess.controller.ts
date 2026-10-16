@@ -124,6 +124,8 @@ export class FessController {
           imageUrl: result.image_url,
           image_urls: result.image_urls,
           imageUrls: result.image_urls,
+          card_count: result.card_count,
+          media_count: result.media_count,
           posted_to: result.posted_to,
           meta_published: ig.meta_published === true,
           message: ig.message || ig.error || `Card fess ${id} berhasil dirender.`,

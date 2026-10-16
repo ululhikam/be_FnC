@@ -11,6 +11,8 @@ import { getEmojiSvgMarkup } from '../config/emoji.js';
 export interface CanvasExportResult {
   image_url: string;
   image_urls: string[];
+  card_count: number;
+  media_count: number;
   posted_to: ('instagram' | 'twitter' | 'telegram')[];
   ig_result?: any;
 }
@@ -90,20 +92,28 @@ export class CanvasService {
       imageUrls.push(upload.url);
     }
 
-    // ── Auto-post ke Instagram Feed (carousel jika > 1 halaman) ────────────
+    // ── Auto-post ke Instagram Feed (card + media user) ────────────────────
     const posted_to: ('instagram' | 'twitter' | 'telegram')[] = [];
     let ig_result: any = null;
+
+    // Media user (gambar/video) ikut diposting. Sisakan slot untuk card agar
+    // media tetap kebagian (maksimal 10 item carousel Instagram).
+    const mediaItems = collectMediaItems(fess.media);
+    const cardItems = imageUrls
+      .slice(0, Math.max(1, 10 - mediaItems.length))
+      .map((url) => ({ type: 'image' as const, url }));
+    const postItems = [...cardItems, ...mediaItems].slice(0, 10);
+
+    // Caption memuat isi fess selengkap mungkin (batas caption Instagram 2200 char).
+    const rawContent = String(fess.content || '');
+    const caption =
+      rawContent.length > 2100 ? `${rawContent.slice(0, 2100).trimEnd()}\u2026` : rawContent;
 
     // Meta Graph API butuh URL publik HTTP(S) — lewati data-URI.
     const hasPublicUrl = imageUrls.some((u) => !u.startsWith('data:'));
     if (hasPublicUrl) {
       try {
-        ig_result = await InstagramService.autoPostFess(
-          fess.baseHandle,
-          fess.id,
-          imageUrls,
-          fess.content.slice(0, 200)
-        );
+        ig_result = await InstagramService.autoPostFess(fess.baseHandle, fess.id, postItems, caption);
         if (ig_result?.meta_published === true) {
           posted_to.push('instagram');
         }
@@ -125,7 +135,15 @@ export class CanvasService {
       });
     }
 
-    return { image_url: imageUrls[0] || '', image_urls: imageUrls, posted_to, ig_result };
+    const cardUrls = cardItems.map((c) => c.url);
+    return {
+      image_url: cardUrls[0] || '',
+      image_urls: cardUrls,
+      card_count: cardUrls.length,
+      media_count: mediaItems.length,
+      posted_to,
+      ig_result,
+    };
   }
 
   /**
@@ -230,7 +248,7 @@ export class CanvasService {
     const firstContentY = quoteBlock ? PAD + 148 + quoteBlock.height + 24 : restContentY;
 
     // ── Pilih ukuran font terbesar yang muat ≤ MAX_PAGES halaman ───────────
-    const tiers = isSquare ? [34, 30, 26, 22] : [36, 32, 28, 24];
+    const tiers = isSquare ? [38, 33, 28, 24] : [42, 36, 30, 26];
     let fontSize = tiers[0];
     let lineHeightPx = Math.round(fontSize * 1.42);
     let pages: TextPage[] = [];
@@ -389,6 +407,24 @@ function pickAccentInk(color: string): string {
   const b = parseInt(match[1].slice(4, 6), 16);
   const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
   return luminance > 0.72 ? '#0038ff' : color;
+}
+
+/** Media user (gambar/video) yang layak ikut diposting ke Instagram. */
+function collectMediaItems(media: unknown): { type: 'image' | 'video'; url: string }[] {
+  if (!Array.isArray(media)) return [];
+  const items: { type: 'image' | 'video'; url: string }[] = [];
+  for (const entry of media) {
+    const url = String((entry as any)?.url || '');
+    if (!/^https?:\/\//i.test(url)) continue;
+    const isVideo = (entry as any)?.type === 'video';
+    // Meta hanya menerima video MP4/MOV (M4V) — lewati format lain.
+    if (isVideo && !/\.(mp4|mov|m4v)(\?.*)?$/i.test(url)) {
+      console.warn('[Canvas] Media video dilewati (bukan MP4/MOV/M4V):', url);
+      continue;
+    }
+    items.push({ type: isVideo ? 'video' : 'image', url });
+  }
+  return items;
 }
 
 // ── Pengukuran teks (opentype.js) ──────────────────────────────────────────
@@ -572,10 +608,10 @@ function buildQuoteBlock(
   width: number,
   theme: { isDark: boolean; textColor: string; subtextColor: string; cardBorder: string; accentColor: string }
 ): { svg: string; height: number } {
-  const PADQ = 16;
-  const HEADER_H = 40;
-  const QFONT = 20;
-  const QLH = 28;
+  const PADQ = 18;
+  const HEADER_H = 48;
+  const QFONT = 25;
+  const QLH = 34;
 
   const rawHandle = String(quote.handle || quote.senderHandle || '@anonim');
   const handle = rawHandle.startsWith('@') ? rawHandle : `@${rawHandle}`;
@@ -603,28 +639,28 @@ function buildQuoteBlock(
     }
   }
 
-  const height = PADQ + HEADER_H + Math.max(1, qlines.length) * QLH + 12;
+  const height = PADQ + HEADER_H + Math.max(1, qlines.length) * QLH + 14;
   const boxBg = theme.isDark ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.07)';
 
-  const avatarCx = x + PADQ + 17;
+  const avatarCx = x + PADQ + 21;
   const avatarCy = y + PADQ + HEADER_H / 2;
-  const handleX = x + PADQ + 44;
-  const handleY = y + PADQ + 26;
+  const handleX = x + PADQ + 56;
+  const handleY = y + PADQ + 33;
 
-  const handleWidth = measureFont ? measureFont.getAdvanceWidth(handle, 19) : approxWidth(handle, 19);
+  const handleWidth = measureFont ? measureFont.getAdvanceWidth(handle, 22) : approxWidth(handle, 22);
   const timeSvg = time
-    ? `<text x="${(handleX + handleWidth + 10).toFixed(1)}" y="${handleY - 1}" font-family="Poppins, Arial, sans-serif" font-size="15" font-weight="500" fill="${theme.subtextColor}">${escapeXml(time)}</text>`
+    ? `<text x="${(handleX + handleWidth + 12).toFixed(1)}" y="${handleY - 1}" font-family="Poppins, Arial, sans-serif" font-size="16" font-weight="500" fill="${theme.subtextColor}">${escapeXml(time)}</text>`
     : '';
 
-  const pillW = 66;
-  const pillH = 26;
+  const pillW = 78;
+  const pillH = 30;
   const pillX = x + width - PADQ - pillW;
-  const pillY = y + PADQ + 7;
+  const pillY = y + PADQ + 8;
 
   const linesSvg = renderTextLines(
     qlines,
     x + PADQ,
-    y + PADQ + HEADER_H + 16,
+    y + PADQ + HEADER_H + 18,
     QFONT,
     QLH,
     theme.subtextColor,
@@ -634,15 +670,15 @@ function buildQuoteBlock(
   const svg = `<!-- Quoted fess box -->
   <rect x="${x}" y="${y}" width="${width}" height="${height}" rx="18"
         fill="${boxBg}" stroke="${theme.cardBorder}" stroke-width="1.5"/>
-  <circle cx="${avatarCx}" cy="${avatarCy}" r="17" fill="${avatarBg}"/>
-  <text x="${avatarCx}" y="${avatarCy + 5}" font-family="Poppins, Arial, sans-serif" font-size="15"
+  <circle cx="${avatarCx}" cy="${avatarCy}" r="21" fill="${avatarBg}"/>
+  <text x="${avatarCx}" y="${avatarCy + 6}" font-family="Poppins, Arial, sans-serif" font-size="17"
         font-weight="800" fill="#ffffff" text-anchor="middle">${escapeXml(avatarText)}</text>
-  <text x="${handleX}" y="${handleY}" font-family="Poppins, Arial, sans-serif" font-size="19"
+  <text x="${handleX}" y="${handleY}" font-family="Poppins, Arial, sans-serif" font-size="22"
         font-weight="700" fill="${theme.textColor}">${escapeXml(handle)}</text>
   ${timeSvg}
-  <rect x="${pillX}" y="${pillY}" width="${pillW}" height="${pillH}" rx="13"
+  <rect x="${pillX}" y="${pillY}" width="${pillW}" height="${pillH}" rx="15"
         fill="${theme.accentColor}" fill-opacity="0.16" stroke="${theme.accentColor}" stroke-opacity="0.3" stroke-width="1"/>
-  <text x="${(pillX + pillW / 2).toFixed(1)}" y="${pillY + 18}" font-family="Poppins, Arial, sans-serif" font-size="13"
+  <text x="${(pillX + pillW / 2).toFixed(1)}" y="${pillY + 20}" font-family="Poppins, Arial, sans-serif" font-size="15"
         font-weight="800" fill="${theme.accentColor}" text-anchor="middle">Kutip</text>
   ${linesSvg}`;
 

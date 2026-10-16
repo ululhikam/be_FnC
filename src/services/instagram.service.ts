@@ -10,6 +10,12 @@ export interface InstagramProfileData {
   verified: boolean;
 }
 
+/** Satu item media yang akan diposting ke Instagram (card atau media user). */
+export interface PostMediaItem {
+  type: 'image' | 'video';
+  url: string;
+}
+
 export class InstagramService {
   /**
    * Generate Meta Instagram OAuth authorization URL
@@ -219,21 +225,27 @@ export class InstagramService {
   }
 
   /**
-   * Auto-post fess card ke Instagram Feed via Meta Content Publishing API.
-   * Menerima 1 gambar (post tunggal) atau 2–10 gambar (carousel).
+   * Auto-post fess ke Instagram Feed via Meta Content Publishing API.
+   * Menerima 1 media (post tunggal / Reels) atau 2–10 media gambar+video
+   * (carousel) — item berupa string dianggap gambar.
    */
   static async autoPostFess(
     baseHandle: string,
     fessId: string,
-    imageUrls: string | string[],
+    media: PostMediaItem | PostMediaItem[] | string | string[],
     caption: string
   ) {
     try {
-      // Normalisasi daftar gambar: buang data-URI (Meta butuh URL publik) & batasi 10 (max carousel).
-      const urls = (Array.isArray(imageUrls) ? imageUrls : [imageUrls])
-        .filter((u) => typeof u === 'string' && u.length > 0 && !u.startsWith('data:'))
+      // Normalisasi daftar media: buang data-URI (Meta butuh URL publik) &
+      // batasi 10 item (maksimum carousel Instagram).
+      const items: PostMediaItem[] = (Array.isArray(media) ? media : [media])
+        .map((m) => (typeof m === 'string' ? { type: 'image' as const, url: m } : m))
+        .filter(
+          (m): m is PostMediaItem =>
+            !!m && typeof m.url === 'string' && m.url.length > 0 && !m.url.startsWith('data:')
+        )
         .slice(0, 10);
-      const isCarousel = urls.length > 1;
+      const isCarousel = items.length > 1;
 
       // Find base & connected admin
       const base = prisma.base?.findUnique
@@ -262,21 +274,23 @@ export class InstagramService {
       let postCreationId: string | null = null;
 
       // If active Instagram access token exists, trigger Meta Content Publishing API (Feed only)
-      if (connection?.connected && connection.accessToken && !connection.accessToken.startsWith('mock_') && urls.length) {
+      if (connection?.connected && connection.accessToken && !connection.accessToken.startsWith('mock_') && items.length) {
         try {
           const apiBase = 'https://graph.instagram.com/v19.0';
           const captionText = `${caption}\n\nDiposting via Fess n Curious (${baseHandle})`;
 
           if (isCarousel) {
-            // 1. Buat item container untuk tiap gambar (tanpa caption)
+            // 1. Buat item container untuk tiap media (gambar/video, tanpa caption)
             const itemIds: string[] = [];
-            for (const url of urls) {
+            for (const item of items) {
+              const params: Record<string, string> =
+                item.type === 'video'
+                  ? { video_url: item.url, media_type: 'VIDEO', is_carousel_item: 'true' }
+                  : { image_url: item.url, is_carousel_item: 'true' };
+              params.access_token = connection.accessToken;
+
               const itemRes = await axios.post(`${apiBase}/me/media`, null, {
-                params: {
-                  image_url: url,
-                  is_carousel_item: 'true',
-                  access_token: connection.accessToken,
-                },
+                params,
                 timeout: 15000,
               });
               const itemId = itemRes.data?.id;
@@ -284,10 +298,8 @@ export class InstagramService {
               itemIds.push(itemId);
             }
 
-            // 2. Tunggu tiap item selesai diproses sebelum merakit carousel.
-            for (const itemId of itemIds) {
-              await InstagramService.waitForContainerFinished(itemId, connection.accessToken);
-            }
+            // 2. Tunggu semua item selesai diproses (dicek paralel) sebelum merakit carousel.
+            await InstagramService.waitForContainersFinished(itemIds, connection.accessToken);
 
             // 3. Rakit container carousel (caption menempel di container, bukan item)
             const carRes = await axios.post(`${apiBase}/me/media`, null, {
@@ -301,11 +313,23 @@ export class InstagramService {
             });
             postCreationId = carRes.data?.id || null;
             if (!postCreationId) throw new Error('Gagal membuat carousel container (tanpa id).');
+          } else if (items[0].type === 'video') {
+            // 1. Video tunggal → Reels (media video Feed via API).
+            const containerRes = await axios.post(`${apiBase}/me/media`, null, {
+              params: {
+                media_type: 'REELS',
+                video_url: items[0].url,
+                caption: captionText,
+                access_token: connection.accessToken,
+              },
+              timeout: 15000,
+            });
+            postCreationId = containerRes.data?.id || null;
           } else {
             // 1. Buat Feed Media Container tunggal (mendukung 1:1 dan 4:5)
             const containerRes = await axios.post(`${apiBase}/me/media`, null, {
               params: {
-                image_url: urls[0],
+                image_url: items[0].url,
                 caption: captionText,
                 access_token: connection.accessToken,
               },
@@ -337,7 +361,11 @@ export class InstagramService {
       }
 
       // Record audit log
-      const mediaLabel = isCarousel ? `carousel ${urls.length} card` : 'visual Feed card';
+      const mediaLabel = isCarousel
+        ? `carousel ${items.length} media`
+        : items[0]?.type === 'video'
+          ? 'video Reels'
+          : 'visual Feed card';
       await prisma.systemLog.create({
         data: {
           source: 'CANVAS_WORKER',
@@ -353,13 +381,14 @@ export class InstagramService {
         platform: 'instagram',
         meta_published: metaPublished,
         creation_id: postCreationId,
-        imageUrl: urls[0] || null,
-        imageUrls: urls,
+        imageUrl: items[0]?.url || null,
+        imageUrls: items.map((item) => item.url),
+        items,
         is_carousel: isCarousel,
         fessId,
         base_ig: baseIg,
         message: metaPublished
-          ? `Card fess #${fessId} berhasil diposting otomatis ke Instagram Feed ${baseIg}${isCarousel ? ` (carousel ${urls.length} card)` : ''}!`
+          ? `Card fess #${fessId} berhasil diposting otomatis ke Instagram Feed ${baseIg}${isCarousel ? ` (carousel ${items.length} media)` : ''}!`
           : `Card fess #${fessId} berhasil di-render dan siap diposting ke Instagram Feed ${baseIg}.`,
       };
     } catch (err: any) {
@@ -373,34 +402,56 @@ export class InstagramService {
   }
 
   /**
-   * Tunggu container media Meta selesai diproses (status FINISHED) sebelum publish.
+   * Tunggu beberapa container media Meta selesai diproses (status FINISHED)
+   * sebelum dipakai/dipublikasikan — status tiap container dicek paralel.
    * Publish saat container masih IN_PROGRESS selalu gagal: "Media ID is not available".
    */
-  private static async waitForContainerFinished(containerId: string, accessToken: string): Promise<void> {
+  private static async waitForContainersFinished(
+    containerIds: string[],
+    accessToken: string
+  ): Promise<void> {
+    const pending = new Set(containerIds);
     const deadline = Date.now() + 30_000;
-    let statusCode = 'IN_PROGRESS';
 
-    while (Date.now() < deadline) {
-      try {
-        const statusRes = await axios.get(`https://graph.instagram.com/v19.0/${containerId}`, {
-          params: { fields: 'status_code', access_token: accessToken },
-          timeout: 10000,
-        });
-        statusCode = statusRes.data?.status_code || statusCode;
-      } catch (statusErr: any) {
-        console.warn(
-          '[Instagram AutoPost] Status check warning:',
-          statusErr.response?.data?.error?.message || statusErr.message
-        );
+    while (pending.size > 0 && Date.now() < deadline) {
+      const results = await Promise.allSettled(
+        Array.from(pending).map(async (id) => {
+          const statusRes = await axios.get(`https://graph.instagram.com/v19.0/${id}`, {
+            params: { fields: 'status_code', access_token: accessToken },
+            timeout: 10000,
+          });
+          return { id, status: String(statusRes.data?.status_code || 'IN_PROGRESS') };
+        })
+      );
+
+      for (const res of results) {
+        if (res.status === 'fulfilled') {
+          if (res.value.status === 'FINISHED') {
+            pending.delete(res.value.id);
+          } else if (res.value.status === 'ERROR' || res.value.status === 'EXPIRED') {
+            throw new Error(
+              `Container media Meta berstatus ${res.value.status} - periksa format/rasio media.`
+            );
+          }
+        } else {
+          const err: any = res.reason;
+          console.warn(
+            '[Instagram AutoPost] Status check warning:',
+            err?.response?.data?.error?.message || err?.message
+          );
+        }
       }
 
-      if (statusCode === 'FINISHED') return;
-      if (statusCode === 'ERROR' || statusCode === 'EXPIRED') {
-        throw new Error(`Container media Meta berstatus ${statusCode} - periksa format/rasio gambar.`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 2500));
+      if (pending.size > 0) await new Promise((resolve) => setTimeout(resolve, 2500));
     }
 
-    throw new Error('Container media Meta belum siap (masih IN_PROGRESS) setelah 30 detik.');
+    if (pending.size > 0) {
+      throw new Error('Container media Meta belum siap (masih IN_PROGRESS) setelah 30 detik.');
+    }
+  }
+
+  /** Tunggu satu container media Meta selesai diproses sebelum dipublikasikan. */
+  private static async waitForContainerFinished(containerId: string, accessToken: string): Promise<void> {
+    return InstagramService.waitForContainersFinished([containerId], accessToken);
   }
 }

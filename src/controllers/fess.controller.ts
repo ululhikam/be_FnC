@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { FessService } from '../services/fess.service.js';
+import { CanvasService } from '../services/canvas.service.js';
 import { successResponse, errorResponse } from '../utils/response.util.js';
 
 export class FessController {
@@ -88,6 +89,17 @@ export class FessController {
       }
       await FessService.deleteFess(id, req.user);
       return res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async postToInstagram(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = String(req.params.id);
+      const { template, aspect } = req.body || {};
+      const result = await CanvasService.exportFessCanvas(id, template, aspect || 'portrait');
+      return successResponse(res, result, 200);
     } catch (error) {
       next(error);
     }

@@ -7,9 +7,8 @@ export interface AspectConfig {
 }
 
 export const ASPECTS: Record<string, AspectConfig> = {
-  square: { key: 'square', value: '1 / 1', label: 'Persegi 1:1', width: 1080, height: 1080 },
-  portrait: { key: 'portrait', value: '4 / 5', label: 'Potret 4:5', width: 1080, height: 1350 },
-  story: { key: 'story', value: '9 / 16', label: 'Story 9:16', width: 1080, height: 1920 },
+  square: { key: 'square', value: '1 / 1', label: 'Feed Persegi 1:1', width: 1080, height: 1080 },
+  portrait: { key: 'portrait', value: '4 / 5', label: 'Feed Potret 4:5', width: 1080, height: 1350 },
 };
 
 export interface TemplateConfig {
@@ -26,7 +25,7 @@ export const TEMPLATES: TemplateConfig[] = [
   {
     key: 'default',
     label: 'Standar',
-    description: 'Gradien biru–ungu khas FessHub, siap pakai.',
+    description: 'Gradien biru–ungu khas Fess n Curious, siap pakai di feed.',
     aspect: 'portrait',
     ink: 'light',
     background: 'linear-gradient(135deg, #0038ff 0%, #4b1fff 55%, #7000ff 100%)',
@@ -88,9 +87,9 @@ export const TEMPLATES: TemplateConfig[] = [
   },
   {
     key: 'violet',
-    label: 'Cerita',
-    description: 'Format story 9:16, dirancang untuk story Instagram.',
-    aspect: 'story',
+    label: 'Violet',
+    description: 'Format feed potret 4:5, ungu–pink cerah siap auto-post ke Instagram.',
+    aspect: 'portrait',
     ink: 'light',
     background: 'linear-gradient(180deg, #7000ff 0%, #c026d3 45%, #f472b6 100%)',
     accent: '#fdf4ff',

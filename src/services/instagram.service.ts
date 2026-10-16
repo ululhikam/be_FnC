@@ -223,7 +223,7 @@ export class InstagramService {
    */
   static async autoPostFess(baseHandle: string, fessId: string, imageUrl: string, caption: string) {
     try {
-      // Find base & connected admin (with mock safety check)
+      // Find base & connected admin
       const base = prisma.base?.findUnique
         ? await prisma.base.findUnique({
             where: { handle: baseHandle },
@@ -232,6 +232,7 @@ export class InstagramService {
         : null;
 
       const creatorId = base?.creatorId;
+      const baseIg = base?.igAccount || baseHandle;
       let connection = null;
 
       if (creatorId && prisma.platformConnection?.findUnique) {
@@ -245,38 +246,44 @@ export class InstagramService {
         });
       }
 
-      // If active Instagram access token exists, trigger Meta Content Publishing API
+      let metaPublished = false;
+      let postCreationId: string | null = null;
+
+      // If active Instagram access token exists, trigger Meta Content Publishing API (Feed only)
       if (connection?.connected && connection.accessToken && !connection.accessToken.startsWith('mock_')) {
         try {
-          // 1. Create Media Container
+          // 1. Create a Feed Media Container (supports 1:1 square and 4:5 portrait)
           const containerRes = await axios.post(
             `https://graph.instagram.com/v19.0/me/media`,
             null,
             {
               params: {
                 image_url: imageUrl,
-                caption,
+                caption: `${caption}\n\nDiposting via Fess n Curious (${baseHandle})`,
                 access_token: connection.accessToken,
               },
               timeout: 15000,
             }
           );
 
-          const creationId = containerRes.data?.id;
+          postCreationId = containerRes.data?.id;
 
-          // 2. Publish Media Container
-          if (creationId) {
-            await axios.post(
+          // 2. Publish the Feed Media Container
+          if (postCreationId) {
+            const pubRes = await axios.post(
               `https://graph.instagram.com/v19.0/me/media_publish`,
               null,
               {
                 params: {
-                  creation_id: creationId,
+                  creation_id: postCreationId,
                   access_token: connection.accessToken,
                 },
                 timeout: 15000,
               }
             );
+            if (pubRes.data?.id) {
+              metaPublished = true;
+            }
           }
         } catch (apiErr: any) {
           console.warn('[Instagram AutoPost] Meta API warning:', apiErr.response?.data?.error?.message || apiErr.message);
@@ -287,7 +294,7 @@ export class InstagramService {
       await prisma.systemLog.create({
         data: {
           source: 'CANVAS_WORKER',
-          message: `Fess #${fessId} berhasil di-render dan dipublikasikan ke Story ${baseHandle} via Instagram Graph API.`,
+          message: `Fess #${fessId} berhasil di-render ke visual Feed card (${baseIg}) dan siap dipublikasikan ke Instagram Feed.`,
           tone: 'ok',
         },
       });
@@ -295,8 +302,14 @@ export class InstagramService {
       return {
         success: true,
         platform: 'instagram',
+        meta_published: metaPublished,
+        creation_id: postCreationId,
         imageUrl,
         fessId,
+        base_ig: baseIg,
+        message: metaPublished
+          ? `Card fess #${fessId} berhasil diposting otomatis ke Instagram Feed ${baseIg}!`
+          : `Card fess #${fessId} berhasil di-render dan siap diposting ke Instagram Feed ${baseIg}.`,
       };
     } catch (err: any) {
       console.error('[Instagram AutoPost Error]', err.message);

@@ -239,7 +239,7 @@ export class FessService {
 
       // Efek publikasi yang sama dengan approveFess (auto-post sosmed).
       // Non-blocking background task agar respon HTTP tidak tertahan render/upload canvas
-      CanvasService.exportFessCanvas(fess.id, fess.template || 'default', 'story').catch((err) => {
+      CanvasService.exportFessCanvas(fess.id, fess.template || 'default', 'portrait').catch((err) => {
         console.error(`[AutoPost] Gagal export canvas fess ${fess.id}:`, err);
       });
     }
@@ -566,9 +566,9 @@ export class FessService {
       invalidateCache('fesses:');
     }
 
-    // Auto-post trigger to social media (Instagram, Twitter, Telegram)
+    // Auto-post trigger to social media (Instagram Feed)
     // Non-blocking background task: jangan gunakan await agar tidak menahan response HTTP approve
-    CanvasService.exportFessCanvas(id, fess.template || 'default', 'story').catch((err) => {
+    CanvasService.exportFessCanvas(id, fess.template || 'default', 'portrait').catch((err) => {
       console.error(`[AutoPost] Gagal export canvas fess ${id}:`, err);
     });
 

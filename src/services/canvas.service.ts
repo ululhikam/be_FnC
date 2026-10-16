@@ -1,3 +1,4 @@
+﻿import sharp from 'sharp';
 import { ASPECTS, getTemplateByKey } from '../constants/templates.js';
 import { StorageService } from './storage.service.js';
 import { prisma } from '../config/prisma.js';
@@ -6,11 +7,13 @@ import { InstagramService } from './instagram.service.js';
 export interface CanvasExportResult {
   image_url: string;
   posted_to: ('instagram' | 'twitter' | 'telegram')[];
+  ig_result?: any;
 }
 
 export class CanvasService {
   /**
-   * Render confession to an image URL matching template and aspect ratio
+   * Render confession card â†’ PNG â†’ upload to Supabase â†’ auto-post to Instagram Feed.
+   * aspectKey must be 'square' (1:1) or 'portrait' (4:5). Any unknown key falls back to 'portrait'.
    */
   static async exportFessCanvas(
     fessId: string,
@@ -26,56 +29,178 @@ export class CanvasService {
       throw new Error('Fess tidak ditemukan');
     }
 
-    const template = getTemplateByKey(templateKey);
-    const aspect = ASPECTS[aspectKey] || ASPECTS.portrait;
+    const template = getTemplateByKey(templateKey || fess.template || 'default');
+    // Resolve aspect â€” 'story' legacy key falls back to 'portrait'
+    const aspect = ASPECTS[aspectKey] || (template.aspect === 'square' ? ASPECTS.square : ASPECTS.portrait);
 
-    // Generate high quality SVG representation of the card
-    const svgCard = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="${aspect.width}" height="${aspect.height}" viewBox="0 0 ${aspect.width} ${aspect.height}">
-        <defs>
-          <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#0038ff" />
-            <stop offset="55%" stop-color="#4b1fff" />
-            <stop offset="100%" stop-color="#7000ff" />
-          </linearGradient>
-        </defs>
-        <rect width="100%" height="100%" fill="url(#bg)" />
-        <rect x="60" y="80" width="${aspect.width - 120}" height="${aspect.height - 160}" rx="32" fill="rgba(255, 255, 255, 0.08)" stroke="rgba(255, 255, 255, 0.2)" stroke-width="2" />
-        
-        <!-- Header -->
-        <circle cx="130" cy="160" r="36" fill="${template.accent}" opacity="0.3" />
-        <text x="130" y="172" font-family="sans-serif" font-size="28" font-weight="bold" fill="#ffffff" text-anchor="middle">
-          ${fess.base?.initial || 'FH'}
-        </text>
-        <text x="190" y="155" font-family="sans-serif" font-size="32" font-weight="bold" fill="#ffffff">
-          ${escapeXml(fess.base?.name || fess.baseHandle)}
-        </text>
-        <text x="190" y="185" font-family="sans-serif" font-size="24" fill="rgba(255,255,255,0.7)">
-          ${escapeXml(fess.baseHandle)} • FessHub
-        </text>
+    // â”€â”€ Visual variables â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const baseName = fess.base?.name || fess.baseHandle || 'Confession Base';
+    const baseInitial = (
+      fess.base?.initial ||
+      (fess.baseHandle ? fess.baseHandle.replace(/^@/, '').slice(0, 2) : 'FC')
+    ).toUpperCase();
+    const baseIg = fess.base?.igAccount
+      ? fess.base.igAccount.startsWith('@')
+        ? fess.base.igAccount
+        : `@${fess.base.igAccount}`
+      : fess.baseHandle;
 
-        <!-- Content -->
-        <foreignObject x="100" y="240" width="${aspect.width - 200}" height="${aspect.height - 440}">
-          <div xmlns="http://www.w3.org/1999/xhtml" style="font-family: sans-serif; font-size: 38px; line-height: 1.5; color: #ffffff; word-wrap: break-word;">
-            ${escapeXml(fess.content)}
-          </div>
-        </foreignObject>
+    const isDark = template.ink === 'dark';
+    const textColor = isDark ? '#1a1a2e' : '#ffffff';
+    const subtextColor = isDark ? 'rgba(26,26,46,0.7)' : 'rgba(255,255,255,0.75)';
+    const cardBg = isDark ? 'rgba(255,255,255,0.88)' : 'rgba(255,255,255,0.08)';
+    const cardBorder = isDark ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.18)';
+    const accentColor = template.accent || (isDark ? '#0038ff' : '#00b2ff');
 
-        <!-- Footer -->
-        <text x="100" y="${aspect.height - 120}" font-family="sans-serif" font-size="24" fill="rgba(255,255,255,0.6)">
-          Diterbitkan melalui FessHub • Instagram Story Auto-Post
-        </text>
-      </svg>
-    `;
+    // â”€â”€ Gradient definitions per template â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const gradients: Record<string, string> = {
+      default: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#0038ff"/>
+        <stop offset="50%" stop-color="#4b1fff"/>
+        <stop offset="100%" stop-color="#7000ff"/>
+      </linearGradient>`,
+      midnight: `<radialGradient id="bgGrad" cx="30%" cy="20%" r="80%">
+        <stop offset="0%" stop-color="#1e295d"/>
+        <stop offset="60%" stop-color="#0a0e27"/>
+        <stop offset="100%" stop-color="#030511"/>
+      </radialGradient>`,
+      sunset: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#ff6b35"/>
+        <stop offset="45%" stop-color="#f72585"/>
+        <stop offset="100%" stop-color="#7209b7"/>
+      </linearGradient>`,
+      forest: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#0f766e"/>
+        <stop offset="60%" stop-color="#064e3b"/>
+        <stop offset="100%" stop-color="#022c22"/>
+      </linearGradient>`,
+      noir: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+        <stop offset="0%" stop-color="#0f111a"/>
+        <stop offset="50%" stop-color="#161926"/>
+        <stop offset="100%" stop-color="#090a10"/>
+      </linearGradient>`,
+      paper: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#fef8ee"/>
+        <stop offset="60%" stop-color="#f5ede0"/>
+        <stop offset="100%" stop-color="#e9dfcf"/>
+      </linearGradient>`,
+      ocean: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#06b6d4"/>
+        <stop offset="45%" stop-color="#0284c7"/>
+        <stop offset="100%" stop-color="#1e3a8a"/>
+      </linearGradient>`,
+      violet: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#7c3aed"/>
+        <stop offset="50%" stop-color="#c026d3"/>
+        <stop offset="100%" stop-color="#f43f5e"/>
+      </linearGradient>`,
+    };
+    const bgDef = gradients[template.key] || gradients.default;
 
-    const buffer = Buffer.from(svgCard, 'utf-8');
+    // â”€â”€ Dynamic font sizing based on content length & aspect â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const textLen = (fess.content || '').length;
+    const isSquare = aspect.key === 'square';
+    let fontSize = isSquare ? 36 : 40;
+    let lineHeight = 1.45;
+    if (textLen > 350) {
+      fontSize = isSquare ? 23 : 26;
+      lineHeight = 1.38;
+    } else if (textLen > 200) {
+      fontSize = isSquare ? 26 : 30;
+      lineHeight = 1.4;
+    } else if (textLen > 100) {
+      fontSize = isSquare ? 30 : 34;
+      lineHeight = 1.42;
+    }
+
+    const W = aspect.width;
+    const H = aspect.height;
+    const PAD = 56;
+    const cardW = W - PAD * 2;
+    const cardH = H - PAD * 2;
+
+    // â”€â”€ Build SVG with native tspan word-wrap (sharp-compatible, no foreignObject) â”€â”€
+    const textSvg = buildTextLines(fess.content, cardW - 120, fontSize, lineHeight, PAD + 60, PAD + 195, textColor);
+
+    const svgCard = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+  <defs>
+    ${bgDef}
+    <filter id="cardShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="18" stdDeviation="28" flood-color="#000000" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="${W}" height="${H}" fill="url(#bgGrad)"/>
+
+  <!-- Dot grid overlay -->
+  <pattern id="dots" width="30" height="30" patternUnits="userSpaceOnUse">
+    <circle cx="7.5" cy="7.5" r="1.5" fill="rgba(255,255,255,0.10)"/>
+  </pattern>
+  <rect width="${W}" height="${H}" fill="url(#dots)"/>
+
+  <!-- Card panel -->
+  <rect x="${PAD}" y="${PAD}" width="${cardW}" height="${cardH}" rx="36"
+        fill="${cardBg}" stroke="${cardBorder}" stroke-width="2"
+        filter="url(#cardShadow)"/>
+
+  <!-- Avatar -->
+  <circle cx="${PAD + 74}" cy="${PAD + 74}" r="38" fill="${accentColor}" opacity="0.25"/>
+  <circle cx="${PAD + 74}" cy="${PAD + 74}" r="32" fill="${accentColor}"/>
+  <text x="${PAD + 74}" y="${PAD + 83}" font-family="Arial,sans-serif" font-size="22"
+        font-weight="900" fill="#fff" text-anchor="middle">${escapeXml(baseInitial)}</text>
+
+  <!-- Base name & handle -->
+  <text x="${PAD + 126}" y="${PAD + 63}" font-family="Arial,sans-serif" font-size="26"
+        font-weight="900" fill="${textColor}">${escapeXml(baseName)}</text>
+  <text x="${PAD + 126}" y="${PAD + 93}" font-family="Arial,sans-serif" font-size="18"
+        font-weight="600" fill="${subtextColor}">${escapeXml(fess.baseHandle)} Â· Fess n Curious</text>
+
+  <!-- Tag pill -->
+  <rect x="${PAD + cardW - 130}" y="${PAD + 50}" width="106" height="34" rx="17"
+        fill="${accentColor}" opacity="0.22"/>
+  <text x="${PAD + cardW - 77}" y="${PAD + 73}" font-family="Arial,sans-serif" font-size="14"
+        font-weight="800" fill="${accentColor}" text-anchor="middle">${escapeXml(fess.tag || 'Confession')}</text>
+
+  <!-- Opening quote -->
+  <text x="${PAD + 52}" y="${PAD + 172}" font-family="serif" font-size="72"
+        font-weight="bold" fill="${accentColor}" opacity="0.28">"</text>
+
+  <!-- Confession text -->
+  ${textSvg}
+
+  <!-- Footer divider -->
+  <line x1="${PAD + 58}" y1="${PAD + cardH - 72}" x2="${PAD + cardW - 58}" y2="${PAD + cardH - 72}"
+        stroke="${cardBorder}" stroke-width="1.5"/>
+
+  <!-- Footer branding -->
+  <text x="${PAD + 58}" y="${PAD + cardH - 36}" font-family="Arial,sans-serif" font-size="17"
+        font-weight="800" fill="${textColor}">Instagram Feed Â· ${escapeXml(baseIg)}</text>
+  <text x="${PAD + cardW - 58}" y="${PAD + cardH - 36}" font-family="Arial,sans-serif" font-size="15"
+        font-weight="600" fill="${subtextColor}" text-anchor="end">fessncurious.vercel.app</text>
+</svg>`;
+
+    // â”€â”€ SVG â†’ PNG via sharp (Meta Graph API only accepts JPEG/PNG URLs) â”€â”€â”€â”€
+    const svgBuffer = Buffer.from(svgCard, 'utf-8');
+    let uploadBuffer: Buffer = svgBuffer;
+    let mimeType = 'image/svg+xml';
+    let fileExt = 'svg';
+
+    try {
+      uploadBuffer = await sharp(svgBuffer).png({ quality: 95, compressionLevel: 6 }).toBuffer();
+      mimeType = 'image/png';
+      fileExt = 'png';
+    } catch (sharpErr: any) {
+      console.warn('[Canvas] sharp PNG conversion failed, falling back to SVG:', sharpErr.message);
+    }
+
     const mockFile: Express.Multer.File = {
       fieldname: 'file',
-      originalname: `canvas_${fessId}_${templateKey}_${aspectKey}.svg`,
+      originalname: `canvas_${fessId}_${template.key}_${aspect.key}.${fileExt}`,
       encoding: '7bit',
-      mimetype: 'image/svg+xml',
-      size: buffer.length,
-      buffer,
+      mimetype: mimeType,
+      size: uploadBuffer.length,
+      buffer: uploadBuffer,
       destination: '',
       filename: '',
       path: '',
@@ -84,35 +209,109 @@ export class CanvasService {
 
     const upload = await StorageService.uploadMedia(mockFile, 'canvas-exports');
 
-    // Auto-post trigger simulation to connected platforms
-    const posted_to: ('instagram' | 'twitter' | 'telegram')[] = ['instagram'];
+    // â”€â”€ Auto-post to Instagram Feed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const posted_to: ('instagram' | 'twitter' | 'telegram')[] = [];
+    let ig_result: any = null;
 
-    // Call Instagram auto-post handler
-    await InstagramService.autoPostFess(
-      fess.baseHandle,
-      fess.id,
-      upload.url,
-      fess.content.slice(0, 100)
-    );
+    // Meta Graph API requires a publicly accessible HTTP(S) URL â€” skip data-URIs
+    if (!upload.url.startsWith('data:')) {
+      try {
+        ig_result = await InstagramService.autoPostFess(
+          fess.baseHandle,
+          fess.id,
+          upload.url,
+          fess.content.slice(0, 200)
+        );
+        if (ig_result?.success !== false) {
+          posted_to.push('instagram');
+        }
+      } catch (igErr: any) {
+        console.warn('[Canvas] Instagram auto-post failed:', igErr.message);
+      }
+    } else {
+      console.warn(
+        '[Canvas] Storage returned a data-URI â€” Instagram auto-post skipped.' +
+        ' Configure SUPABASE_URL/SUPABASE_KEY for production IG posting.'
+      );
+    }
 
-    // Update fess postedToIg flag
+    // Mark fess as posted
     await prisma.fess.update({
       where: { id: fessId },
       data: { postedToIg: true },
     });
 
-    return {
-      image_url: upload.url,
-      posted_to,
-    };
+    return { image_url: upload.url, posted_to, ig_result };
   }
 }
 
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
 function escapeXml(unsafe: string): string {
-  return unsafe
+  if (!unsafe) return '';
+  return String(unsafe)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
+}
+
+/**
+ * Wrap text into SVG <text> element with <tspan> lines.
+ * Uses character-count heuristic (no canvas measurement in Node).
+ */
+function buildTextLines(
+  content: string,
+  maxWidth: number,
+  fontSize: number,
+  lineHeightRatio: number,
+  x: number,
+  y: number,
+  color: string
+): string {
+  const charsPerLine = Math.max(10, Math.floor(maxWidth / (fontSize * 0.55)));
+  const lineHeightPx = Math.round(fontSize * lineHeightRatio);
+  const maxLines = 12;
+
+  const paragraphs = (content || '').split(/\n/);
+  const lines: string[] = [];
+
+  for (const para of paragraphs) {
+    if (lines.length >= maxLines) break;
+    if (para.trim() === '') {
+      lines.push('');
+      continue;
+    }
+    const words = para.split(' ');
+    let current = '';
+    for (const word of words) {
+      if (lines.length >= maxLines) break;
+      const test = current ? `${current} ${word}` : word;
+      if (test.length > charsPerLine && current) {
+        lines.push(current);
+        current = word;
+      } else {
+        current = test;
+      }
+    }
+    if (current && lines.length < maxLines) lines.push(current);
+  }
+
+  // Add ellipsis if truncated
+  if (lines.length === maxLines && content.length > lines.join(' ').length) {
+    const last = lines[lines.length - 1];
+    lines[lines.length - 1] = last.slice(0, -2) + 'â€¦';
+  }
+
+  const tspans = lines
+    .map((line, i) =>
+      `<tspan x="${x}" dy="${i === 0 ? 0 : lineHeightPx}">${escapeXml(line || '\u00A0')}</tspan>`
+    )
+    .join('\n    ');
+
+  return `<text x="${x}" y="${y}" font-family="Arial,sans-serif" font-size="${fontSize}"
+      font-weight="600" fill="${color}" xml:space="preserve">
+    ${tspans}
+  </text>`;
 }

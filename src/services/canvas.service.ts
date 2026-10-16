@@ -268,6 +268,7 @@ export class CanvasService {
     return pages.map((page, idx) => {
       const contentY = idx === 0 ? firstContentY : restContentY;
       const textSvg = renderTextLines(page, contentX, contentY, fontSize, lineHeightPx, textColor, 600);
+      const pageQuote = idx === 0 ? quoteBlock : null;
       const decoQuote =
         idx === 0 && !quoteBlock
           ? `<!-- Opening quote -->
@@ -317,7 +318,7 @@ export class CanvasService {
   <text x="${PAD + cardW - 77}" y="${PAD + 73}" font-family="Poppins, Arial, sans-serif" font-size="14"
         font-weight="800" fill="${accentInk}" text-anchor="middle">${escapeXml(fess.tag || 'Confession')}</text>
 
-  ${decoQuote}${quoteBlock ? quoteBlock.svg + '\n\n  ' : ''}<!-- Confession text -->
+  ${decoQuote}${pageQuote ? pageQuote.svg + '\n\n  ' : ''}<!-- Confession text -->
   ${textSvg}
 
   <!-- Footer divider -->

@@ -8,11 +8,32 @@ export interface UploadResult {
   type: 'image' | 'video';
 }
 
+/** Batas ukuran file yang boleh memakai fallback data-URI (dev tanpa storage). */
+const DATA_URI_MAX_BYTES = 2 * 1024 * 1024;
+
+/** Storage dianggap siap pakai bila kredensial diisi (bukan placeholder dummy). */
+function isStorageConfigured(): boolean {
+  return (
+    !!ENV.SUPABASE_URL &&
+    !ENV.SUPABASE_URL.includes('dummy') &&
+    !!ENV.SUPABASE_KEY &&
+    ENV.SUPABASE_KEY !== 'dummy-supabase-key'
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export class StorageService {
   /**
    * Upload file to Supabase Object Storage.
-   * If Supabase is not configured or offline, falls back to data URI or simulated URL
-   * so development and tests never break.
+   *
+   * - Storage terkonfigurasi: upload + 1x percobaan ulang (kegagalan pertama
+   *   sering transien). Bila tetap gagal → throw error dengan pesan jelas;
+   *   TIDAK mengembalikan data-URI/URL palsu agar masalah tidak tersembunyi.
+   * - Storage belum dikonfigurasi (dev/test tanpa kredensial): fallback
+   *   data-URI untuk file < 2MB; file lebih besar ditolak dengan pesan jelas.
    */
   static async uploadMedia(file: Express.Multer.File, folder = 'media'): Promise<UploadResult> {
     const isVideo = file.mimetype.startsWith('video/');
@@ -20,44 +41,60 @@ export class StorageService {
     const ext = file.originalname.split('.').pop() || (isVideo ? 'mp4' : 'jpg');
     const filename = `${folder}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
 
-    try {
-      const supabase = getSupabase();
-      const { data, error } = await supabase.storage
-        .from(ENV.SUPABASE_BUCKET)
-        .upload(filename, file.buffer, {
-          contentType: file.mimetype,
-          upsert: true,
-        });
+    if (isStorageConfigured()) {
+      let lastError = 'penyebab tidak diketahui';
 
-      if (!error && data?.path) {
-        const { data: publicUrlData } = supabase.storage
-          .from(ENV.SUPABASE_BUCKET)
-          .getPublicUrl(data.path);
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const supabase = getSupabase();
+          const { data, error } = await supabase.storage
+            .from(ENV.SUPABASE_BUCKET)
+            .upload(filename, file.buffer, {
+              contentType: file.mimetype,
+              upsert: true,
+            });
 
-        return {
-          url: publicUrlData.publicUrl,
-          thumbnail: isVideo ? publicUrlData.publicUrl : undefined,
-          size: file.size,
-          type,
-        };
+          if (!error && data?.path) {
+            const { data: publicUrlData } = supabase.storage
+              .from(ENV.SUPABASE_BUCKET)
+              .getPublicUrl(data.path);
+
+            return {
+              url: publicUrlData.publicUrl,
+              thumbnail: isVideo ? publicUrlData.publicUrl : undefined,
+              size: file.size,
+              type,
+            };
+          }
+
+          lastError = error?.message || 'respons storage tidak valid';
+        } catch (e: any) {
+          lastError = e?.message || String(e);
+        }
+
+        if (attempt < 2) await sleep(400);
       }
-    } catch {
-      // Fallback below
+
+      console.error(
+        `[storage] Gagal mengunggah ${filename} ke Supabase Storage setelah 2 percobaan: ${lastError}`
+      );
+      throw new Error('Gagal mengunggah file ke storage. Coba lagi beberapa saat.');
     }
 
-    // Fallback: return a data URI for images (< 2MB) or simulated public storage URL
-    const base64 = file.buffer.toString('base64');
-    const fallbackUrl =
-      file.size < 2 * 1024 * 1024
-        ? `data:${file.mimetype};base64,${base64}`
-        : `https://storage.supabase.co/v1/object/public/${ENV.SUPABASE_BUCKET}/${filename}`;
+    // Dev/test tanpa kredensial storage: data-URI hanya untuk file kecil.
+    if (file.size < DATA_URI_MAX_BYTES) {
+      const dataUri = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+      return {
+        url: dataUri,
+        thumbnail: isVideo ? dataUri : undefined,
+        size: file.size,
+        type,
+      };
+    }
 
-    return {
-      url: fallbackUrl,
-      thumbnail: isVideo ? fallbackUrl : undefined,
-      size: file.size,
-      type,
-    };
+    throw new Error(
+      'Storage media belum dikonfigurasi (SUPABASE_URL/SUPABASE_KEY) dan file terlalu besar untuk fallback dev (maks 2MB).'
+    );
   }
 
   /**

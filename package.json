@@ -8,6 +8,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "vercel-build": "prisma generate && tsc -p tsconfig.build.json",
+    "postinstall": "prisma generate",
     "start": "node dist/server.js",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
@@ -33,7 +34,9 @@
     "passport-google-oauth20": "^2.0.0",
     "passport-instagram": "^1.0.0",
     "passport-jwt": "^4.0.1",
+    "prisma": "^6.4.1",
     "resend": "^6.33.0",
+    "typescript": "^5.7.3",
     "zod": "^3.24.2"
   },
   "devDependencies": {
@@ -49,10 +52,8 @@
     "@types/passport-instagram": "^1.0.5",
     "@types/passport-jwt": "^4.0.1",
     "@types/supertest": "^6.0.2",
-    "prisma": "^6.4.1",
     "supertest": "^7.0.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.3",
     "vitest": "^3.0.5"
   }
 }

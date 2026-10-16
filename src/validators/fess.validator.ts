@@ -42,7 +42,9 @@ export const CreateFessSchema = z.object({
 
 export const GetFessesQuerySchema = z.object({
   base: z.string().optional(),
-  status: z.enum(['published', 'pending', 'rejected']).optional(),
+  // 'approved' = alias istilah tampilan frontend untuk fess terbit ('published');
+  // service sudah menanganinya sebagai { in: ['published', 'approved'] }.
+  status: z.enum(['published', 'approved', 'pending', 'rejected']).optional(),
   query: z.string().optional(),
   /** Feed "Mengikuti": hanya fess dari base yang diikuti user. */
   following: z.enum(['true', 'false']).optional(),

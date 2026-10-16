@@ -8,7 +8,12 @@ import {
   VerifyResetOtpSchema,
   ResetPasswordSchema,
 } from '../src/validators/auth.validator.js';
-import { CreateFessSchema, VoteSchema, ReportSchema } from '../src/validators/fess.validator.js';
+import {
+  CreateFessSchema,
+  GetFessesQuerySchema,
+  VoteSchema,
+  ReportSchema,
+} from '../src/validators/fess.validator.js';
 import { AddCommentSchema } from '../src/validators/comment.validator.js';
 import { UpdateBaseSettingsSchema } from '../src/validators/base.validator.js';
 
@@ -134,6 +139,17 @@ describe('Fess Validators', () => {
   it('should validate Report payload', () => {
     const valid = { fess_id: 'fess_101', reason: 'spam', note: 'Iklan judi online' };
     expect(ReportSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it("should accept status 'approved' (alias 'published') on the global fess list", () => {
+    // Panel analitik base admin mengirim status=approved — dulu 422 karena
+    // enum tidak punya alias ini (menyebabkan seluruh panel gagal via Promise.all).
+    expect(
+      GetFessesQuerySchema.safeParse({ base: '@concern_fess', status: 'approved', sort: 'popular', limit: 5 })
+        .success
+    ).toBe(true);
+    expect(GetFessesQuerySchema.safeParse({ status: 'published' }).success).toBe(true);
+    expect(GetFessesQuerySchema.safeParse({ status: 'bogus' }).success).toBe(false);
   });
 });
 

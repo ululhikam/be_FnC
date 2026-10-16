@@ -6,6 +6,7 @@ vi.mock('../src/config/prisma.js', () => ({
   prisma: {
     user: {
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     platformConnection: {
       upsert: vi.fn(),

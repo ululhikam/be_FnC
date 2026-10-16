@@ -99,7 +99,23 @@ export class FessController {
       const id = String(req.params.id);
       const { template, aspect } = req.body || {};
       const result = await CanvasService.exportFessCanvas(id, template, aspect || 'portrait');
-      return successResponse(res, result, 200);
+
+      // Ratakan hasil auto-post agar UI (modal FessCard) bisa membaca
+      // meta_published / message / image_url tanpa nesting ig_result.
+      const ig = result.ig_result || {};
+      return successResponse(
+        res,
+        {
+          image_url: result.image_url,
+          imageUrl: result.image_url,
+          posted_to: result.posted_to,
+          meta_published: ig.meta_published === true,
+          message: ig.message || ig.error || `Card fess ${id} berhasil dirender.`,
+          base_ig: ig.base_ig,
+          ig_result: ig,
+        },
+        200
+      );
     } catch (error) {
       next(error);
     }

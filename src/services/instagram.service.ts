@@ -268,8 +268,41 @@ export class InstagramService {
 
           postCreationId = containerRes.data?.id;
 
-          // 2. Publish the Feed Media Container
+          // 2. Tunggu Meta selesai memproses container (status FINISHED) sebelum publish.
+          //    Publish saat container masih IN_PROGRESS selalu gagal: "Media ID is not available".
           if (postCreationId) {
+            const deadline = Date.now() + 30_000;
+            let statusCode = 'IN_PROGRESS';
+
+            while (Date.now() < deadline) {
+              try {
+                const statusRes = await axios.get(
+                  `https://graph.instagram.com/v19.0/${postCreationId}`,
+                  {
+                    params: { fields: 'status_code', access_token: connection.accessToken },
+                    timeout: 10000,
+                  }
+                );
+                statusCode = statusRes.data?.status_code || statusCode;
+              } catch (statusErr: any) {
+                console.warn(
+                  '[Instagram AutoPost] Status check warning:',
+                  statusErr.response?.data?.error?.message || statusErr.message
+                );
+              }
+
+              if (statusCode === 'FINISHED') break;
+              if (statusCode === 'ERROR' || statusCode === 'EXPIRED') {
+                throw new Error(`Container media Meta berstatus ${statusCode} - periksa format/rasio gambar.`);
+              }
+              await new Promise((resolve) => setTimeout(resolve, 2500));
+            }
+
+            if (statusCode !== 'FINISHED') {
+              throw new Error('Container media Meta belum siap (masih IN_PROGRESS) setelah 30 detik.');
+            }
+
+            // 3. Publish the Feed Media Container
             const pubRes = await axios.post(
               `https://graph.instagram.com/v19.0/me/media_publish`,
               null,
@@ -294,8 +327,10 @@ export class InstagramService {
       await prisma.systemLog.create({
         data: {
           source: 'CANVAS_WORKER',
-          message: `Fess #${fessId} berhasil di-render ke visual Feed card (${baseIg}) dan siap dipublikasikan ke Instagram Feed.`,
-          tone: 'ok',
+          message: metaPublished
+            ? `Fess #${fessId} berhasil dipublikasikan ke Instagram Feed ${baseIg}.`
+            : `Fess #${fessId} dirender ke visual Feed card (${baseIg}), tetapi publikasi ke Instagram belum berhasil.`,
+          tone: metaPublished ? 'ok' : 'error',
         },
       });
 

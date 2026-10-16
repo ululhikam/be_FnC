@@ -222,7 +222,7 @@ export class CanvasService {
           upload.url,
           fess.content.slice(0, 200)
         );
-        if (ig_result?.success !== false) {
+        if (ig_result?.meta_published === true) {
           posted_to.push('instagram');
         }
       } catch (igErr: any) {
@@ -235,11 +235,13 @@ export class CanvasService {
       );
     }
 
-    // Mark fess as posted
-    await prisma.fess.update({
-      where: { id: fessId },
-      data: { postedToIg: true },
-    });
+    // Mark fess as posted (hanya jika benar-benar terbit ke Instagram)
+    if (posted_to.includes('instagram')) {
+      await prisma.fess.update({
+        where: { id: fessId },
+        data: { postedToIg: true },
+      });
+    }
 
     return { image_url: upload.url, posted_to, ig_result };
   }

@@ -26,7 +26,7 @@ vi.mock('../src/services/storage.service.js', () => ({
 
 vi.mock('../src/services/instagram.service.js', () => ({
   InstagramService: {
-    autoPostFess: vi.fn().mockResolvedValue({ success: true, platform: 'instagram' }),
+    autoPostFess: vi.fn().mockResolvedValue({ success: true, platform: 'instagram', meta_published: true }),
   },
 }));
 

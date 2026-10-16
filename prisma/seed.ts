@@ -18,13 +18,13 @@
 //       id: 'usr_admin_01',
 //       username: 'SuperAdmin_GodMode',
 //       handle: '@superadmin',
-//       email: 'superadmin@fesshub.id',
+//       email: 'superadmin@fessncurious.app',
 //       password: defaultPassword,
 //       role: 'Super Admin',
 //       avatar:
 //         'https://images.unsplash.com/photo-1566492031773-4f4e44671857?auto=format&fit=crop&w=150&q=80',
 //       level: 99,
-//       bio: 'Root Administrator of FessHub & AnonBase Engine.',
+//       bio: 'Root Administrator of Fess n Curious.',
 //       badges: ['ROOT SUPER ADMIN', 'FOUNDER'],
 //     },
 //   });
@@ -59,7 +59,7 @@
 //       id: 'usr_anon_99',
 //       username: 'Anon_ShadowX',
 //       handle: '@anon_shadow',
-//       email: 'anon@fesshub.id',
+//       email: 'anon@fessncurious.app',
 //       password: defaultPassword,
 //       role: 'User',
 //       avatar:

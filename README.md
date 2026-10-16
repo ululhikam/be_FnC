@@ -1,6 +1,6 @@
 # Fess n Curious Backend API
 
-Backend REST API untuk platform confession anonim berbasis Base (**Fess n Curious / FessHub**).
+Backend REST API untuk platform confession anonim berbasis Base (**Fess n Curious**).
 Dibangun mengikuti spesifikasi lengkap OpenAPI 3.1 dari `api-contract.yml`.
 
 ---

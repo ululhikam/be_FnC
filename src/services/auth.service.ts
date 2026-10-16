@@ -156,7 +156,7 @@ export class AuthService {
         username: payload.username.trim(),
         handle: cleanHandle,
         avatar: payload.avatar || null,
-        bio: payload.bio || 'Secret sender & casual reader di FessHub.',
+        bio: payload.bio || 'Secret sender & casual reader di Fess n Curious.',
         role: 'User',
         badges: ['NEW MEMBER', 'ANON SENDER'],
       },

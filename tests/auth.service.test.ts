@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import crypto from 'node:crypto';
 import { AuthService } from '../src/services/auth.service.js';
+import { EmailService } from '../src/services/email.service.js';
 import { prisma } from '../src/config/prisma.js';
 import * as passwordUtil from '../src/utils/password.util.js';
 
@@ -186,20 +187,25 @@ describe('AuthService Unit Tests', () => {
       expect(prisma.passwordReset.upsert).not.toHaveBeenCalled();
     });
 
-    it('should store a hashed OTP and expose dev_otp when SMTP is not configured', async () => {
+    it('should store a hashed OTP and send email without leaking OTP in response', async () => {
       vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({
         id: 'usr_1',
         email: 'alex@mail.com',
       } as any);
       vi.mocked(prisma.passwordReset.upsert).mockResolvedValueOnce({} as any);
+      const emailSpy = vi.spyOn(EmailService, 'sendPasswordResetOtp').mockResolvedValueOnce(undefined as any);
 
       const res: any = await AuthService.forgotPassword('alex@mail.com');
-      expect(res.dev_otp).toMatch(/^\d{6}$/);
+      expect(res.message).toContain('Jika email tersebut terdaftar');
+      expect(res.dev_otp).toBeUndefined();
 
       const upsertCall: any = vi.mocked(prisma.passwordReset.upsert).mock.calls[0][0];
       expect(upsertCall.where).toEqual({ userId: 'usr_1' });
-      expect(upsertCall.create.otpHash).toBe(sha256(res.dev_otp));
-      expect(upsertCall.update.otpHash).toBe(sha256(res.dev_otp));
+      expect(upsertCall.create.otpHash).toBeDefined();
+      expect(upsertCall.update.otpHash).toBeDefined();
+
+      expect(emailSpy).toHaveBeenCalledWith('alex@mail.com', expect.stringMatching(/^\d{6}$/));
+      emailSpy.mockRestore();
     });
 
     it('should increment attempts and reject a wrong OTP', async () => {

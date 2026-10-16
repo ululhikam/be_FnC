@@ -16,6 +16,19 @@ export class NotificationController {
     }
   }
 
+  static async getUnreadCount(req: Request, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) {
+        return errorResponse(res, 'Autentikasi dibutuhkan', 401, 'UNAUTHORIZED');
+      }
+
+      const result = await NotificationService.getUnreadCount(req.user.id);
+      return res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+
   static async markNotificationsRead(req: Request, res: Response, next: NextFunction) {
     try {
       if (!req.user) {

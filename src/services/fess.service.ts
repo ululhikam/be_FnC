@@ -4,7 +4,7 @@ import { TOPICS } from '../constants/topics.js';
 import { InstagramService } from './instagram.service.js';
 import { CanvasService } from './canvas.service.js';
 import { ModerationService } from './moderation.service.js';
-import { invalidateCache } from '../utils/cache.util.js';
+import { invalidateCache, getOrSet } from '../utils/cache.util.js';
 
 /** Fess counters only track publicly visible confessions. */
 const PUBLISHED_STATUSES = ['published', 'approved'];
@@ -91,23 +91,48 @@ export class FessService {
         ? [{ upvotes: 'desc' }, { createdAt: 'desc' }]
         : [{ createdAt: 'desc' }];
 
-    const [total, fesses] = await Promise.all([
-      prisma.fess.count({ where }),
-      prisma.fess.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy,
-        include: {
-          comments: {
-            take: 3,
-            orderBy: { createdAt: 'desc' },
-            select: COMMENT_PREVIEW_SELECT,
-          },
-          base: { select: BASE_PREVIEW_SELECT },
-        },
-      }),
-    ]);
+    const isPublicQuery = !params.query && params.following !== 'true';
+    const cacheKey = isPublicQuery
+      ? `fesses:${params.base || 'all'}:${params.status || 'published'}:${params.sort || 'newest'}:${page}:${limit}`
+      : null;
+
+    const [total, fesses] = cacheKey
+      ? await getOrSet(cacheKey, 15000, () =>
+          Promise.all([
+            prisma.fess.count({ where }),
+            prisma.fess.findMany({
+              where,
+              skip,
+              take: limit,
+              orderBy,
+              include: {
+                comments: {
+                  take: 3,
+                  orderBy: { createdAt: 'desc' },
+                  select: COMMENT_PREVIEW_SELECT,
+                },
+                base: { select: BASE_PREVIEW_SELECT },
+              },
+            }),
+          ])
+        )
+      : await Promise.all([
+          prisma.fess.count({ where }),
+          prisma.fess.findMany({
+            where,
+            skip,
+            take: limit,
+            orderBy,
+            include: {
+              comments: {
+                take: 3,
+                orderBy: { createdAt: 'desc' },
+                select: COMMENT_PREVIEW_SELECT,
+              },
+              base: { select: BASE_PREVIEW_SELECT },
+            },
+          }),
+        ]);
 
     // Optimize user vote query: fetch all votes by current user for these fesses in one query
     const fessIds = fesses.map((f) => f.id);
@@ -210,13 +235,13 @@ export class FessService {
     if (initialStatus === 'published') {
       await this.adjustFessCounters(fess, 1);
       invalidateCache('bases:');
+      invalidateCache('fesses:');
 
       // Efek publikasi yang sama dengan approveFess (auto-post sosmed).
-      try {
-        await CanvasService.exportFessCanvas(fess.id, fess.template || 'default', 'story');
-      } catch {
-        // Non-blocking
-      }
+      // Non-blocking background task agar respon HTTP tidak tertahan render/upload canvas
+      CanvasService.exportFessCanvas(fess.id, fess.template || 'default', 'story').catch((err) => {
+        console.error(`[AutoPost] Gagal export canvas fess ${fess.id}:`, err);
+      });
     }
 
     // Log audit agar admin bisa menelusuri kenapa sebuah fess tidak auto-terbit.
@@ -403,6 +428,7 @@ export class FessService {
       await this.updateLikeNotification(fess, likeDelta as 1 | -1, actorName || 'Seseorang');
     }
 
+    invalidateCache('fesses:');
     return this.serializeFess(updated, newVoteType);
   }
 
@@ -502,38 +528,49 @@ export class FessService {
 
     const wasPublished = PUBLISHED_STATUSES.includes(fess.status);
 
-    const updated = await prisma.fess.update({
-      where: { id },
-      data: { status: 'published' },
-      include: COMMENT_PREVIEW_INCLUDE,
-    });
+    // Batch database operations dalam satu atomic round-trip transaction:
+    // 1) Update status fess
+    // 2) Increment counter Base & User (jika fess sebelumnya belum terbit)
+    // 3) Create notifikasi untuk author fess
+    const dbOperations: any[] = [
+      prisma.fess.update({
+        where: { id },
+        data: { status: 'published' },
+        include: COMMENT_PREVIEW_INCLUDE,
+      }),
+    ];
 
-    // Counters track published fesses only — bump them on the transition.
     if (!wasPublished) {
-      await this.adjustFessCounters(fess, 1);
+      dbOperations.push(...this.getCounterUpdateOperations(fess, 1));
+    }
+
+    if (fess.userId) {
+      dbOperations.push(
+        prisma.notification.create({
+          data: {
+            userId: fess.userId,
+            type: 'moderation',
+            fessId: fess.id,
+            fessContent: fess.content.slice(0, 60),
+            actor: fess.baseHandle,
+            text: `Fess kamu di ${fess.baseHandle} telah disetujui & dipublikasikan!`,
+          },
+        })
+      );
+    }
+
+    const [updated] = await prisma.$transaction(dbOperations);
+
+    if (!wasPublished) {
       invalidateCache('bases:');
+      invalidateCache('fesses:');
     }
 
     // Auto-post trigger to social media (Instagram, Twitter, Telegram)
-    try {
-      await CanvasService.exportFessCanvas(id, fess.template || 'default', 'story');
-    } catch {
-      // Non-blocking
-    }
-
-    // Notify author
-    if (fess.userId) {
-      await prisma.notification.create({
-        data: {
-          userId: fess.userId,
-          type: 'moderation',
-          fessId: fess.id,
-          fessContent: fess.content.slice(0, 60),
-          actor: fess.baseHandle,
-          text: `Fess kamu di ${fess.baseHandle} telah disetujui & dipublikasikan!`,
-        },
-      });
-    }
+    // Non-blocking background task: jangan gunakan await agar tidak menahan response HTTP approve
+    CanvasService.exportFessCanvas(id, fess.template || 'default', 'story').catch((err) => {
+      console.error(`[AutoPost] Gagal export canvas fess ${id}:`, err);
+    });
 
     return this.serializeFess(updated, null);
   }
@@ -566,30 +603,42 @@ export class FessService {
 
     const wasPublished = PUBLISHED_STATUSES.includes(fess.status);
 
-    const updated = await prisma.fess.update({
-      where: { id },
-      data: { status: 'rejected' },
-      include: COMMENT_PREVIEW_INCLUDE,
-    });
+    // Batch database operations dalam satu atomic round-trip transaction:
+    // 1) Update status fess ke 'rejected'
+    // 2) Decrement counter Base & User (hanya jika sebelumnya statusnya published)
+    // 3) Create notifikasi penolakan untuk author fess
+    const dbOperations: any[] = [
+      prisma.fess.update({
+        where: { id },
+        data: { status: 'rejected' },
+        include: COMMENT_PREVIEW_INCLUDE,
+      }),
+    ];
 
-    // A published fess was pulled from the public feed — adjust counters.
     if (wasPublished) {
-      await this.adjustFessCounters(fess, -1);
-      invalidateCache('bases:');
+      dbOperations.push(...this.getCounterUpdateOperations(fess, -1));
     }
 
-    // Notify author
     if (fess.userId) {
-      await prisma.notification.create({
-        data: {
-          userId: fess.userId,
-          type: 'moderation',
-          fessId: fess.id,
-          fessContent: fess.content.slice(0, 60),
-          actor: fess.baseHandle,
-          text: `Fess kamu di ${fess.baseHandle} ditolak moderator`,
-        },
-      });
+      dbOperations.push(
+        prisma.notification.create({
+          data: {
+            userId: fess.userId,
+            type: 'moderation',
+            fessId: fess.id,
+            fessContent: fess.content.slice(0, 60),
+            actor: fess.baseHandle,
+            text: `Fess kamu di ${fess.baseHandle} ditolak moderator`,
+          },
+        })
+      );
+    }
+
+    const [updated] = await prisma.$transaction(dbOperations);
+
+    if (wasPublished) {
+      invalidateCache('bases:');
+      invalidateCache('fesses:');
     }
 
     return this.serializeFess(updated, null);
@@ -648,6 +697,7 @@ export class FessService {
     if (PUBLISHED_STATUSES.includes(fess.status)) {
       await this.adjustFessCounters(fess, -1);
       invalidateCache('bases:');
+      invalidateCache('fesses:');
     }
 
     // Take down oleh admin (bukan penulis): beri tahu penulis + catat audit.
@@ -721,6 +771,35 @@ export class FessService {
   }
 
   /**
+   * Return array of counter update operations to be executed inside a single batch / transaction.
+   */
+  private static getCounterUpdateOperations(
+    fess: { baseId?: string | null; baseHandle: string; userId?: string | null },
+    delta: number
+  ) {
+    const guard = delta < 0 ? { fessCount: { gt: 0 } } : {};
+    const baseWhere = fess.baseId ? { id: fess.baseId } : { handle: fess.baseHandle };
+
+    const ops: any[] = [
+      prisma.base.updateMany({
+        where: { ...baseWhere, ...guard },
+        data: { fessCount: { increment: delta } },
+      }),
+    ];
+
+    if (fess.userId) {
+      ops.push(
+        prisma.user.updateMany({
+          where: { id: fess.userId, ...guard },
+          data: { fessCount: { increment: delta } },
+        })
+      );
+    }
+
+    return ops;
+  }
+
+  /**
    * Keep the published-fess counters in sync for a base and its author.
    * delta: +1 when a fess goes live, -1 when it stops being published.
    */
@@ -728,19 +807,11 @@ export class FessService {
     fess: { baseId?: string | null; baseHandle: string; userId?: string | null },
     delta: number
   ) {
-    const guard = delta < 0 ? { fessCount: { gt: 0 } } : {};
-    const baseWhere = fess.baseId ? { id: fess.baseId } : { handle: fess.baseHandle };
-
-    await prisma.base.updateMany({
-      where: { ...baseWhere, ...guard },
-      data: { fessCount: { increment: delta } },
-    });
-
-    if (fess.userId) {
-      await prisma.user.updateMany({
-        where: { id: fess.userId, ...guard },
-        data: { fessCount: { increment: delta } },
-      });
+    const ops = this.getCounterUpdateOperations(fess, delta);
+    if (ops.length === 1) {
+      await ops[0];
+    } else {
+      await prisma.$transaction(ops);
     }
   }
 

@@ -9,6 +9,11 @@ vi.mock('../src/config/prisma.js', () => ({
     },
     platformConnection: {
       upsert: vi.fn(),
+      findUnique: vi.fn(),
+    },
+    base: {
+      findUnique: vi.fn(),
+      updateMany: vi.fn(),
     },
     systemLog: {
       create: vi.fn(),

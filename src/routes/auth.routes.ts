@@ -13,8 +13,10 @@ import {
   VerifyResetOtpSchema,
   ResetPasswordSchema,
 } from '../validators/auth.validator.js';
-import { generateToken } from '../utils/jwt.util.js';
+import { generateToken, verifyToken } from '../utils/jwt.util.js';
 import { ENV } from '../config/env.js';
+import { InstagramService } from '../services/instagram.service.js';
+import { prisma } from '../config/prisma.js';
 
 const router = Router();
 
@@ -69,26 +71,137 @@ router.get(
   }
 );
 
-// Passport Instagram OAuth Flow (Redirect to Meta Instagram & Callback)
-router.get('/instagram', (req, res, next) => {
-  passport.authenticate('instagram', {
-    session: false,
-  })(req, res, next);
+// Meta Instagram OAuth 2.0 Flow (Redirect to Meta Instagram & Callback)
+router.get('/instagram', (req, res) => {
+  if (!ENV.INSTAGRAM_CLIENT_ID || !ENV.INSTAGRAM_CLIENT_SECRET) {
+    return res.redirect(`${ENV.FRONTEND_URL}/base-admin?error=instagram_not_configured`);
+  }
+
+  // Token JWT admin yang sedang login bisa dioper via query parameter
+  let userId = '';
+  const tokenParam = (req.query.token as string) || '';
+  if (tokenParam) {
+    try {
+      const decoded: any = verifyToken(tokenParam);
+      userId = decoded?.sub || '';
+    } catch {
+      // Ignored
+    }
+  }
+
+  const statePayload = Buffer.from(
+    JSON.stringify({
+      userId,
+      baseHandle: req.query.base || '',
+      origin: req.query.origin || 'connections',
+    })
+  ).toString('base64url');
+
+  const authUrl = InstagramService.getAuthorizationUrl(statePayload);
+  res.redirect(authUrl);
 });
 
-router.get(
-  '/instagram/callback',
-  passport.authenticate('instagram', { session: false, failureRedirect: `${ENV.FRONTEND_URL}/register?error=ig_failed` }),
-  (req: Request, res: Response) => {
-    const user = req.user as any;
-    const token = generateToken({
-      sub: user.id,
-      role: user.role,
-      handle: user.handle,
-      email: user.email || undefined,
+router.get('/instagram/callback', async (req: Request, res: Response) => {
+  try {
+    const code = req.query.code as string;
+    const error = req.query.error as string;
+    const errorDesc = req.query.error_description as string;
+
+    if (error || !code) {
+      return res.redirect(
+        `${ENV.FRONTEND_URL}/base-admin?panel=connections&error=${encodeURIComponent(errorDesc || 'Koneksi Instagram dibatalkan.')}`
+      );
+    }
+
+    // Decode state
+    let stateData: any = {};
+    if (req.query.state) {
+      try {
+        stateData = JSON.parse(Buffer.from(String(req.query.state), 'base64url').toString('utf-8'));
+      } catch {
+        // Ignored
+      }
+    }
+
+    let targetUserId = stateData.userId;
+
+    if (!targetUserId) {
+      // Login via Instagram
+      const shortToken = await InstagramService.exchangeCodeForToken(code);
+      const longToken = await InstagramService.getLongLivedToken(shortToken);
+      const profile = await InstagramService.verifyToken(longToken);
+
+      let user = await prisma.user.findUnique({
+        where: { instagramId: profile.id },
+      });
+
+      if (!user) {
+        user = await prisma.user.create({
+          data: {
+            instagramId: profile.id,
+            igAccount: profile.username,
+            username: profile.username.replace(/^@/, '') || 'IG User',
+            handle: profile.username,
+            role: 'Base Admin',
+            bio: `Official verified Instagram account: ${profile.username}`,
+          },
+        });
+      }
+
+      targetUserId = user.id;
+
+      // Link PlatformConnection
+      await prisma.platformConnection.upsert({
+        where: {
+          userId_platform: {
+            userId: user.id,
+            platform: 'instagram',
+          },
+        },
+        create: {
+          userId: user.id,
+          platform: 'instagram',
+          name: 'Instagram Graph API (Canvas Story)',
+          status: 'connected',
+          connected: true,
+          accountHandle: profile.username,
+          accessToken: longToken,
+        },
+        update: {
+          status: 'connected',
+          connected: true,
+          accountHandle: profile.username,
+          accessToken: longToken,
+        },
+      });
+
+      const authToken = generateToken({
+        sub: user.id,
+        role: user.role,
+        handle: user.handle,
+        email: user.email || undefined,
+      });
+
+      return res.redirect(
+        `${ENV.FRONTEND_URL}/base-admin?token=${authToken}&ig_connected=true&ig_user=${encodeURIComponent(profile.username)}`
+      );
+    }
+
+    // Sambungkan akun Instagram ke admin yang sudah login
+    const result = await InstagramService.verifyAndLinkAccount(targetUserId, {
+      code,
+      baseHandle: stateData.baseHandle,
     });
-    res.redirect(`${ENV.FRONTEND_URL}/base-admin?token=${token}&ig_connected=true`);
+
+    return res.redirect(
+      `${ENV.FRONTEND_URL}/base-admin?panel=connections&ig_connected=true&ig_user=${encodeURIComponent(result.profile.username)}`
+    );
+  } catch (err: any) {
+    console.error('[Instagram OAuth Callback Error]:', err.message);
+    return res.redirect(
+      `${ENV.FRONTEND_URL}/base-admin?panel=connections&error=${encodeURIComponent(err.message || 'Gagal menghubungkan Instagram')}`
+    );
   }
-);
+});
 
 export default router;

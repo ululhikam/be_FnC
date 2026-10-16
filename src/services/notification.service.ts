@@ -17,7 +17,7 @@ export class NotificationService {
       where.type = params.type;
     }
 
-    const [total, notifications] = await Promise.all([
+    const [total, notifications, unread_count] = await Promise.all([
       prisma.notification.count({ where }),
       prisma.notification.findMany({
         where,
@@ -25,6 +25,7 @@ export class NotificationService {
         take: limit,
         orderBy: { createdAt: 'desc' },
       }),
+      prisma.notification.count({ where: { userId, read: false } }),
     ]);
 
     const data = notifications.map((n) => ({
@@ -41,10 +42,22 @@ export class NotificationService {
     return {
       data,
       total,
+      unread_count,
       page,
       limit,
       total_pages: Math.ceil(total / limit) || 1,
     };
+  }
+
+  /**
+   * Get total unread notifications count for a user (fast indexed query)
+   */
+  static async getUnreadCount(userId: string) {
+    const unread_count = await prisma.notification.count({
+      where: { userId, read: false },
+    });
+
+    return { unread_count };
   }
 
   /**

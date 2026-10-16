@@ -1,57 +1,54 @@
 /**
- * EmailService — pengiriman email transaksional via SMTP (nodemailer).
+ * EmailService — pengiriman email transaksional via Resend SDK.
  * ---------------------------------------------------------------------------
  * Dipakai untuk kode OTP reset kata sandi. Konfigurasi lewat env:
- *   SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASS, SMTP_FROM
- *
- * Jika SMTP belum dikonfigurasi, `isConfigured()` bernilai false dan
- * pemanggil (AuthService) yang memutuskan fallback-nya — di development
- * kode OTP ditulis ke konsol, di production request ditolak.
+ *   RESEND_API_KEY, EMAIL_FROM
  */
 
-import nodemailer from 'nodemailer';
-import type { Transporter } from 'nodemailer';
+import { Resend } from 'resend';
 import { ENV } from '../config/env.js';
 
 export class EmailService {
-  private static transporter: Transporter | null = null;
+  private static resendClient: Resend | null = null;
 
-  /** True jika kredensial SMTP inti sudah diisi. */
+  /** True jika Resend API key sudah diisi. */
   static isConfigured(): boolean {
-    return Boolean(ENV.SMTP_HOST && ENV.SMTP_USER && ENV.SMTP_PASS);
+    return Boolean(ENV.RESEND_API_KEY);
   }
 
-  private static getTransporter(): Transporter {
-    if (!this.transporter) {
-      this.transporter = nodemailer.createTransport({
-        host: ENV.SMTP_HOST,
-        port: ENV.SMTP_PORT,
-        secure: ENV.SMTP_SECURE,
-        auth: {
-          user: ENV.SMTP_USER,
-          pass: ENV.SMTP_PASS,
-        },
-      });
+  private static getResend(): Resend {
+    if (!this.resendClient) {
+      this.resendClient = new Resend(ENV.RESEND_API_KEY);
     }
-    return this.transporter;
+    return this.resendClient;
   }
 
-  /** Kirim email umum — melempar error 503 bila SMTP belum dikonfigurasi. */
+  /** Kirim email transaksional via Resend — melempar error bila belum dikonfigurasi. */
   static async sendMail(options: { to: string; subject: string; text: string; html?: string }) {
     if (!this.isConfigured()) {
-      const err: any = new Error('Layanan email belum dikonfigurasi di server (SMTP).');
+      const err: any = new Error('Layanan email belum dikonfigurasi di server (Resend API key belum diisi).');
       err.status = 503;
       err.code = 'EMAIL_NOT_CONFIGURED';
       throw err;
     }
 
-    await this.getTransporter().sendMail({
-      from: ENV.SMTP_FROM,
+    const { data, error } = await this.getResend().emails.send({
+      from: ENV.EMAIL_FROM,
       to: options.to,
       subject: options.subject,
       text: options.text,
       html: options.html,
     });
+
+    if (error) {
+      const err: any = new Error(`Gagal mengirim email via Resend: ${error.message}`);
+      err.status = 502;
+      err.code = 'RESEND_API_ERROR';
+      err.details = error;
+      throw err;
+    }
+
+    return data;
   }
 
   /** Email kode OTP reset kata sandi (berlaku 10 menit). */

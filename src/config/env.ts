@@ -1,7 +1,13 @@
 import dotenv from 'dotenv';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
-// Load environment variables
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const backendRoot = path.resolve(__dirname, '../..');
+
+// Load environment variables explicitly from backend/.env and process.cwd()
+dotenv.config({ path: path.join(backendRoot, '.env') });
 dotenv.config();
 
 export const ENV = {
@@ -32,11 +38,7 @@ export const ENV = {
   INSTAGRAM_CALLBACK_URL: process.env.INSTAGRAM_CALLBACK_URL || 'http://localhost:3000/api/auth/instagram/callback',
   INSTAGRAM_REDIRECT_URI: process.env.INSTAGRAM_REDIRECT_URI || 'http://localhost:3000/api/auth/instagram/callback',
 
-  // Email (SMTP) — dipakai untuk mengirim kode OTP reset kata sandi
-  SMTP_HOST: process.env.SMTP_HOST || '',
-  SMTP_PORT: parseInt(process.env.SMTP_PORT || '587', 10),
-  SMTP_SECURE: process.env.SMTP_SECURE === 'true',
-  SMTP_USER: process.env.SMTP_USER || '',
-  SMTP_PASS: process.env.SMTP_PASS || '',
-  SMTP_FROM: process.env.SMTP_FROM || 'Fess n Curious <no-reply@fessncurious.app>',
+  // Email (Resend SDK) — dipakai untuk mengirim kode OTP reset kata sandi
+  RESEND_API_KEY: process.env.RESEND_API_KEY || '',
+  EMAIL_FROM: process.env.EMAIL_FROM || 'Fess n Curious <onboarding@resend.dev>',
 };

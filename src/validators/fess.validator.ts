@@ -2,8 +2,21 @@ import { z } from 'zod';
 
 export const MediaItemSchema = z.object({
   type: z.enum(['image', 'video']),
-  url: z.string().url('URL media tidak valid'),
-  thumbnail: z.string().url('URL thumbnail tidak valid').optional().nullable(),
+  url: z
+    .string()
+    .min(1, 'URL media tidak valid')
+    .refine(
+      (val) => /^https?:\/\//i.test(val) || val.startsWith('data:') || val.startsWith('/'),
+      'URL media tidak valid'
+    ),
+  thumbnail: z
+    .string()
+    .optional()
+    .nullable()
+    .refine(
+      (val) => !val || /^https?:\/\//i.test(val) || val.startsWith('data:') || val.startsWith('/'),
+      'URL thumbnail tidak valid'
+    ),
   duration: z.string().optional().nullable(),
   caption: z.string().optional().nullable(),
 });

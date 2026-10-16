@@ -9,6 +9,7 @@ import {
 
 const router = Router();
 
+router.get('/unread-count', requireAuth, NotificationController.getUnreadCount);
 router.get('/', requireAuth, validateQuery(GetNotificationsQuerySchema), NotificationController.getNotifications);
 router.post('/read', requireAuth, validateBody(MarkNotificationsReadSchema), NotificationController.markNotificationsRead);
 router.post('/read-all', requireAuth, NotificationController.markAllRead);

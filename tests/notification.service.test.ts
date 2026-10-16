@@ -19,7 +19,9 @@ describe('NotificationService Unit Tests', () => {
   });
 
   it('should list notifications for user', async () => {
-    vi.mocked(prisma.notification.count).mockResolvedValueOnce(1);
+    vi.mocked(prisma.notification.count)
+      .mockResolvedValueOnce(1) // total
+      .mockResolvedValueOnce(1); // unread_count
     vi.mocked(prisma.notification.findMany).mockResolvedValueOnce([
       {
         id: 'n_1',
@@ -35,7 +37,18 @@ describe('NotificationService Unit Tests', () => {
     expect(result.data[0].id).toBe('n_1');
     expect(result.data[0].read).toBe(false);
     expect(result.total).toBe(1);
+    expect(result.unread_count).toBe(1);
     expect(result.total_pages).toBe(1);
+  });
+
+  it('should get unread notifications count', async () => {
+    vi.mocked(prisma.notification.count).mockResolvedValueOnce(5);
+
+    const result = await NotificationService.getUnreadCount('usr_1');
+    expect(result.unread_count).toBe(5);
+    expect(prisma.notification.count).toHaveBeenCalledWith({
+      where: { userId: 'usr_1', read: false },
+    });
   });
 
   it('should mark notifications as read', async () => {

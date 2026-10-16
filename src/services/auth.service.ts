@@ -1,6 +1,6 @@
 import { OAuth2Client } from 'google-auth-library';
 import crypto from 'crypto';
-import { prisma } from '../config/prisma.js';
+import { prisma, type PrismaClient } from '../config/prisma.js';
 import { ENV } from '../config/env.js';
 import { hashPassword, comparePassword } from '../utils/password.util.js';
 import { generateToken } from '../utils/jwt.util.js';
@@ -435,8 +435,8 @@ export class AuthService {
       return { message: genericMessage };
     }
 
-    // SMTP belum diatur: production TIDAK boleh membocorkan OTP —
-    // development dikembalikan agar alur tetap bisa diuji tanpa email.
+    // Layanan email belum diatur: production TIDAK boleh memproses tanpa email —
+    // development hanya dicatat di konsol server lokal agar tidak membocorkan OTP ke response.
     if (ENV.NODE_ENV === 'production') {
       const err: any = new Error('Layanan email belum dikonfigurasi di server. Hubungi admin.');
       err.status = 503;
@@ -444,8 +444,8 @@ export class AuthService {
       throw err;
     }
 
-    console.info(`[DEV] Kode OTP reset kata sandi untuk ${user.email}: ${otp}`);
-    return { message: genericMessage, dev_otp: otp };
+    console.info(`[DEV] Layanan email belum dikonfigurasi. Kode OTP reset kata sandi untuk ${user.email}: ${otp}`);
+    return { message: genericMessage };
   }
 
   /**

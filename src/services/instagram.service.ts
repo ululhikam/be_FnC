@@ -16,17 +16,19 @@ export class InstagramService {
    */
   static getAuthorizationUrl(state?: string): string {
     const params = new URLSearchParams({
+      enable_fb_login: '0',
+      force_authentication: '1',
       client_id: ENV.INSTAGRAM_CLIENT_ID,
       redirect_uri: ENV.INSTAGRAM_REDIRECT_URI,
-      scope: 'user_profile,user_media',
       response_type: 'code',
+      scope: 'instagram_business_basic,instagram_business_manage_messages',
     });
 
     if (state) {
       params.set('state', state);
     }
 
-    return `https://api.instagram.com/oauth/authorize?${params.toString()}`;
+    return `https://www.instagram.com/oauth/authorize?${params.toString()}`;
   }
 
   /**
@@ -69,13 +71,14 @@ export class InstagramService {
    * Exchange Meta OAuth authorization code for an Instagram access token
    */
   static async exchangeCodeForToken(code: string): Promise<string> {
+    const cleanCode = (code || '').split('#')[0].trim();
     try {
       const params = new URLSearchParams();
       params.append('client_id', ENV.INSTAGRAM_CLIENT_ID);
       params.append('client_secret', ENV.INSTAGRAM_CLIENT_SECRET);
       params.append('grant_type', 'authorization_code');
       params.append('redirect_uri', ENV.INSTAGRAM_REDIRECT_URI);
-      params.append('code', code);
+      params.append('code', cleanCode);
 
       const response = await axios.post('https://api.instagram.com/oauth/access_token', params, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -141,6 +144,20 @@ export class InstagramService {
       };
     } else {
       throw new Error('Diperlukan token, OAuth code, atau username Instagram untuk verifikasi');
+    }
+
+    // Unlink old user if this instagramId was previously linked to another user
+    if (profile.id) {
+      await prisma.user.updateMany({
+        where: {
+          instagramId: profile.id,
+          id: { not: userId },
+        },
+        data: {
+          instagramId: null,
+          igAccount: null,
+        },
+      });
     }
 
     // Update user profile with verified Instagram account

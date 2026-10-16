@@ -37,6 +37,7 @@ export const ENV = {
   INSTAGRAM_CLIENT_SECRET: process.env.INSTAGRAM_CLIENT_SECRET || '',
   INSTAGRAM_CALLBACK_URL: process.env.INSTAGRAM_CALLBACK_URL || 'http://localhost:3000/api/auth/instagram/callback',
   INSTAGRAM_REDIRECT_URI: process.env.INSTAGRAM_REDIRECT_URI || 'http://localhost:3000/api/auth/instagram/callback',
+  INSTAGRAM_VERIFY_TOKEN: process.env.INSTAGRAM_VERIFY_TOKEN || 'fess_instagram_verify_token_2026',
 
   // Email (Resend SDK) — dipakai untuk mengirim kode OTP reset kata sandi
   RESEND_API_KEY: process.env.RESEND_API_KEY || '',

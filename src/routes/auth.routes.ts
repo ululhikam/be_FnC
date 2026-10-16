@@ -73,8 +73,17 @@ router.get(
 
 // Meta Instagram OAuth 2.0 Flow (Redirect to Meta Instagram & Callback)
 router.get('/instagram', (req, res) => {
+  const origin = (req.query.origin as string) || 'connections';
+  const returnErrorPath =
+    origin === 'onboarding'
+      ? '/onboarding/base'
+      : origin === 'register'
+      ? '/register/base'
+      : '/base-admin?panel=connections';
+
   if (!ENV.INSTAGRAM_CLIENT_ID || !ENV.INSTAGRAM_CLIENT_SECRET) {
-    return res.redirect(`${ENV.FRONTEND_URL}/base-admin?error=instagram_not_configured`);
+    const sep = returnErrorPath.includes('?') ? '&' : '?';
+    return res.redirect(`${ENV.FRONTEND_URL}${returnErrorPath}${sep}error=instagram_not_configured`);
   }
 
   // Token JWT admin yang sedang login bisa dioper via query parameter
@@ -93,7 +102,7 @@ router.get('/instagram', (req, res) => {
     JSON.stringify({
       userId,
       baseHandle: req.query.base || '',
-      origin: req.query.origin || 'connections',
+      origin,
     })
   ).toString('base64url');
 
@@ -102,16 +111,11 @@ router.get('/instagram', (req, res) => {
 });
 
 router.get('/instagram/callback', async (req: Request, res: Response) => {
+  let origin = 'connections';
   try {
     const code = req.query.code as string;
     const error = req.query.error as string;
     const errorDesc = req.query.error_description as string;
-
-    if (error || !code) {
-      return res.redirect(
-        `${ENV.FRONTEND_URL}/base-admin?panel=connections&error=${encodeURIComponent(errorDesc || 'Koneksi Instagram dibatalkan.')}`
-      );
-    }
 
     // Decode state
     let stateData: any = {};
@@ -121,6 +125,23 @@ router.get('/instagram/callback', async (req: Request, res: Response) => {
       } catch {
         // Ignored
       }
+    }
+
+    origin = stateData.origin || 'connections';
+    const returnErrorPath =
+      origin === 'onboarding'
+        ? '/onboarding/base'
+        : origin === 'register'
+        ? '/register/base'
+        : origin === 'login'
+        ? '/login'
+        : '/base-admin?panel=connections';
+
+    if (error || !code) {
+      const sep = returnErrorPath.includes('?') ? '&' : '?';
+      return res.redirect(
+        `${ENV.FRONTEND_URL}${returnErrorPath}${sep}error=${encodeURIComponent(errorDesc || error || 'Koneksi Instagram dibatalkan.')}`
+      );
     }
 
     let targetUserId = stateData.userId;
@@ -136,14 +157,37 @@ router.get('/instagram/callback', async (req: Request, res: Response) => {
       });
 
       if (!user) {
+        const cleanHandle = profile.username.startsWith('@') ? profile.username : `@${profile.username}`;
+        user = await prisma.user.findUnique({
+          where: { handle: cleanHandle },
+        });
+
+        if (user) {
+          user = await prisma.user.update({
+            where: { id: user.id },
+            data: {
+              instagramId: profile.id,
+              igAccount: cleanHandle,
+            },
+          });
+        }
+      }
+
+      if (!user) {
+        let candidateHandle = profile.username.startsWith('@') ? profile.username : `@${profile.username}`;
+        let counter = 1;
+        while (await prisma.user.findUnique({ where: { handle: candidateHandle } })) {
+          candidateHandle = `@${profile.username.replace(/^@/, '')}_${counter++}`;
+        }
+
         user = await prisma.user.create({
           data: {
             instagramId: profile.id,
-            igAccount: profile.username,
+            igAccount: candidateHandle,
             username: profile.username.replace(/^@/, '') || 'IG User',
-            handle: profile.username,
+            handle: candidateHandle,
             role: 'Base Admin',
-            bio: `Official verified Instagram account: ${profile.username}`,
+            bio: `Official verified Instagram account: ${candidateHandle}`,
           },
         });
       }
@@ -164,13 +208,13 @@ router.get('/instagram/callback', async (req: Request, res: Response) => {
           name: 'Instagram Graph API (Canvas Story)',
           status: 'connected',
           connected: true,
-          accountHandle: profile.username,
+          accountHandle: user.igAccount || profile.username,
           accessToken: longToken,
         },
         update: {
           status: 'connected',
           connected: true,
-          accountHandle: profile.username,
+          accountHandle: user.igAccount || profile.username,
           accessToken: longToken,
         },
       });
@@ -182,8 +226,24 @@ router.get('/instagram/callback', async (req: Request, res: Response) => {
         email: user.email || undefined,
       });
 
+      if (origin === 'onboarding') {
+        return res.redirect(
+          `${ENV.FRONTEND_URL}/onboarding/base?token=${encodeURIComponent(authToken)}&ig_connected=true&ig_user=${encodeURIComponent(profile.username)}`
+        );
+      }
+      if (origin === 'register') {
+        return res.redirect(
+          `${ENV.FRONTEND_URL}/register/base?token=${encodeURIComponent(authToken)}&ig_connected=true&ig_user=${encodeURIComponent(profile.username)}`
+        );
+      }
+      if (origin === 'login') {
+        return res.redirect(
+          `${ENV.FRONTEND_URL}/login?instagram=1&token=${encodeURIComponent(authToken)}&ig_connected=true&ig_user=${encodeURIComponent(profile.username)}`
+        );
+      }
+
       return res.redirect(
-        `${ENV.FRONTEND_URL}/base-admin?token=${authToken}&ig_connected=true&ig_user=${encodeURIComponent(profile.username)}`
+        `${ENV.FRONTEND_URL}/login?instagram=1&token=${encodeURIComponent(authToken)}&ig_connected=true&ig_user=${encodeURIComponent(profile.username)}`
       );
     }
 
@@ -193,15 +253,78 @@ router.get('/instagram/callback', async (req: Request, res: Response) => {
       baseHandle: stateData.baseHandle,
     });
 
+    const activeUser = await prisma.user.findUnique({ where: { id: targetUserId } });
+    const freshToken = activeUser
+      ? generateToken({
+          sub: activeUser.id,
+          role: activeUser.role,
+          handle: activeUser.handle,
+          email: activeUser.email || undefined,
+        })
+      : '';
+
+    const tokenQuery = freshToken ? `&token=${encodeURIComponent(freshToken)}` : '';
+
+    if (origin === 'onboarding') {
+      return res.redirect(
+        `${ENV.FRONTEND_URL}/onboarding/base?ig_connected=true&ig_user=${encodeURIComponent(result.profile.username)}${tokenQuery}`
+      );
+    }
+    if (origin === 'register') {
+      return res.redirect(
+        `${ENV.FRONTEND_URL}/register/base?ig_connected=true&ig_user=${encodeURIComponent(result.profile.username)}${tokenQuery}`
+      );
+    }
+    if (origin === 'login') {
+      return res.redirect(
+        `${ENV.FRONTEND_URL}/login?instagram=1&ig_connected=true&ig_user=${encodeURIComponent(result.profile.username)}${tokenQuery}`
+      );
+    }
+
     return res.redirect(
-      `${ENV.FRONTEND_URL}/base-admin?panel=connections&ig_connected=true&ig_user=${encodeURIComponent(result.profile.username)}`
+      `${ENV.FRONTEND_URL}/base-admin?panel=connections&ig_connected=true&ig_user=${encodeURIComponent(result.profile.username)}${tokenQuery}`
     );
   } catch (err: any) {
     console.error('[Instagram OAuth Callback Error]:', err.message);
+    const returnErrorPath =
+      origin === 'onboarding'
+        ? '/onboarding/base'
+        : origin === 'register'
+        ? '/register/base'
+        : origin === 'login'
+        ? '/login'
+        : '/base-admin?panel=connections';
+    const sep = returnErrorPath.includes('?') ? '&' : '?';
     return res.redirect(
-      `${ENV.FRONTEND_URL}/base-admin?panel=connections&error=${encodeURIComponent(err.message || 'Gagal menghubungkan Instagram')}`
+      `${ENV.FRONTEND_URL}${returnErrorPath}${sep}error=${encodeURIComponent(err.message || 'Gagal menghubungkan Instagram')}`
     );
   }
+});
+
+/**
+ * Meta / Instagram Webhook Verification Challenge (GET)
+ * Diperlukan saat setting Webhooks di dashboard Meta for Developers.
+ */
+router.get('/instagram/webhook', (req: Request, res: Response) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode === 'subscribe' && token === ENV.INSTAGRAM_VERIFY_TOKEN) {
+    console.log('[Meta Webhook]: Verified successfully');
+    return res.status(200).send(challenge);
+  }
+
+  console.warn('[Meta Webhook]: Verification failed, token mismatch');
+  return res.sendStatus(403);
+});
+
+/**
+ * Meta / Instagram Webhook Event Receiver (POST)
+ */
+router.post('/instagram/webhook', (req: Request, res: Response) => {
+  console.log('[Meta Webhook Event Received]:', JSON.stringify(req.body));
+  return res.status(200).send('EVENT_RECEIVED');
 });
 
 export default router;

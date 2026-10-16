@@ -232,10 +232,11 @@ export class CanvasService {
 
     const measureFont = getMeasureFont(600);
 
-    // ── Kotak kutipan (halaman pertama, jika fess ini mengutip fess lain) ──
+    // ── Kotak kutipan (halaman pertama) — mengikuti kartu frontend: kotak
+    //    kutipan diletakkan DI BAWAH isi fess, bukan menumpuk di atasnya. ──
     const quote = fess.quotedFess || null;
     const quoteBlock = quote
-      ? buildQuoteBlock(quote, contentX, PAD + 148, contentWidth, {
+      ? buildQuoteBlock(quote, contentWidth, {
           isDark,
           textColor,
           subtextColor,
@@ -243,7 +244,10 @@ export class CanvasService {
           accentColor: accentInk,
         })
       : null;
-    const firstContentY = quoteBlock ? PAD + 148 + quoteBlock.height + 24 : restContentY;
+    const quoteHeight = quoteBlock ? quoteBlock.height : 0;
+    // Batas atas area kutipan halaman 1 — teks fess wajib berhenti di atas ini
+    // supaya isi fess tidak pernah tumpang tindih dengan kotak kutipan.
+    const quoteTopLimit = footerTop - 32 - quoteHeight;
 
     // ── Pilih ukuran font terbesar yang muat ≤ MAX_PAGES halaman ───────────
     const tiers = isSquare ? [38, 33, 28, 24] : [42, 36, 30, 26];
@@ -257,8 +261,13 @@ export class CanvasService {
       lineHeightPx = Math.round(fontSize * 1.42);
       const lines = layoutText(fess.content || '', contentWidth, fontSize, measureFont);
       const restCap = Math.max(3, Math.floor((footerTop - 40 - restContentY) / lineHeightPx));
+      // Halaman 1 dengan kutipan: kapasitas baris dikurangi agar baris terakhir
+      // (beserta descender) tetap berada di atas area kutipan.
       const firstCap = quoteBlock
-        ? Math.max(2, Math.floor((footerTop - 40 - firstContentY) / lineHeightPx))
+        ? Math.max(
+            1,
+            Math.floor((quoteTopLimit - 26 - restContentY - fontSize) / lineHeightPx) + 1
+          )
         : restCap;
       const result = paginate(lines, firstCap, restCap, MAX_PAGES);
       pages = result.pages;
@@ -282,9 +291,20 @@ export class CanvasService {
     const totalPages = pages.length;
 
     return pages.map((page, idx) => {
-      const contentY = idx === 0 ? firstContentY : restContentY;
+      const contentY = restContentY;
       const textSvg = renderTextLines(page, contentX, contentY, fontSize, lineHeightPx, textColor, 600);
-      const pageQuote = idx === 0 ? quoteBlock : null;
+      // Kutipan diletakkan tepat di bawah baris terakhir halaman pertama, dan
+      // di-clamp supaya kotaknya tidak pernah melewati batas bawah kartu.
+      const pageQuoteSvg =
+        idx === 0 && quoteBlock
+          ? quoteBlock.render(
+              contentX,
+              Math.min(
+                contentY + Math.max(0, page.length - 1) * lineHeightPx + fontSize + 26,
+                quoteTopLimit
+              )
+            ) + '\n\n  '
+          : '';
       const decoQuote =
         idx === 0 && !quoteBlock
           ? `<!-- Opening quote -->
@@ -334,7 +354,7 @@ export class CanvasService {
   <text x="${PAD + cardW - 77}" y="${PAD + 73}" font-family="Poppins, Arial, sans-serif" font-size="14"
         font-weight="800" fill="${accentInk}" text-anchor="middle">${escapeXml(fess.tag || 'Confession')}</text>
 
-  ${decoQuote}${pageQuote ? pageQuote.svg + '\n\n  ' : ''}<!-- Confession text -->
+  ${decoQuote}${pageQuoteSvg}<!-- Confession text -->
   ${textSvg}
 
   <!-- Footer divider -->
@@ -598,14 +618,12 @@ function renderTextLines(
   return out.join('\n    ');
 }
 
-/** Bangun kotak kutipan (mirip preview quote di frontend) di halaman pertama. */
+/** Ukur & bangun kotak kutipan (mirip preview quote di frontend) — di bawah isi fess. */
 function buildQuoteBlock(
   quote: any,
-  x: number,
-  y: number,
   width: number,
   theme: { isDark: boolean; textColor: string; subtextColor: string; cardBorder: string; accentColor: string }
-): { svg: string; height: number } {
+): { height: number; render: (x: number, y: number) => string } {
   const PADQ = 18;
   const HEADER_H = 48;
   const QFONT = 25;
@@ -639,33 +657,34 @@ function buildQuoteBlock(
 
   const height = PADQ + HEADER_H + Math.max(1, qlines.length) * QLH + 14;
   const boxBg = theme.isDark ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.07)';
-
-  const avatarCx = x + PADQ + 21;
-  const avatarCy = y + PADQ + HEADER_H / 2;
-  const handleX = x + PADQ + 56;
-  const handleY = y + PADQ + 33;
-
   const handleWidth = measureFont ? measureFont.getAdvanceWidth(handle, 22) : approxWidth(handle, 22);
-  const timeSvg = time
-    ? `<text x="${(handleX + handleWidth + 12).toFixed(1)}" y="${handleY - 1}" font-family="Poppins, Arial, sans-serif" font-size="16" font-weight="500" fill="${theme.subtextColor}">${escapeXml(time)}</text>`
-    : '';
 
-  const pillW = 78;
-  const pillH = 30;
-  const pillX = x + width - PADQ - pillW;
-  const pillY = y + PADQ + 8;
+  const render = (x: number, y: number): string => {
+    const avatarCx = x + PADQ + 21;
+    const avatarCy = y + PADQ + HEADER_H / 2;
+    const handleX = x + PADQ + 56;
+    const handleY = y + PADQ + 33;
 
-  const linesSvg = renderTextLines(
-    qlines,
-    x + PADQ,
-    y + PADQ + HEADER_H + 18,
-    QFONT,
-    QLH,
-    theme.subtextColor,
-    500
-  );
+    const timeSvg = time
+      ? `<text x="${(handleX + handleWidth + 12).toFixed(1)}" y="${handleY - 1}" font-family="Poppins, Arial, sans-serif" font-size="16" font-weight="500" fill="${theme.subtextColor}">${escapeXml(time)}</text>`
+      : '';
 
-  const svg = `<!-- Quoted fess box -->
+    const pillW = 78;
+    const pillH = 30;
+    const pillX = x + width - PADQ - pillW;
+    const pillY = y + PADQ + 8;
+
+    const linesSvg = renderTextLines(
+      qlines,
+      x + PADQ,
+      y + PADQ + HEADER_H + 18,
+      QFONT,
+      QLH,
+      theme.subtextColor,
+      500
+    );
+
+    return `<!-- Quoted fess box -->
   <rect x="${x}" y="${y}" width="${width}" height="${height}" rx="18"
         fill="${boxBg}" stroke="${theme.cardBorder}" stroke-width="1.5"/>
   <circle cx="${avatarCx}" cy="${avatarCy}" r="21" fill="${avatarBg}"/>
@@ -679,6 +698,7 @@ function buildQuoteBlock(
   <text x="${(pillX + pillW / 2).toFixed(1)}" y="${pillY + 20}" font-family="Poppins, Arial, sans-serif" font-size="15"
         font-weight="800" fill="${theme.accentColor}" text-anchor="middle">Kutip</text>
   ${linesSvg}`;
+  };
 
-  return { svg, height };
+  return { height, render };
 }

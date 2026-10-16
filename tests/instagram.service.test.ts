@@ -68,4 +68,14 @@ describe('InstagramService Unit Tests (Meta for Developers Graph API)', () => {
     expect(result.platform).toBe('instagram');
     expect(prisma.systemLog.create).toHaveBeenCalled();
   });
+
+  it('should build an Instagram caption with branding and a 2200-char cap', () => {
+    const short = InstagramService.buildCaption('Halo dunia', '@codememfess');
+    expect(short).toBe('Halo dunia\n\nDiposting via Fess n Curious (@codememfess)');
+
+    const long = InstagramService.buildCaption('A'.repeat(2500), '@codememfess');
+    expect(long).toHaveLength(2200);
+    expect(long).toContain('\u2026');
+    expect(long.endsWith(')')).toBe(true);
+  });
 });

@@ -104,10 +104,8 @@ export class CanvasService {
       .map((url) => ({ type: 'image' as const, url }));
     const postItems = [...cardItems, ...mediaItems].slice(0, 10);
 
-    // Caption memuat isi fess selengkap mungkin (batas caption Instagram 2200 char).
-    const rawContent = String(fess.content || '');
-    const caption =
-      rawContent.length > 2100 ? `${rawContent.slice(0, 2100).trimEnd()}\u2026` : rawContent;
+    // Caption = isi fess penuh (pemotongan batas 2200 char ditangani InstagramService).
+    const caption = String(fess.content || '');
 
     // Meta Graph API butuh URL publik HTTP(S) — lewati data-URI.
     const hasPublicUrl = imageUrls.some((u) => !u.startsWith('data:'));

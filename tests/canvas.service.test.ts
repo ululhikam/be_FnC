@@ -93,7 +93,7 @@ describe('CanvasService Unit Tests', () => {
     expect(result.media_count).toBe(2);
   });
 
-  it('should send the full fess content as caption (cut at 2100 chars)', async () => {
+  it('should send the full fess content as caption (truncation handled by InstagramService)', async () => {
     vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
       id: 'fess_caption',
       baseHandle: '@codememfess',
@@ -106,8 +106,6 @@ describe('CanvasService Unit Tests', () => {
 
     const autoPostMock = vi.mocked(InstagramService.autoPostFess);
     const captionArg = autoPostMock.mock.calls[0][3] as string;
-    expect(captionArg).toHaveLength(2101);
-    expect(captionArg.startsWith('A'.repeat(2100))).toBe(true);
-    expect(captionArg.endsWith('\u2026')).toBe(true);
+    expect(captionArg).toBe('A'.repeat(2500));
   });
 });

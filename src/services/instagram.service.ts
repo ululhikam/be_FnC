@@ -277,7 +277,7 @@ export class InstagramService {
       if (connection?.connected && connection.accessToken && !connection.accessToken.startsWith('mock_') && items.length) {
         try {
           const apiBase = 'https://graph.instagram.com/v19.0';
-          const captionText = `${caption}\n\nDiposting via Fess n Curious (${baseHandle})`;
+          const captionText = InstagramService.buildCaption(caption, baseHandle);
 
           if (isCarousel) {
             // 1. Buat item container untuk tiap media (gambar/video, tanpa caption)
@@ -399,6 +399,19 @@ export class InstagramService {
         error: err.message,
       };
     }
+  }
+
+  /**
+   * Susun caption final: isi fess selengkap mungkin + branding, dipotong
+   * hanya jika melebihi batas 2200 karakter caption Instagram.
+   */
+  static buildCaption(content: string, baseHandle: string): string {
+    const suffix = `\n\nDiposting via Fess n Curious (${baseHandle})`;
+    let body = content;
+    if (body.length + suffix.length > 2200) {
+      body = `${body.slice(0, Math.max(0, 2200 - suffix.length - 1)).trimEnd()}\u2026`;
+    }
+    return `${body}${suffix}`;
   }
 
   /**

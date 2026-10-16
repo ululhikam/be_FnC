@@ -79,6 +79,13 @@ function setupFonts(): void {
     <prefer><family>Twemoji Mozilla</family></prefer>
     <acceptable><family>Noto Emoji</family></acceptable>
   </alias>
+  <match target="pattern">
+    <test name="family" compare="eq"><string>emoji</string></test>
+    <edit name="family" mode="assign" binding="strong">
+      <string>Twemoji Mozilla</string>
+      <string>Noto Emoji</string>
+    </edit>
+  </match>
 </fontconfig>
 `;
 

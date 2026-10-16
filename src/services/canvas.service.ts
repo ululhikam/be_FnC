@@ -12,7 +12,7 @@ export interface CanvasExportResult {
 
 export class CanvasService {
   /**
-   * Render confession card â†’ PNG â†’ upload to Supabase â†’ auto-post to Instagram Feed.
+   * Render confession card → PNG → upload to Supabase → auto-post to Instagram Feed.
    * aspectKey must be 'square' (1:1) or 'portrait' (4:5). Any unknown key falls back to 'portrait'.
    */
   static async exportFessCanvas(
@@ -30,10 +30,10 @@ export class CanvasService {
     }
 
     const template = getTemplateByKey(templateKey || fess.template || 'default');
-    // Resolve aspect â€” 'story' legacy key falls back to 'portrait'
+    // Resolve aspect — 'story' legacy key falls back to 'portrait'
     const aspect = ASPECTS[aspectKey] || (template.aspect === 'square' ? ASPECTS.square : ASPECTS.portrait);
 
-    // â”€â”€ Visual variables â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Visual variables ────────────────────────────────────────────────────
     const baseName = fess.base?.name || fess.baseHandle || 'Confession Base';
     const baseInitial = (
       fess.base?.initial ||
@@ -52,7 +52,7 @@ export class CanvasService {
     const cardBorder = isDark ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.18)';
     const accentColor = template.accent || (isDark ? '#0038ff' : '#00b2ff');
 
-    // â”€â”€ Gradient definitions per template â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Gradient definitions per template ──────────────────────────────────
     const gradients: Record<string, string> = {
       default: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
         <stop offset="0%" stop-color="#0038ff"/>
@@ -97,7 +97,7 @@ export class CanvasService {
     };
     const bgDef = gradients[template.key] || gradients.default;
 
-    // â”€â”€ Dynamic font sizing based on content length & aspect â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Dynamic font sizing based on content length & aspect ───────────────
     const textLen = (fess.content || '').length;
     const isSquare = aspect.key === 'square';
     let fontSize = isSquare ? 36 : 40;
@@ -119,7 +119,7 @@ export class CanvasService {
     const cardW = W - PAD * 2;
     const cardH = H - PAD * 2;
 
-    // â”€â”€ Build SVG with native tspan word-wrap (sharp-compatible, no foreignObject) â”€â”€
+    // ── Build SVG with native tspan word-wrap (sharp-compatible, no foreignObject) ──
     const textSvg = buildTextLines(fess.content, cardW - 120, fontSize, lineHeight, PAD + 60, PAD + 195, textColor);
 
     const svgCard = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
@@ -154,7 +154,7 @@ export class CanvasService {
   <text x="${PAD + 126}" y="${PAD + 63}" font-family="Noto Sans, Arial, sans-serif" font-size="26"
         font-weight="900" fill="${textColor}">${escapeXml(baseName)}</text>
   <text x="${PAD + 126}" y="${PAD + 93}" font-family="Noto Sans, Arial, sans-serif" font-size="18"
-        font-weight="600" fill="${subtextColor}">${escapeXml(fess.baseHandle)} Â· Fess n Curious</text>
+        font-weight="600" fill="${subtextColor}">${escapeXml(fess.baseHandle)} · Fess n Curious</text>
 
   <!-- Tag pill -->
   <rect x="${PAD + cardW - 130}" y="${PAD + 50}" width="106" height="34" rx="17"
@@ -175,12 +175,12 @@ export class CanvasService {
 
   <!-- Footer branding -->
   <text x="${PAD + 58}" y="${PAD + cardH - 36}" font-family="Noto Sans, Arial, sans-serif" font-size="17"
-        font-weight="800" fill="${textColor}">Instagram Feed Â· ${escapeXml(baseIg)}</text>
+        font-weight="800" fill="${textColor}">Instagram Feed · ${escapeXml(baseIg)}</text>
   <text x="${PAD + cardW - 58}" y="${PAD + cardH - 36}" font-family="Noto Sans, Arial, sans-serif" font-size="15"
         font-weight="600" fill="${subtextColor}" text-anchor="end">fessncurious.vercel.app</text>
 </svg>`;
 
-    // â”€â”€ SVG â†’ PNG via sharp (Meta Graph API only accepts JPEG/PNG URLs) â”€â”€â”€â”€
+    // ── SVG → PNG via sharp (Meta Graph API only accepts JPEG/PNG URLs) ────
     const svgBuffer = Buffer.from(svgCard, 'utf-8');
     let uploadBuffer: Buffer = svgBuffer;
     let mimeType = 'image/svg+xml';
@@ -209,11 +209,11 @@ export class CanvasService {
 
     const upload = await StorageService.uploadMedia(mockFile, 'canvas-exports');
 
-    // â”€â”€ Auto-post to Instagram Feed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Auto-post to Instagram Feed ────────────────────────────────────────
     const posted_to: ('instagram' | 'twitter' | 'telegram')[] = [];
     let ig_result: any = null;
 
-    // Meta Graph API requires a publicly accessible HTTP(S) URL â€” skip data-URIs
+    // Meta Graph API requires a publicly accessible HTTP(S) URL — skip data-URIs
     if (!upload.url.startsWith('data:')) {
       try {
         ig_result = await InstagramService.autoPostFess(
@@ -230,7 +230,7 @@ export class CanvasService {
       }
     } else {
       console.warn(
-        '[Canvas] Storage returned a data-URI â€” Instagram auto-post skipped.' +
+        '[Canvas] Storage returned a data-URI — Instagram auto-post skipped.' +
         ' Configure SUPABASE_URL/SUPABASE_KEY for production IG posting.'
       );
     }
@@ -247,7 +247,7 @@ export class CanvasService {
   }
 }
 
-// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Helpers ────────────────────────────────────────────────────────────────
 
 function escapeXml(unsafe: string): string {
   if (!unsafe) return '';
@@ -257,6 +257,28 @@ function escapeXml(unsafe: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
+}
+
+/** Urutan emoji (pictograph, modifier, ZWJ, variation selector, keycap, regional indicator). */
+const EMOJI_SEQ_RE =
+  /([\p{Extended_Pictographic}\p{Emoji_Modifier}\u200D\uFE0F\u20E3\u{1F1E6}-\u{1F1FF}]+)/gu;
+
+/**
+ * Bungkus bagian emoji dengan <tspan font-family="Twemoji Mozilla, Noto Emoji">.
+ * Fontconfig minimal di runtime server tidak melakukan fallback antar-font untuk
+ * glyph yang tidak ada di font teks, jadi emoji harus meminta font emoji eksplisit.
+ */
+function withEmojiFontSpan(line: string): string {
+  if (!line) return '\u00A0';
+  if (!line.match(EMOJI_SEQ_RE)) return escapeXml(line);
+  return line
+    .split(EMOJI_SEQ_RE)
+    .map((part, i) =>
+      i % 2 === 1 && part
+        ? `<tspan font-family="Twemoji Mozilla, Noto Emoji, Noto Sans">${escapeXml(part)}</tspan>`
+        : escapeXml(part)
+    )
+    .join('');
 }
 
 /**
@@ -303,12 +325,12 @@ function buildTextLines(
   // Add ellipsis if truncated
   if (lines.length === maxLines && content.length > lines.join(' ').length) {
     const last = lines[lines.length - 1];
-    lines[lines.length - 1] = last.slice(0, -2) + 'â€¦';
+    lines[lines.length - 1] = last.slice(0, -2) + '…';
   }
 
   const tspans = lines
     .map((line, i) =>
-      `<tspan x="${x}" dy="${i === 0 ? 0 : lineHeightPx}">${escapeXml(line || '\u00A0')}</tspan>`
+      `<tspan x="${x}" dy="${i === 0 ? 0 : lineHeightPx}">${withEmojiFontSpan(line)}</tspan>`
     )
     .join('\n    ');
 

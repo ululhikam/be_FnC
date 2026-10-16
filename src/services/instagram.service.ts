@@ -1,6 +1,10 @@
+import crypto from 'crypto';
 import axios from 'axios';
 import { ENV } from '../config/env.js';
 import { prisma } from '../config/prisma.js';
+
+const API_BASE = 'https://graph.instagram.com/v19.0';
+const FINALIZE_MAX_ATTEMPTS = 6;
 
 export interface InstagramProfileData {
   id: string;
@@ -14,6 +18,23 @@ export interface InstagramProfileData {
 export interface PostMediaItem {
   type: 'image' | 'video';
   url: string;
+}
+
+/**
+ * Payload worker finalize (ditandatangani HMAC) — dipakai untuk melanjutkan
+ * publikasi lintas invocation karena video butuh > 60 detik diproses Meta.
+ */
+export interface FinalizePayload {
+  fessId: string;
+  baseHandle: string;
+  kind: 'carousel' | 'reels';
+  /** Child container (fase 1: tunggu item → rakit carousel). */
+  itemIds: string[] | null;
+  /** Container siap-publish (carousel/Reels) — fase 2: tunggu → publish. */
+  containerId: string | null;
+  attempts: number;
+  /** Epoch ms — payload kedaluwarsa setelah ini. */
+  exp: number;
 }
 
 export class InstagramService {
@@ -247,107 +268,88 @@ export class InstagramService {
         .slice(0, 10);
       const isCarousel = items.length > 1;
 
-      // Find base & connected admin
-      const base = prisma.base?.findUnique
-        ? await prisma.base.findUnique({
-            where: { handle: baseHandle },
-            include: { creator: true },
-          })
-        : null;
-
-      const creatorId = base?.creatorId;
-      const baseIg = base?.igAccount || baseHandle;
-      let connection = null;
-
-      if (creatorId && prisma.platformConnection?.findUnique) {
-        connection = await prisma.platformConnection.findUnique({
-          where: {
-            userId_platform: {
-              userId: creatorId,
-              platform: 'instagram',
-            },
-          },
-        });
-      }
+      // Resolve koneksi Instagram kreator base (token nyata saja)
+      const { baseIg, token } = await InstagramService.resolveInstagramConnection(baseHandle);
 
       let metaPublished = false;
+      let igPending = false;
       let postCreationId: string | null = null;
+      const mediaLabel = isCarousel
+        ? `carousel ${items.length} media`
+        : items[0]?.type === 'video'
+          ? 'video Reels'
+          : 'visual Feed card';
 
-      // If active Instagram access token exists, trigger Meta Content Publishing API (Feed only)
-      if (connection?.connected && connection.accessToken && !connection.accessToken.startsWith('mock_') && items.length) {
+      // Jika token Instagram aktif ada, jalankan Meta Content Publishing API
+      if (token && items.length) {
         try {
-          const apiBase = 'https://graph.instagram.com/v19.0';
           const captionText = InstagramService.buildCaption(caption, baseHandle);
+          const hasVideo = items.some((item) => item.type === 'video');
 
-          if (isCarousel) {
-            // 1. Buat item container untuk tiap media (gambar/video, tanpa caption)
+          if (hasVideo) {
+            // Video butuh ~25 dtk diproses Meta + ~25 dtk lagi untuk container
+            // carousel — tidak muat dalam batas 60 dtk Vercel. Container dibuat
+            // di sini, tunggu + publish diserahkan ke worker finalize internal.
+            if (isCarousel) {
+              // Item video dibuat lebih dulu agar Meta mulai memprosesnya lebih
+              // awal; urutan id tetap mengikuti urutan tampil media.
+              const createdIds = new Map<number, string>();
+              const creationOrder = items
+                .map((item, idx) => ({ item, idx }))
+                .sort((a, b) => (a.item.type === 'video' ? 0 : 1) - (b.item.type === 'video' ? 0 : 1));
+              for (const { item, idx } of creationOrder) {
+                createdIds.set(idx, await InstagramService.createItemContainer(item, token));
+              }
+              const itemIds = items.map((_, idx) => createdIds.get(idx)!);
+
+              await InstagramService.scheduleFinalize({
+                fessId,
+                baseHandle,
+                kind: 'carousel',
+                itemIds,
+                containerId: null,
+                attempts: 0,
+                exp: Date.now() + 30 * 60_000,
+              });
+            } else {
+              // Video tunggal → Reels (caption menempel di container).
+              const containerId = await InstagramService.createVideoContainer(items[0].url, captionText, token);
+              await InstagramService.scheduleFinalize({
+                fessId,
+                baseHandle,
+                kind: 'reels',
+                itemIds: null,
+                containerId,
+                attempts: 0,
+                exp: Date.now() + 30 * 60_000,
+              });
+            }
+            igPending = true;
+          } else if (isCarousel) {
+            // Semua gambar → alur sinkron (cepat): item → tunggu → carousel → tunggu → publish.
             const itemIds: string[] = [];
             for (const item of items) {
-              const params: Record<string, string> =
-                item.type === 'video'
-                  ? { video_url: item.url, media_type: 'VIDEO', is_carousel_item: 'true' }
-                  : { image_url: item.url, is_carousel_item: 'true' };
-              params.access_token = connection.accessToken;
-
-              const itemRes = await axios.post(`${apiBase}/me/media`, null, {
-                params,
-                timeout: 15000,
-              });
-              const itemId = itemRes.data?.id;
-              if (!itemId) throw new Error('Gagal membuat carousel item container (tanpa id).');
-              itemIds.push(itemId);
+              itemIds.push(await InstagramService.createItemContainer(item, token));
             }
+            const itemsReady = await InstagramService.waitForContainersFinished(itemIds, token);
+            if (!itemsReady) throw new Error('Container item Meta belum siap (masih IN_PROGRESS) setelah 30 detik.');
 
-            // 2. Tunggu semua item selesai diproses (dicek paralel) sebelum merakit carousel.
-            await InstagramService.waitForContainersFinished(itemIds, connection.accessToken);
-
-            // 3. Rakit container carousel (caption menempel di container, bukan item)
-            const carRes = await axios.post(`${apiBase}/me/media`, null, {
-              params: {
-                media_type: 'CAROUSEL',
-                children: itemIds.join(','),
-                caption: captionText,
-                access_token: connection.accessToken,
-              },
-              timeout: 15000,
-            });
-            postCreationId = carRes.data?.id || null;
-            if (!postCreationId) throw new Error('Gagal membuat carousel container (tanpa id).');
-          } else if (items[0].type === 'video') {
-            // 1. Video tunggal → Reels (media video Feed via API).
-            const containerRes = await axios.post(`${apiBase}/me/media`, null, {
-              params: {
-                media_type: 'REELS',
-                video_url: items[0].url,
-                caption: captionText,
-                access_token: connection.accessToken,
-              },
-              timeout: 15000,
-            });
-            postCreationId = containerRes.data?.id || null;
+            postCreationId = await InstagramService.createCarouselContainer(captionText, itemIds, token);
           } else {
-            // 1. Buat Feed Media Container tunggal (mendukung 1:1 dan 4:5)
-            const containerRes = await axios.post(`${apiBase}/me/media`, null, {
-              params: {
-                image_url: items[0].url,
-                caption: captionText,
-                access_token: connection.accessToken,
-              },
-              timeout: 15000,
-            });
-            postCreationId = containerRes.data?.id || null;
+            // Gambar tunggal → Feed card biasa.
+            postCreationId = await InstagramService.createImageContainer(items[0].url, captionText, token);
           }
 
-          // 4. Tunggu Meta selesai memproses container (status FINISHED) sebelum publish.
-          //    Publish saat container masih IN_PROGRESS selalu gagal: "Media ID is not available".
-          if (postCreationId) {
-            await InstagramService.waitForContainerFinished(postCreationId, connection.accessToken);
+          if (!igPending && postCreationId) {
+            // Tunggu Meta selesai memproses container (status FINISHED) sebelum publish.
+            // Publish saat container masih IN_PROGRESS selalu gagal: "Media ID is not available".
+            const containerReady = await InstagramService.waitForContainersFinished([postCreationId], token);
+            if (!containerReady) throw new Error('Container media Meta belum siap (masih IN_PROGRESS) setelah 30 detik.');
 
-            // 5. Publish the Feed Media Container
-            const pubRes = await axios.post(`${apiBase}/me/media_publish`, null, {
+            const pubRes = await axios.post(`${API_BASE}/me/media_publish`, null, {
               params: {
                 creation_id: postCreationId,
-                access_token: connection.accessToken,
+                access_token: token,
               },
               timeout: 15000,
             });
@@ -361,18 +363,15 @@ export class InstagramService {
       }
 
       // Record audit log
-      const mediaLabel = isCarousel
-        ? `carousel ${items.length} media`
-        : items[0]?.type === 'video'
-          ? 'video Reels'
-          : 'visual Feed card';
       await prisma.systemLog.create({
         data: {
           source: 'CANVAS_WORKER',
           message: metaPublished
             ? `Fess #${fessId} berhasil dipublikasikan ke Instagram Feed ${baseIg} (${mediaLabel}).`
-            : `Fess #${fessId} dirender ke ${mediaLabel} (${baseIg}), tetapi publikasi ke Instagram belum berhasil.`,
-          tone: metaPublished ? 'ok' : 'error',
+            : igPending
+              ? `Fess #${fessId}: video sedang diproses Meta — publikasi otomatis ke ${baseIg} sedang berjalan (${mediaLabel}).`
+              : `Fess #${fessId} dirender ke ${mediaLabel} (${baseIg}), tetapi publikasi ke Instagram belum berhasil.`,
+          tone: metaPublished || igPending ? 'ok' : 'error',
         },
       });
 
@@ -380,6 +379,7 @@ export class InstagramService {
         success: true,
         platform: 'instagram',
         meta_published: metaPublished,
+        ig_pending: igPending,
         creation_id: postCreationId,
         imageUrl: items[0]?.url || null,
         imageUrls: items.map((item) => item.url),
@@ -389,7 +389,9 @@ export class InstagramService {
         base_ig: baseIg,
         message: metaPublished
           ? `Card fess #${fessId} berhasil diposting otomatis ke Instagram Feed ${baseIg}${isCarousel ? ` (carousel ${items.length} media)` : ''}!`
-          : `Card fess #${fessId} berhasil di-render dan siap diposting ke Instagram Feed ${baseIg}.`,
+          : igPending
+            ? `Video sedang diproses Instagram — fess #${fessId} akan terbit otomatis ke ${baseIg} dalam ±1 menit.`
+            : `Card fess #${fessId} berhasil di-render dan siap diposting ke Instagram Feed ${baseIg}.`,
       };
     } catch (err: any) {
       console.error('[Instagram AutoPost Error]', err.message);
@@ -399,6 +401,260 @@ export class InstagramService {
         error: err.message,
       };
     }
+  }
+
+  /** Cari koneksi Instagram (token nyata) milik kreator base. */
+  private static async resolveInstagramConnection(
+    baseHandle: string
+  ): Promise<{ baseIg: string; token: string | null }> {
+    const base = prisma.base?.findUnique
+      ? await prisma.base.findUnique({
+          where: { handle: baseHandle },
+          include: { creator: true },
+        })
+      : null;
+
+    const baseIg = base?.igAccount || baseHandle;
+    let token: string | null = null;
+
+    if (base?.creatorId && prisma.platformConnection?.findUnique) {
+      const connection = await prisma.platformConnection.findUnique({
+        where: {
+          userId_platform: {
+            userId: base.creatorId,
+            platform: 'instagram',
+          },
+        },
+      });
+      if (connection?.connected && connection.accessToken && !connection.accessToken.startsWith('mock_')) {
+        token = connection.accessToken;
+      }
+    }
+
+    return { baseIg, token };
+  }
+
+  /** Buat item container carousel (gambar/video) tanpa caption. */
+  private static async createItemContainer(item: PostMediaItem, token: string): Promise<string> {
+    const params: Record<string, string> =
+      item.type === 'video'
+        ? { video_url: item.url, media_type: 'VIDEO', is_carousel_item: 'true' }
+        : { image_url: item.url, is_carousel_item: 'true' };
+    params.access_token = token;
+
+    const res = await axios.post(`${API_BASE}/me/media`, null, { params, timeout: 15000 });
+    const id = res.data?.id;
+    if (!id) throw new Error('Gagal membuat carousel item container (tanpa id).');
+    return id;
+  }
+
+  /** Buat container gambar tunggal (Feed card) dengan caption. */
+  private static async createImageContainer(
+    imageUrl: string,
+    captionText: string,
+    token: string
+  ): Promise<string> {
+    const res = await axios.post(`${API_BASE}/me/media`, null, {
+      params: { image_url: imageUrl, caption: captionText, access_token: token },
+      timeout: 15000,
+    });
+    const id = res.data?.id;
+    if (!id) throw new Error('Gagal membuat container gambar (tanpa id).');
+    return id;
+  }
+
+  /** Buat container video tunggal (Reels) dengan caption. */
+  private static async createVideoContainer(
+    videoUrl: string,
+    captionText: string | null,
+    token: string
+  ): Promise<string> {
+    const params: Record<string, string> = {
+      media_type: 'REELS',
+      video_url: videoUrl,
+      access_token: token,
+    };
+    if (captionText !== null) params.caption = captionText;
+
+    const res = await axios.post(`${API_BASE}/me/media`, null, { params, timeout: 15000 });
+    const id = res.data?.id;
+    if (!id) throw new Error('Gagal membuat container Reels (tanpa id).');
+    return id;
+  }
+
+  /** Rakit container carousel dari item container (caption menempel di sini). */
+  private static async createCarouselContainer(
+    captionText: string,
+    itemIds: string[],
+    token: string
+  ): Promise<string> {
+    const res = await axios.post(`${API_BASE}/me/media`, null, {
+      params: {
+        media_type: 'CAROUSEL',
+        children: itemIds.join(','),
+        caption: captionText,
+        access_token: token,
+      },
+      timeout: 15000,
+    });
+    const id = res.data?.id;
+    if (!id) throw new Error('Gagal membuat carousel container (tanpa id).');
+    return id;
+  }
+
+  // ── Worker finalize lintas-invocation (video > 60 dtk budget Vercel) ──────
+
+  private static internalSecret(): string {
+    return ENV.INSTAGRAM_CLIENT_SECRET || ENV.JWT_SECRET || 'fessncurious-internal';
+  }
+
+  /** Tanda tangani payload worker dengan HMAC-SHA256 (base64url). */
+  static signFinalizePayload(payload: FinalizePayload): string {
+    const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+    const sig = crypto
+      .createHmac('sha256', InstagramService.internalSecret())
+      .update(body)
+      .digest('base64url');
+    return `${body}.${sig}`;
+  }
+
+  /** Verifikasi payload worker; null jika tanda tangan/expired tidak valid. */
+  static verifyFinalizePayload(token: string): FinalizePayload | null {
+    const [body, sig] = String(token || '').split('.');
+    if (!body || !sig) return null;
+
+    const expected = crypto
+      .createHmac('sha256', InstagramService.internalSecret())
+      .update(body)
+      .digest('base64url');
+    const a = Buffer.from(sig);
+    const b = Buffer.from(expected);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+
+    try {
+      const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as FinalizePayload;
+      if (!payload?.fessId || !payload?.baseHandle || !payload.exp || Date.now() > payload.exp) {
+        return null;
+      }
+      return payload;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Kirim tugas finalize ke endpoint internal (invocation baru, budget 60 dtk sendiri). */
+  private static async scheduleFinalize(payload: FinalizePayload): Promise<void> {
+    const token = InstagramService.signFinalizePayload(payload);
+    const baseUrl = ENV.BACKEND_PUBLIC_URL.replace(/\/+$/, '');
+    await axios.post(`${baseUrl}/internal/instagram/finalize`, { token }, { timeout: 10000 });
+  }
+
+  /**
+   * Worker finalize: tunggu container siap lalu publish. Jika belum siap
+   * sebelum budget habis, jadwalkan ulang (rantai) dengan attempts+1.
+   */
+  static async finalizeInstagramPost(
+    payload: FinalizePayload,
+    deadlineTs = Date.now() + 50_000
+  ): Promise<void> {
+    try {
+      const fess = prisma.fess?.findUnique
+        ? await prisma.fess.findUnique({
+            where: { id: payload.fessId },
+            select: { id: true, content: true, postedToIg: true },
+          })
+        : null;
+      if (!fess || fess.postedToIg) return; // sudah terbit / fess tidak ada
+
+      const { baseIg, token } = await InstagramService.resolveInstagramConnection(payload.baseHandle);
+      if (!token) {
+        await InstagramService.auditFinalize(payload, baseIg, false, 'Koneksi Instagram tidak aktif.');
+        return;
+      }
+
+      let containerId = payload.containerId;
+
+      // Fase 1 — item container selesai? Lalu rakit carousel.
+      if (!containerId) {
+        const itemsReady = await InstagramService.waitForContainersFinished(
+          payload.itemIds || [],
+          token,
+          deadlineTs - 3000
+        );
+        if (!itemsReady) {
+          await InstagramService.rescheduleFinalize(payload);
+          return;
+        }
+        const captionText = InstagramService.buildCaption(String(fess.content || ''), payload.baseHandle);
+        containerId = await InstagramService.createCarouselContainer(captionText, payload.itemIds || [], token);
+      }
+
+      // Fase 2 — container siap? Lalu publish.
+      const containerReady = await InstagramService.waitForContainersFinished([containerId], token, deadlineTs);
+      if (!containerReady) {
+        await InstagramService.rescheduleFinalize({ ...payload, containerId });
+        return;
+      }
+
+      const pubRes = await axios.post(`${API_BASE}/me/media_publish`, null, {
+        params: { creation_id: containerId, access_token: token },
+        timeout: 15000,
+      });
+      const published = Boolean(pubRes.data?.id);
+      if (published) {
+        await prisma.fess.update({
+          where: { id: payload.fessId },
+          data: { postedToIg: true },
+        });
+      }
+      await InstagramService.auditFinalize(
+        payload,
+        baseIg,
+        published,
+        published ? null : 'Meta tidak mengembalikan id media.'
+      );
+    } catch (err: any) {
+      const detail = err?.response?.data?.error?.message || err?.message || 'unknown error';
+      console.warn('[Instagram Finalize] gagal:', detail);
+      await InstagramService.auditFinalize(payload, payload.baseHandle, false, detail).catch(() => {});
+    }
+  }
+
+  /** Jadwalkan ulang worker finalize (rantai antar-invocation). */
+  private static async rescheduleFinalize(payload: FinalizePayload): Promise<void> {
+    if (payload.attempts >= FINALIZE_MAX_ATTEMPTS) {
+      await InstagramService.auditFinalize(
+        payload,
+        payload.baseHandle,
+        false,
+        `Belum selesai setelah ${FINALIZE_MAX_ATTEMPTS} percobaan.`
+      ).catch(() => {});
+      return;
+    }
+    try {
+      await InstagramService.scheduleFinalize({ ...payload, attempts: payload.attempts + 1 });
+    } catch (err: any) {
+      console.warn('[Instagram Finalize] gagal menjadwalkan ulang:', err?.message);
+    }
+  }
+
+  /** Catat hasil akhir publikasi worker ke audit log. */
+  private static async auditFinalize(
+    payload: FinalizePayload,
+    baseIg: string,
+    published: boolean,
+    detail: string | null
+  ): Promise<void> {
+    const label = payload.kind === 'carousel' ? 'carousel' : 'video Reels';
+    await prisma.systemLog.create({
+      data: {
+        source: 'CANVAS_WORKER',
+        message: published
+          ? `Fess #${payload.fessId} berhasil dipublikasikan ke Instagram Feed ${baseIg} (${label}).`
+          : `Fess #${payload.fessId} GAGAL dipublikasikan ke Instagram Feed ${baseIg} (${label})${detail ? `: ${detail}` : '.'}`,
+        tone: published ? 'ok' : 'error',
+      },
+    });
   }
 
   /**
@@ -417,19 +673,21 @@ export class InstagramService {
   /**
    * Tunggu beberapa container media Meta selesai diproses (status FINISHED)
    * sebelum dipakai/dipublikasikan — status tiap container dicek paralel.
-   * Publish saat container masih IN_PROGRESS selalu gagal: "Media ID is not available".
+   * Mengembalikan false jika deadline habis (masih IN_PROGRESS); melempar
+   * error jika container berstatus ERROR/EXPIRED.
    */
   private static async waitForContainersFinished(
     containerIds: string[],
-    accessToken: string
-  ): Promise<void> {
-    const pending = new Set(containerIds);
-    const deadline = Date.now() + 30_000;
+    accessToken: string,
+    deadlineTs = Date.now() + 30_000
+  ): Promise<boolean> {
+    const pending = new Set(containerIds.filter(Boolean));
+    if (pending.size === 0) return true;
 
-    while (pending.size > 0 && Date.now() < deadline) {
+    while (pending.size > 0 && Date.now() < deadlineTs) {
       const results = await Promise.allSettled(
         Array.from(pending).map(async (id) => {
-          const statusRes = await axios.get(`https://graph.instagram.com/v19.0/${id}`, {
+          const statusRes = await axios.get(`${API_BASE}/${id}`, {
             params: { fields: 'status_code', access_token: accessToken },
             timeout: 10000,
           });
@@ -458,13 +716,6 @@ export class InstagramService {
       if (pending.size > 0) await new Promise((resolve) => setTimeout(resolve, 2500));
     }
 
-    if (pending.size > 0) {
-      throw new Error('Container media Meta belum siap (masih IN_PROGRESS) setelah 30 detik.');
-    }
-  }
-
-  /** Tunggu satu container media Meta selesai diproses sebelum dipublikasikan. */
-  private static async waitForContainerFinished(containerId: string, accessToken: string): Promise<void> {
-    return InstagramService.waitForContainersFinished([containerId], accessToken);
+    return pending.size === 0;
   }
 }

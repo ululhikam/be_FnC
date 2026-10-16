@@ -39,6 +39,15 @@ export const ENV = {
   INSTAGRAM_REDIRECT_URI: process.env.INSTAGRAM_REDIRECT_URI || 'http://localhost:3000/api/auth/instagram/callback',
   INSTAGRAM_VERIFY_TOKEN: process.env.INSTAGRAM_VERIFY_TOKEN || 'fess_instagram_verify_token_2026',
 
+  // URL publik backend (dipakai worker internal untuk memanggil dirinya sendiri)
+  BACKEND_PUBLIC_URL:
+    process.env.BACKEND_PUBLIC_URL ||
+    (process.env.VERCEL_PROJECT_PRODUCTION_URL
+      ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+      : process.env.VERCEL_URL
+        ? `https://${process.env.VERCEL_URL}`
+        : `http://localhost:${parseInt(process.env.PORT || '3000', 10)}`),
+
   // Email (Resend SDK) — dipakai untuk mengirim kode OTP reset kata sandi
   RESEND_API_KEY: process.env.RESEND_API_KEY || '',
   EMAIL_FROM: process.env.EMAIL_FROM || 'Fess n Curious <onboarding@resend.dev>',

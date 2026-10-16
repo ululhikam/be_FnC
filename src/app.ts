@@ -5,6 +5,7 @@ import morgan from 'morgan';
 import passport from './config/passport.js';
 import { ENV } from './config/env.js';
 import apiRoutes from './routes/index.js';
+import internalRoutes from './routes/internal.routes.js';
 import { errorHandler, notFoundHandler } from './middlewares/error.middleware.js';
 import { rateLimiter } from './middlewares/rateLimit.middleware.js';
 
@@ -36,6 +37,9 @@ app.use(rateLimiter);
 
 // Mount API routes under /api (matching api-contract server definition)
 app.use(ENV.API_PREFIX, apiRoutes);
+
+// Endpoint internal (worker finalize Instagram) — dipanggil oleh backend sendiri
+app.use('/internal', internalRoutes);
 
 // Also mount routes at root for convenience and contract compatibility
 if (ENV.API_PREFIX !== '/') {

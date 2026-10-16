@@ -1,21 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
-import { waitUntil } from '@vercel/functions';
 import { FessService } from '../services/fess.service.js';
 import { CanvasService } from '../services/canvas.service.js';
+import { trackBackground } from '../utils/background.js';
 import { successResponse, errorResponse } from '../utils/response.util.js';
-
-/**
- * Daftarkan background task (auto-post canvas) ke waitUntil runtime Vercel
- * supaya tidak dipotong saat response HTTP selesai. Di luar Vercel (dev/test)
- * waitUntil tidak tersedia — task tetap berjalan fire-and-forget.
- */
-function trackBackground(task: Promise<unknown>) {
-  try {
-    waitUntil(task);
-  } catch {
-    /* runtime non-Vercel: biarkan promise berjalan sendiri */
-  }
-}
 
 export class FessController {
   static async getFesses(req: Request, res: Response, next: NextFunction) {
@@ -126,6 +113,7 @@ export class FessController {
           imageUrls: result.image_urls,
           card_count: result.card_count,
           media_count: result.media_count,
+          ig_pending: ig.ig_pending === true,
           posted_to: result.posted_to,
           meta_published: ig.meta_published === true,
           message: ig.message || ig.error || `Card fess ${id} berhasil dirender.`,

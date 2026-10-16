@@ -16,3 +16,6 @@ build/
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Skrip verifikasi lokal (jangan di-commit)
+tmp_verify_*.ts

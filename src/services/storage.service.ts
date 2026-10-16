@@ -8,6 +8,14 @@ export interface UploadResult {
   type: 'image' | 'video';
 }
 
+/** Info unggah langsung (direct upload) klien → Supabase Storage. */
+export interface SignedUploadResult {
+  signed_url: string;
+  public_url: string;
+  path: string;
+  type: 'image' | 'video';
+}
+
 /** Batas ukuran file yang boleh memakai fallback data-URI (dev tanpa storage). */
 const DATA_URI_MAX_BYTES = 2 * 1024 * 1024;
 
@@ -125,5 +133,54 @@ export class StorageService {
   static async uploadAvatar(file: Express.Multer.File): Promise<string> {
     const result = await this.uploadMedia(file, 'avatars');
     return result.url;
+  }
+
+  /**
+   * Buat signed upload URL Supabase Storage agar klien mengunggah file LANGSUNG
+   * ke storage — menghindari batas body request serverless Vercel (~4,5MB) yang
+   * membuat video besar gagal dengan "koneksi terputus".
+   */
+  static async createSignedMediaUpload(input: {
+    filename: string;
+    contentType?: string;
+    folder?: string;
+  }): Promise<SignedUploadResult> {
+    const folder = input.folder || 'media';
+    const rawExt = (input.filename || '').split('.').pop() || '';
+    const cleanExt = rawExt.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const isVideo =
+      String(input.contentType || '').startsWith('video/') ||
+      ['mp4', 'webm', 'mov', 'mkv', 'avi', 'm4v'].includes(cleanExt);
+    const type: 'image' | 'video' = isVideo ? 'video' : 'image';
+    const ext = cleanExt || (isVideo ? 'mp4' : 'jpg');
+    const path = `${folder}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+
+    if (!isStorageConfigured()) {
+      throw new Error('Storage media belum dikonfigurasi (SUPABASE_URL/SUPABASE_KEY).');
+    }
+
+    const supabase = getSupabase();
+    const { data, error } = await withTimeout(
+      supabase.storage.from(ENV.SUPABASE_BUCKET).createSignedUploadUrl(path),
+      15000,
+      'Batas waktu membuat URL unggah Supabase terlampaui (15s)'
+    );
+
+    if (error || !data?.signedUrl) {
+      throw new Error(
+        `Gagal membuat URL unggah (${error?.message || 'respons storage tidak valid'}). Coba lagi beberapa saat.`
+      );
+    }
+
+    const { data: publicUrlData } = supabase.storage
+      .from(ENV.SUPABASE_BUCKET)
+      .getPublicUrl(data.path);
+
+    return {
+      signed_url: data.signedUrl,
+      public_url: publicUrlData.publicUrl,
+      path: data.path,
+      type,
+    };
   }
 }

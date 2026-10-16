@@ -6,6 +6,7 @@ import { optionalAuth } from '../middlewares/auth.middleware.js';
 const router = Router();
 
 router.post('/', optionalAuth, uploadSingleMedia, UploadController.uploadMedia);
+router.post('/sign', optionalAuth, UploadController.signMediaUpload);
 router.post('/avatar', optionalAuth, uploadSingleMedia, UploadController.uploadAvatar);
 
 export default router;

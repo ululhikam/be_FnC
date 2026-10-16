@@ -2,9 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { StorageService } from '../src/services/storage.service.js';
 import { ENV } from '../src/config/env.js';
 
-const { uploadMock, getPublicUrlMock } = vi.hoisted(() => ({
+const { uploadMock, getPublicUrlMock, createSignedUploadUrlMock } = vi.hoisted(() => ({
   uploadMock: vi.fn(),
   getPublicUrlMock: vi.fn(),
+  createSignedUploadUrlMock: vi.fn(),
 }));
 
 vi.mock('../src/config/supabase.js', () => ({
@@ -13,6 +14,7 @@ vi.mock('../src/config/supabase.js', () => ({
       from: vi.fn(() => ({
         upload: uploadMock,
         getPublicUrl: getPublicUrlMock,
+        createSignedUploadUrl: createSignedUploadUrlMock,
       })),
     },
   })),
@@ -57,6 +59,7 @@ describe('StorageService Unit Tests (Supabase Object Storage)', () => {
     getPublicUrlMock.mockReset().mockReturnValue({
       data: { publicUrl: 'https://supabase.co/storage/v1/object/public/confess-media/media/test.jpg' },
     });
+    createSignedUploadUrlMock.mockReset();
   });
 
   it('should upload image media and return public URL', async () => {
@@ -131,6 +134,38 @@ describe('StorageService Unit Tests (Supabase Object Storage)', () => {
       expect(result.url.startsWith('data:image/jpeg;base64,')).toBe(true);
       expect(result.size).toBe(1024 * 50);
       expect(uploadMock).not.toHaveBeenCalled();
+    });
+  });
+
+  it('creates a signed upload URL for direct client upload (video besar)', async () => {
+    createSignedUploadUrlMock.mockResolvedValue({
+      data: {
+        signedUrl:
+          'https://supabase.co/storage/v1/object/upload/sign/confess-media/media/big.mp4?token=abc',
+        path: 'media/big.mp4',
+        token: 'abc',
+      },
+      error: null,
+    });
+
+    const result = await StorageService.createSignedMediaUpload({
+      filename: 'video-liburan.mp4',
+      contentType: 'video/mp4',
+    });
+
+    expect(createSignedUploadUrlMock).toHaveBeenCalledTimes(1);
+    expect(result.signed_url).toContain('/object/upload/sign/');
+    expect(result.public_url).toContain('/object/public/');
+    expect(result.type).toBe('video');
+    expect(result.path).toMatch(/^media\/.*\.mp4$/);
+  });
+
+  it('throws a clear error when signed upload is requested without storage config', async () => {
+    await withoutStorage(async () => {
+      await expect(
+        StorageService.createSignedMediaUpload({ filename: 'foto.jpg', contentType: 'image/jpeg' })
+      ).rejects.toThrow(/Storage media belum dikonfigurasi/);
+      expect(createSignedUploadUrlMock).not.toHaveBeenCalled();
     });
   });
 });

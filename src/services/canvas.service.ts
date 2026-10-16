@@ -275,7 +275,7 @@ function withEmojiFontSpan(line: string): string {
     .split(EMOJI_SEQ_RE)
     .map((part, i) =>
       i % 2 === 1 && part
-        ? `<tspan font-family="Twemoji Mozilla, Noto Emoji, Noto Sans">${escapeXml(part)}</tspan>`
+        ? `<tspan font-family="Noto Emoji, Twemoji Mozilla, Noto Sans">${escapeXml(part)}</tspan>`
         : escapeXml(part)
     )
     .join('');

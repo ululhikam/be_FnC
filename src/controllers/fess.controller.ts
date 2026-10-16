@@ -1,7 +1,21 @@
 import { Request, Response, NextFunction } from 'express';
+import { waitUntil } from '@vercel/functions';
 import { FessService } from '../services/fess.service.js';
 import { CanvasService } from '../services/canvas.service.js';
 import { successResponse, errorResponse } from '../utils/response.util.js';
+
+/**
+ * Daftarkan background task (auto-post canvas) ke waitUntil runtime Vercel
+ * supaya tidak dipotong saat response HTTP selesai. Di luar Vercel (dev/test)
+ * waitUntil tidak tersedia — task tetap berjalan fire-and-forget.
+ */
+function trackBackground(task: Promise<unknown>) {
+  try {
+    waitUntil(task);
+  } catch {
+    /* runtime non-Vercel: biarkan promise berjalan sendiri */
+  }
+}
 
 export class FessController {
   static async getFesses(req: Request, res: Response, next: NextFunction) {
@@ -15,7 +29,7 @@ export class FessController {
 
   static async createFess(req: Request, res: Response, next: NextFunction) {
     try {
-      const fess = await FessService.createFess(req.body, req.user?.id);
+      const fess = await FessService.createFess(req.body, req.user?.id, trackBackground);
       return successResponse(res, fess, 201);
     } catch (error) {
       next(error);
@@ -51,7 +65,7 @@ export class FessController {
       if (!req.user) {
         return errorResponse(res, 'Autentikasi dibutuhkan', 401, 'UNAUTHORIZED');
       }
-      const approved = await FessService.approveFess(id, req.user);
+      const approved = await FessService.approveFess(id, req.user, trackBackground);
       return successResponse(res, approved, 200);
     } catch (error) {
       next(error);
@@ -108,6 +122,8 @@ export class FessController {
         {
           image_url: result.image_url,
           imageUrl: result.image_url,
+          image_urls: result.image_urls,
+          imageUrls: result.image_urls,
           posted_to: result.posted_to,
           meta_published: ig.meta_published === true,
           message: ig.message || ig.error || `Card fess ${id} berhasil dirender.`,

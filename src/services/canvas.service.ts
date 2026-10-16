@@ -1,19 +1,54 @@
-﻿import sharp from 'sharp';
+﻿import fs from 'fs';
+import opentype from 'opentype.js';
+import { Resvg } from '@resvg/resvg-js';
 import { ASPECTS, getTemplateByKey } from '../constants/templates.js';
 import { StorageService } from './storage.service.js';
 import { prisma } from '../config/prisma.js';
 import { InstagramService } from './instagram.service.js';
+import { getFontFiles, getPoppinsFontFile } from '../config/fonts.js';
+import { getEmojiSvgMarkup } from '../config/emoji.js';
 
 export interface CanvasExportResult {
   image_url: string;
+  image_urls: string[];
   posted_to: ('instagram' | 'twitter' | 'telegram')[];
   ig_result?: any;
 }
 
+/** Bentuk minimal data fess yang dibutuhkan builder SVG (mudah di-test tanpa DB). */
+export interface FessLike {
+  id?: string;
+  content: string;
+  baseHandle: string;
+  tag?: string | null;
+  template?: string | null;
+  quotedFess?: any;
+  base?: {
+    name?: string | null;
+    initial?: string | null;
+    igAccount?: string | null;
+  } | null;
+}
+
+/** Satu potongan teks atau satu emoji dalam satu baris. */
+interface TextSegment {
+  kind: 'text' | 'emoji';
+  text: string;
+  width: number;
+  svg?: string;
+}
+
+type TextLine = TextSegment[];
+type TextPage = TextLine[];
+
+const MAX_PAGES = 10; // batas carousel Instagram
+const MAX_QUOTE_LINES = 4;
+
 export class CanvasService {
   /**
-   * Render confession card → PNG → upload to Supabase → auto-post to Instagram Feed.
-   * aspectKey must be 'square' (1:1) or 'portrait' (4:5). Any unknown key falls back to 'portrait'.
+   * Render confession card → PNG (satu atau beberapa halaman untuk carousel)
+   * → upload ke Supabase → auto-post ke Instagram Feed.
+   * aspectKey harus 'square' (1:1) atau 'portrait' (4:5); kunci lain jatuh ke 'portrait'.
    */
   static async exportFessCanvas(
     fessId: string,
@@ -29,6 +64,75 @@ export class CanvasService {
       throw new Error('Fess tidak ditemukan');
     }
 
+    // Resolve template/aspect sekali lagi untuk penamaan file upload.
+    const template = getTemplateByKey(templateKey || fess.template || 'default');
+    const aspect = ASPECTS[aspectKey] || (template.aspect === 'square' ? ASPECTS.square : ASPECTS.portrait);
+
+    const svgs = CanvasService.buildSvgPages(fess as unknown as FessLike, templateKey, aspectKey);
+
+    // ── SVG → PNG (resvg, font bundled) → upload per halaman ───────────────
+    const imageUrls: string[] = [];
+    for (let i = 0; i < svgs.length; i++) {
+      const png = CanvasService.renderSvgToPng(svgs[i]);
+      const mockFile: Express.Multer.File = {
+        fieldname: 'file',
+        originalname: `canvas_${fessId}_${template.key}_${aspect.key}_p${i + 1}.png`,
+        encoding: '7bit',
+        mimetype: 'image/png',
+        size: png.length,
+        buffer: png,
+        destination: '',
+        filename: '',
+        path: '',
+        stream: null as any,
+      };
+      const upload = await StorageService.uploadMedia(mockFile, 'canvas-exports');
+      imageUrls.push(upload.url);
+    }
+
+    // ── Auto-post ke Instagram Feed (carousel jika > 1 halaman) ────────────
+    const posted_to: ('instagram' | 'twitter' | 'telegram')[] = [];
+    let ig_result: any = null;
+
+    // Meta Graph API butuh URL publik HTTP(S) — lewati data-URI.
+    const hasPublicUrl = imageUrls.some((u) => !u.startsWith('data:'));
+    if (hasPublicUrl) {
+      try {
+        ig_result = await InstagramService.autoPostFess(
+          fess.baseHandle,
+          fess.id,
+          imageUrls,
+          fess.content.slice(0, 200)
+        );
+        if (ig_result?.meta_published === true) {
+          posted_to.push('instagram');
+        }
+      } catch (igErr: any) {
+        console.warn('[Canvas] Instagram auto-post failed:', igErr.message);
+      }
+    } else {
+      console.warn(
+        '[Canvas] Storage returned a data-URI — Instagram auto-post skipped.' +
+        ' Configure SUPABASE_URL/SUPABASE_KEY for production IG posting.'
+      );
+    }
+
+    // Mark fess as posted (hanya jika benar-benar terbit ke Instagram)
+    if (posted_to.includes('instagram')) {
+      await prisma.fess.update({
+        where: { id: fessId },
+        data: { postedToIg: true },
+      });
+    }
+
+    return { image_url: imageUrls[0] || '', image_urls: imageUrls, posted_to, ig_result };
+  }
+
+  /**
+   * Bangun SVG card (1..10 halaman) untuk sebuah fess — murni tanpa DB,
+   * dipakai exportFessCanvas() dan skrip verifikasi lokal.
+   */
+  static buildSvgPages(fess: FessLike, templateKey = 'default', aspectKey = 'portrait'): string[] {
     const template = getTemplateByKey(templateKey || fess.template || 'default');
     // Resolve aspect — 'story' legacy key falls back to 'portrait'
     const aspect = ASPECTS[aspectKey] || (template.aspect === 'square' ? ASPECTS.square : ASPECTS.portrait);
@@ -51,6 +155,7 @@ export class CanvasService {
     const cardBg = isDark ? 'rgba(255,255,255,0.88)' : 'rgba(255,255,255,0.08)';
     const cardBorder = isDark ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.18)';
     const accentColor = template.accent || (isDark ? '#0038ff' : '#00b2ff');
+    const accentInk = pickAccentInk(accentColor);
 
     // ── Gradient definitions per template ──────────────────────────────────
     const gradients: Record<string, string> = {
@@ -97,32 +202,82 @@ export class CanvasService {
     };
     const bgDef = gradients[template.key] || gradients.default;
 
-    // ── Dynamic font sizing based on content length & aspect ───────────────
-    const textLen = (fess.content || '').length;
-    const isSquare = aspect.key === 'square';
-    let fontSize = isSquare ? 36 : 40;
-    let lineHeight = 1.45;
-    if (textLen > 350) {
-      fontSize = isSquare ? 23 : 26;
-      lineHeight = 1.38;
-    } else if (textLen > 200) {
-      fontSize = isSquare ? 26 : 30;
-      lineHeight = 1.4;
-    } else if (textLen > 100) {
-      fontSize = isSquare ? 30 : 34;
-      lineHeight = 1.42;
-    }
-
     const W = aspect.width;
     const H = aspect.height;
     const PAD = 56;
     const cardW = W - PAD * 2;
     const cardH = H - PAD * 2;
+    const isSquare = aspect.key === 'square';
 
-    // ── Build SVG with native tspan word-wrap (sharp-compatible, no foreignObject) ──
-    const textSvg = buildTextLines(fess.content, cardW - 120, fontSize, lineHeight, PAD + 60, PAD + 195, textColor);
+    const contentX = PAD + 58;
+    const contentWidth = cardW - 116;
+    const footerTop = PAD + cardH - 72;
+    const restContentY = PAD + 195;
 
-    const svgCard = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+    const measureFont = getMeasureFont(600);
+
+    // ── Kotak kutipan (halaman pertama, jika fess ini mengutip fess lain) ──
+    const quote = fess.quotedFess || null;
+    const quoteBlock = quote
+      ? buildQuoteBlock(quote, contentX, PAD + 148, contentWidth, {
+          isDark,
+          textColor,
+          subtextColor,
+          cardBorder,
+          accentColor: accentInk,
+        })
+      : null;
+    const firstContentY = quoteBlock ? PAD + 148 + quoteBlock.height + 24 : restContentY;
+
+    // ── Pilih ukuran font terbesar yang muat ≤ MAX_PAGES halaman ───────────
+    const tiers = isSquare ? [34, 30, 26, 22] : [36, 32, 28, 24];
+    let fontSize = tiers[0];
+    let lineHeightPx = Math.round(fontSize * 1.42);
+    let pages: TextPage[] = [];
+    let truncated = false;
+
+    for (const tier of tiers) {
+      fontSize = tier;
+      lineHeightPx = Math.round(fontSize * 1.42);
+      const lines = layoutText(fess.content || '', contentWidth, fontSize, measureFont);
+      const restCap = Math.max(3, Math.floor((footerTop - 40 - restContentY) / lineHeightPx));
+      const firstCap = quoteBlock
+        ? Math.max(2, Math.floor((footerTop - 40 - firstContentY) / lineHeightPx))
+        : restCap;
+      const result = paginate(lines, firstCap, restCap, MAX_PAGES);
+      pages = result.pages;
+      truncated = result.truncated;
+      if (!truncated) break;
+    }
+
+    if (!pages.length) pages = [[]];
+    if (truncated && pages.length) {
+      const lastPage = pages[pages.length - 1];
+      const lastLine = lastPage[lastPage.length - 1];
+      if (lastLine) {
+        lastLine.push({
+          kind: 'text',
+          text: '\u2026',
+          width: measureFont ? measureFont.getAdvanceWidth('\u2026', fontSize) : fontSize * 0.55,
+        });
+      }
+    }
+
+    const totalPages = pages.length;
+
+    return pages.map((page, idx) => {
+      const contentY = idx === 0 ? firstContentY : restContentY;
+      const textSvg = renderTextLines(page, contentX, contentY, fontSize, lineHeightPx, textColor, 600);
+      const decoQuote =
+        idx === 0 && !quoteBlock
+          ? `<!-- Opening quote -->
+  <text x="${PAD + 52}" y="${PAD + 172}" font-family="Poppins, Noto Sans, serif" font-size="72"
+        font-weight="bold" fill="${accentInk}" opacity="0.28">&#8220;</text>
+`
+          : '';
+      const footerRight = totalPages > 1 ? `${idx + 1}/${totalPages}` : 'fessncurious.vercel.app';
+
+      return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
   <defs>
     ${bgDef}
     <filter id="cardShadow" x="-10%" y="-10%" width="120%" height="120%">
@@ -147,103 +302,46 @@ export class CanvasService {
   <!-- Avatar -->
   <circle cx="${PAD + 74}" cy="${PAD + 74}" r="38" fill="${accentColor}" opacity="0.25"/>
   <circle cx="${PAD + 74}" cy="${PAD + 74}" r="32" fill="${accentColor}"/>
-  <text x="${PAD + 74}" y="${PAD + 83}" font-family="Noto Sans, Arial, sans-serif" font-size="22"
-        font-weight="900" fill="#fff" text-anchor="middle">${escapeXml(baseInitial)}</text>
+  <text x="${PAD + 74}" y="${PAD + 83}" font-family="Poppins, Arial, sans-serif" font-size="22"
+        font-weight="900" fill="${accentInk}" text-anchor="middle">${escapeXml(baseInitial)}</text>
 
   <!-- Base name & handle -->
-  <text x="${PAD + 126}" y="${PAD + 63}" font-family="Noto Sans, Arial, sans-serif" font-size="26"
+  <text x="${PAD + 126}" y="${PAD + 63}" font-family="Poppins, Arial, sans-serif" font-size="26"
         font-weight="900" fill="${textColor}">${escapeXml(baseName)}</text>
-  <text x="${PAD + 126}" y="${PAD + 93}" font-family="Noto Sans, Arial, sans-serif" font-size="18"
+  <text x="${PAD + 126}" y="${PAD + 93}" font-family="Poppins, Arial, sans-serif" font-size="18"
         font-weight="600" fill="${subtextColor}">${escapeXml(fess.baseHandle)} · Fess n Curious</text>
 
   <!-- Tag pill -->
   <rect x="${PAD + cardW - 130}" y="${PAD + 50}" width="106" height="34" rx="17"
-        fill="${accentColor}" opacity="0.22"/>
-  <text x="${PAD + cardW - 77}" y="${PAD + 73}" font-family="Noto Sans, Arial, sans-serif" font-size="14"
-        font-weight="800" fill="${accentColor}" text-anchor="middle">${escapeXml(fess.tag || 'Confession')}</text>
+        fill="${accentInk}" opacity="0.22"/>
+  <text x="${PAD + cardW - 77}" y="${PAD + 73}" font-family="Poppins, Arial, sans-serif" font-size="14"
+        font-weight="800" fill="${accentInk}" text-anchor="middle">${escapeXml(fess.tag || 'Confession')}</text>
 
-  <!-- Opening quote -->
-  <text x="${PAD + 52}" y="${PAD + 172}" font-family="Noto Sans, serif" font-size="72"
-        font-weight="bold" fill="${accentColor}" opacity="0.28">"</text>
-
-  <!-- Confession text -->
+  ${decoQuote}${quoteBlock ? quoteBlock.svg + '\n\n  ' : ''}<!-- Confession text -->
   ${textSvg}
 
   <!-- Footer divider -->
-  <line x1="${PAD + 58}" y1="${PAD + cardH - 72}" x2="${PAD + cardW - 58}" y2="${PAD + cardH - 72}"
+  <line x1="${PAD + 58}" y1="${footerTop}" x2="${PAD + cardW - 58}" y2="${footerTop}"
         stroke="${cardBorder}" stroke-width="1.5"/>
 
   <!-- Footer branding -->
-  <text x="${PAD + 58}" y="${PAD + cardH - 36}" font-family="Noto Sans, Arial, sans-serif" font-size="17"
+  <text x="${PAD + 58}" y="${PAD + cardH - 36}" font-family="Poppins, Arial, sans-serif" font-size="17"
         font-weight="800" fill="${textColor}">Instagram Feed · ${escapeXml(baseIg)}</text>
-  <text x="${PAD + cardW - 58}" y="${PAD + cardH - 36}" font-family="Noto Sans, Arial, sans-serif" font-size="15"
-        font-weight="600" fill="${subtextColor}" text-anchor="end">fessncurious.vercel.app</text>
+  <text x="${PAD + cardW - 58}" y="${PAD + cardH - 36}" font-family="Poppins, Arial, sans-serif" font-size="15"
+        font-weight="600" fill="${subtextColor}" text-anchor="end">${escapeXml(footerRight)}</text>
 </svg>`;
+    });
+  }
 
-    // ── SVG → PNG via sharp (Meta Graph API only accepts JPEG/PNG URLs) ────
-    const svgBuffer = Buffer.from(svgCard, 'utf-8');
-    let uploadBuffer: Buffer = svgBuffer;
-    let mimeType = 'image/svg+xml';
-    let fileExt = 'svg';
-
-    try {
-      uploadBuffer = await sharp(svgBuffer).png({ quality: 95, compressionLevel: 6 }).toBuffer();
-      mimeType = 'image/png';
-      fileExt = 'png';
-    } catch (sharpErr: any) {
-      console.warn('[Canvas] sharp PNG conversion failed, falling back to SVG:', sharpErr.message);
-    }
-
-    const mockFile: Express.Multer.File = {
-      fieldname: 'file',
-      originalname: `canvas_${fessId}_${template.key}_${aspect.key}.${fileExt}`,
-      encoding: '7bit',
-      mimetype: mimeType,
-      size: uploadBuffer.length,
-      buffer: uploadBuffer,
-      destination: '',
-      filename: '',
-      path: '',
-      stream: null as any,
-    };
-
-    const upload = await StorageService.uploadMedia(mockFile, 'canvas-exports');
-
-    // ── Auto-post to Instagram Feed ────────────────────────────────────────
-    const posted_to: ('instagram' | 'twitter' | 'telegram')[] = [];
-    let ig_result: any = null;
-
-    // Meta Graph API requires a publicly accessible HTTP(S) URL — skip data-URIs
-    if (!upload.url.startsWith('data:')) {
-      try {
-        ig_result = await InstagramService.autoPostFess(
-          fess.baseHandle,
-          fess.id,
-          upload.url,
-          fess.content.slice(0, 200)
-        );
-        if (ig_result?.meta_published === true) {
-          posted_to.push('instagram');
-        }
-      } catch (igErr: any) {
-        console.warn('[Canvas] Instagram auto-post failed:', igErr.message);
-      }
-    } else {
-      console.warn(
-        '[Canvas] Storage returned a data-URI — Instagram auto-post skipped.' +
-        ' Configure SUPABASE_URL/SUPABASE_KEY for production IG posting.'
-      );
-    }
-
-    // Mark fess as posted (hanya jika benar-benar terbit ke Instagram)
-    if (posted_to.includes('instagram')) {
-      await prisma.fess.update({
-        where: { id: fessId },
-        data: { postedToIg: true },
-      });
-    }
-
-    return { image_url: upload.url, posted_to, ig_result };
+  /** Render SVG card → Buffer PNG memakai font bundled (identik lokal & Vercel). */
+  static renderSvgToPng(svg: string): Buffer {
+    const fontFiles = getFontFiles();
+    const resvg = new Resvg(svg, {
+      font: fontFiles.length
+        ? { fontFiles, loadSystemFonts: false, defaultFontFamily: 'Poppins' }
+        : { defaultFontFamily: 'Poppins' },
+    });
+    return Buffer.from(resvg.render().asPng());
   }
 }
 
@@ -263,79 +361,289 @@ function escapeXml(unsafe: string): string {
 const EMOJI_SEQ_RE =
   /([\p{Extended_Pictographic}\p{Emoji_Modifier}\u200D\uFE0F\u20E3\u{1F1E6}-\u{1F1FF}]+)/gu;
 
-/**
- * Bungkus bagian emoji dengan <tspan font-family="Twemoji Mozilla, Noto Emoji">.
- * Fontconfig minimal di runtime server tidak melakukan fallback antar-font untuk
- * glyph yang tidak ada di font teks, jadi emoji harus meminta font emoji eksplisit.
- */
-function withEmojiFontSpan(line: string): string {
-  if (!line) return '\u00A0';
-  if (!line.match(EMOJI_SEQ_RE)) return escapeXml(line);
-  return line
-    .split(EMOJI_SEQ_RE)
-    .map((part, i) =>
-      i % 2 === 1 && part
-        ? `<tspan font-family="Noto Emoji, Twemoji Mozilla, Noto Sans">${escapeXml(part)}</tspan>`
-        : escapeXml(part)
-    )
-    .join('');
+let graphemeSegmenter: Intl.Segmenter | null | undefined;
+
+/** Pecah rentetan emoji menjadi grapheme (🇮🇩🙏 → 🇮🇩 + 🙏; ZWJ & skin tone tetap utuh). */
+function splitGraphemes(text: string): string[] {
+  if (graphemeSegmenter === undefined) {
+    try {
+      graphemeSegmenter = new Intl.Segmenter('id', { granularity: 'grapheme' });
+    } catch {
+      graphemeSegmenter = null;
+    }
+  }
+  if (!graphemeSegmenter) return [...text];
+  return Array.from(graphemeSegmenter.segment(text), (entry) => entry.segment);
 }
 
 /**
- * Wrap text into SVG <text> element with <tspan> lines.
- * Uses character-count heuristic (no canvas measurement in Node).
+ * Warna aksen terang (mis. putih template default) tidak terbaca sebagai teks
+ * di atas kartu — ganti ke biru brand untuk elemen ink.
  */
-function buildTextLines(
-  content: string,
-  maxWidth: number,
-  fontSize: number,
-  lineHeightRatio: number,
-  x: number,
-  y: number,
-  color: string
-): string {
-  const charsPerLine = Math.max(10, Math.floor(maxWidth / (fontSize * 0.55)));
-  const lineHeightPx = Math.round(fontSize * lineHeightRatio);
-  const maxLines = 12;
+function pickAccentInk(color: string): string {
+  const match = /^#([0-9a-f]{6})$/i.exec(String(color || '').trim());
+  if (!match) return color;
+  const r = parseInt(match[1].slice(0, 2), 16);
+  const g = parseInt(match[1].slice(2, 4), 16);
+  const b = parseInt(match[1].slice(4, 6), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.72 ? '#0038ff' : color;
+}
 
-  const paragraphs = (content || '').split(/\n/);
-  const lines: string[] = [];
+// ── Pengukuran teks (opentype.js) ──────────────────────────────────────────
 
-  for (const para of paragraphs) {
-    if (lines.length >= maxLines) break;
-    if (para.trim() === '') {
-      lines.push('');
-      continue;
+const opentypeCache = new Map<number, opentype.Font | null>();
+
+/** Muat font Poppins untuk pengukuran lebar teks (cache per weight). */
+function getMeasureFont(weight: number): opentype.Font | null {
+  if (opentypeCache.has(weight)) return opentypeCache.get(weight)!;
+  const file = getPoppinsFontFile(weight);
+  let font: opentype.Font | null = null;
+  if (file) {
+    try {
+      font = opentype.parse(fs.readFileSync(file) as unknown as ArrayBuffer);
+    } catch (err: any) {
+      console.warn('[Canvas] Gagal memuat font pengukuran Poppins:', err?.message || err);
     }
-    const words = para.split(' ');
-    let current = '';
-    for (const word of words) {
-      if (lines.length >= maxLines) break;
-      const test = current ? `${current} ${word}` : word;
-      if (test.length > charsPerLine && current) {
-        lines.push(current);
-        current = word;
-      } else {
-        current = test;
+  }
+  opentypeCache.set(weight, font);
+  return font;
+}
+
+/** Perkiraan lebar teks saat font pengukuran tidak tersedia. */
+function approxWidth(text: string, fontSize: number): number {
+  return text.length * fontSize * 0.55;
+}
+
+/** Pecah satu paragraf menjadi segmen teks/emoji dengan lebar terukur. */
+function segmentsFor(text: string, fontSize: number, font: opentype.Font | null): TextSegment[] {
+  const segments: TextSegment[] = [];
+  const parts = text.split(EMOJI_SEQ_RE);
+  parts.forEach((part, i) => {
+    if (!part) return;
+    if (i % 2 === 1) {
+      // Emoji → inline SVG Twemoji (viewBox 36x36) atau fallback font emoji.
+      // Dipecah per grapheme agar 🇮🇩🙏 tidak dianggap satu sekuens.
+      for (const grapheme of splitGraphemes(part)) {
+        segments.push({
+          kind: 'emoji',
+          text: grapheme,
+          width: fontSize * 1.12,
+          svg: getEmojiSvgMarkup(grapheme) || undefined,
+        });
+      }
+    } else {
+      // Teks: pecah per kata, spasi menempel di akhir kata (atau spasi murni).
+      const tokens = part.match(/\s+|[^\s]+\s*/g) || [];
+      for (const token of tokens) {
+        segments.push({
+          kind: 'text',
+          text: token,
+          width: font ? font.getAdvanceWidth(token, fontSize) : approxWidth(token, fontSize),
+        });
       }
     }
-    if (current && lines.length < maxLines) lines.push(current);
+  });
+  return segments;
+}
+
+/** Susun teks menjadi baris-baris dengan pengukuran lebar nyata + word wrap. */
+function layoutText(
+  rawText: string,
+  maxWidth: number,
+  fontSize: number,
+  font: opentype.Font | null
+): TextLine[] {
+  const lines: TextLine[] = [];
+
+  for (const paragraph of String(rawText || '').replace(/\r\n?/g, '\n').split('\n')) {
+    if (paragraph.trim() === '') {
+      lines.push([]);
+      continue;
+    }
+
+    let line: TextLine = [];
+    let lineWidth = 0;
+
+    const flush = () => {
+      if (line.length) lines.push(line);
+      line = [];
+      lineWidth = 0;
+    };
+
+    for (const rawSegment of segmentsFor(paragraph, fontSize, font)) {
+      let segment = rawSegment;
+
+      // Buang spasi di awal baris baru.
+      if (!line.length && segment.kind === 'text') {
+        const trimmed = segment.text.replace(/^\s+/, '');
+        if (!trimmed) continue;
+        segment = {
+          ...segment,
+          text: trimmed,
+          width: font ? font.getAdvanceWidth(trimmed, fontSize) : approxWidth(trimmed, fontSize),
+        };
+      }
+
+      if (line.length && lineWidth + segment.width > maxWidth) {
+        flush();
+        if (segment.kind === 'text') {
+          const trimmed = segment.text.replace(/^\s+/, '');
+          if (!trimmed) continue;
+          segment = {
+            ...segment,
+            text: trimmed,
+            width: font ? font.getAdvanceWidth(trimmed, fontSize) : approxWidth(trimmed, fontSize),
+          };
+        }
+      }
+
+      line.push(segment);
+      lineWidth += segment.width;
+    }
+
+    flush();
   }
 
-  // Add ellipsis if truncated
-  if (lines.length === maxLines && content.length > lines.join(' ').length) {
-    const last = lines[lines.length - 1];
-    lines[lines.length - 1] = last.slice(0, -2) + '…';
+  return lines;
+}
+
+/** Bagi baris-baris menjadi halaman (carousel) dengan kapasitas berbeda di halaman pertama. */
+function paginate(
+  lines: TextLine[],
+  firstCap: number,
+  restCap: number,
+  maxPages: number
+): { pages: TextPage[]; truncated: boolean } {
+  const pages: TextPage[] = [];
+  let idx = 0;
+  while (idx < lines.length && pages.length < maxPages) {
+    const cap = pages.length === 0 ? firstCap : restCap;
+    pages.push(lines.slice(idx, idx + cap));
+    idx += cap;
+  }
+  return { pages, truncated: idx < lines.length };
+}
+
+/** Render baris teks + emoji inline menjadi elemen SVG absolut. */
+function renderTextLines(
+  lines: TextLine[],
+  x: number,
+  y: number,
+  fontSize: number,
+  lineHeightPx: number,
+  color: string,
+  weight: number
+): string {
+  const out: string[] = [];
+  const emojiSize = fontSize * 1.12;
+
+  lines.forEach((line, li) => {
+    const baseline = Math.round(y + li * lineHeightPx);
+    let cursor = x;
+    for (const segment of line) {
+      if (segment.kind === 'text') {
+        out.push(
+          `<text x="${cursor.toFixed(1)}" y="${baseline}" font-family="Poppins, Noto Sans, Arial, sans-serif" font-size="${fontSize}" font-weight="${weight}" fill="${color}" xml:space="preserve">${escapeXml(segment.text)}</text>`
+        );
+      } else if (segment.svg) {
+        const scale = emojiSize / 36;
+        out.push(
+          `<g transform="translate(${cursor.toFixed(1)}, ${(baseline - fontSize * 0.92).toFixed(1)}) scale(${scale.toFixed(4)})">${segment.svg}</g>`
+        );
+      } else {
+        out.push(
+          `<text x="${cursor.toFixed(1)}" y="${baseline}" font-family="Noto Emoji, Poppins, Noto Sans, sans-serif" font-size="${fontSize}" font-weight="${weight}" fill="${color}">${escapeXml(segment.text)}</text>`
+        );
+      }
+      cursor += segment.width;
+    }
+  });
+
+  return out.join('\n    ');
+}
+
+/** Bangun kotak kutipan (mirip preview quote di frontend) di halaman pertama. */
+function buildQuoteBlock(
+  quote: any,
+  x: number,
+  y: number,
+  width: number,
+  theme: { isDark: boolean; textColor: string; subtextColor: string; cardBorder: string; accentColor: string }
+): { svg: string; height: number } {
+  const PADQ = 16;
+  const HEADER_H = 40;
+  const QFONT = 20;
+  const QLH = 28;
+
+  const rawHandle = String(quote.handle || quote.senderHandle || '@anonim');
+  const handle = rawHandle.startsWith('@') ? rawHandle : `@${rawHandle}`;
+  const content = String(quote.content || '');
+  const time = String(quote.time || '');
+  const avatarBg = quote.avatar_bg || quote.avatarBg || theme.accentColor;
+  const avatarText = (
+    quote.avatar_text ||
+    quote.avatarText ||
+    handle.replace(/^@/, '').slice(0, 2) ||
+    'FS'
+  ).toUpperCase();
+
+  const measureFont = getMeasureFont(500);
+  let qlines = layoutText(content, width - PADQ * 2, QFONT, measureFont);
+  if (qlines.length > MAX_QUOTE_LINES) {
+    qlines = qlines.slice(0, MAX_QUOTE_LINES);
+    const lastLine = qlines[qlines.length - 1];
+    if (lastLine) {
+      lastLine.push({
+        kind: 'text',
+        text: '\u2026',
+        width: measureFont ? measureFont.getAdvanceWidth('\u2026', QFONT) : approxWidth('\u2026', QFONT),
+      });
+    }
   }
 
-  const tspans = lines
-    .map((line, i) =>
-      `<tspan x="${x}" dy="${i === 0 ? 0 : lineHeightPx}">${withEmojiFontSpan(line)}</tspan>`
-    )
-    .join('\n    ');
+  const height = PADQ + HEADER_H + Math.max(1, qlines.length) * QLH + 12;
+  const boxBg = theme.isDark ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.07)';
 
-  return `<text x="${x}" y="${y}" font-family="Noto Sans, Arial, sans-serif" font-size="${fontSize}"
-      font-weight="600" fill="${color}" xml:space="preserve">
-    ${tspans}
-  </text>`;
+  const avatarCx = x + PADQ + 17;
+  const avatarCy = y + PADQ + HEADER_H / 2;
+  const handleX = x + PADQ + 44;
+  const handleY = y + PADQ + 26;
+
+  const handleWidth = measureFont ? measureFont.getAdvanceWidth(handle, 19) : approxWidth(handle, 19);
+  const timeSvg = time
+    ? `<text x="${(handleX + handleWidth + 10).toFixed(1)}" y="${handleY - 1}" font-family="Poppins, Arial, sans-serif" font-size="15" font-weight="500" fill="${theme.subtextColor}">${escapeXml(time)}</text>`
+    : '';
+
+  const pillW = 66;
+  const pillH = 26;
+  const pillX = x + width - PADQ - pillW;
+  const pillY = y + PADQ + 7;
+
+  const linesSvg = renderTextLines(
+    qlines,
+    x + PADQ,
+    y + PADQ + HEADER_H + 16,
+    QFONT,
+    QLH,
+    theme.subtextColor,
+    500
+  );
+
+  const svg = `<!-- Quoted fess box -->
+  <rect x="${x}" y="${y}" width="${width}" height="${height}" rx="18"
+        fill="${boxBg}" stroke="${theme.cardBorder}" stroke-width="1.5"/>
+  <circle cx="${avatarCx}" cy="${avatarCy}" r="17" fill="${avatarBg}"/>
+  <text x="${avatarCx}" y="${avatarCy + 5}" font-family="Poppins, Arial, sans-serif" font-size="15"
+        font-weight="800" fill="#ffffff" text-anchor="middle">${escapeXml(avatarText)}</text>
+  <text x="${handleX}" y="${handleY}" font-family="Poppins, Arial, sans-serif" font-size="19"
+        font-weight="700" fill="${theme.textColor}">${escapeXml(handle)}</text>
+  ${timeSvg}
+  <rect x="${pillX}" y="${pillY}" width="${pillW}" height="${pillH}" rx="13"
+        fill="${theme.accentColor}" fill-opacity="0.16" stroke="${theme.accentColor}" stroke-opacity="0.3" stroke-width="1"/>
+  <text x="${(pillX + pillW / 2).toFixed(1)}" y="${pillY + 18}" font-family="Poppins, Arial, sans-serif" font-size="13"
+        font-weight="800" fill="${theme.accentColor}" text-anchor="middle">Kutip</text>
+  ${linesSvg}`;
+
+  return { svg, height };
 }

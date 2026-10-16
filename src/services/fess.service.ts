@@ -175,7 +175,8 @@ export class FessService {
       quoted_fess?: any;
       tag?: string | null;
     },
-    userId?: string
+    userId?: string,
+    onBackground?: (task: Promise<unknown>) => void
   ) {
     const cleanHandle = normalizeHandle(payload.base_handle);
 
@@ -238,10 +239,15 @@ export class FessService {
       invalidateCache('fesses:');
 
       // Efek publikasi yang sama dengan approveFess (auto-post sosmed).
-      // Non-blocking background task agar respon HTTP tidak tertahan render/upload canvas
-      CanvasService.exportFessCanvas(fess.id, fess.template || 'default', 'portrait').catch((err) => {
-        console.error(`[AutoPost] Gagal export canvas fess ${fess.id}:`, err);
-      });
+      // Non-blocking background task agar respon HTTP tidak tertahan render/upload canvas.
+      // onBackground dipakai controller untuk waitUntil() di runtime Vercel supaya
+      // task tidak dipotong saat response selesai.
+      const autoPostTask = CanvasService.exportFessCanvas(fess.id, fess.template || 'default', 'portrait').catch(
+        (err) => {
+          console.error(`[AutoPost] Gagal export canvas fess ${fess.id}:`, err);
+        }
+      );
+      if (onBackground) onBackground(autoPostTask);
     }
 
     // Log audit agar admin bisa menelusuri kenapa sebuah fess tidak auto-terbit.
@@ -503,7 +509,11 @@ export class FessService {
   /**
    * Approve fess (moderation)
    */
-  static async approveFess(id: string, currentUser: { id: string; role: string; managedBases?: string[] }) {
+  static async approveFess(
+    id: string,
+    currentUser: { id: string; role: string; managedBases?: string[] },
+    onBackground?: (task: Promise<unknown>) => void
+  ) {
     const fess = await prisma.fess.findUnique({
       where: { id },
       include: { base: true },
@@ -567,10 +577,15 @@ export class FessService {
     }
 
     // Auto-post trigger to social media (Instagram Feed)
-    // Non-blocking background task: jangan gunakan await agar tidak menahan response HTTP approve
-    CanvasService.exportFessCanvas(id, fess.template || 'default', 'portrait').catch((err) => {
-      console.error(`[AutoPost] Gagal export canvas fess ${id}:`, err);
-    });
+    // Non-blocking background task: jangan gunakan await agar tidak menahan response HTTP approve.
+    // onBackground dipakai controller untuk waitUntil() di runtime Vercel supaya
+    // task tidak dipotong saat response selesai.
+    const autoPostTask = CanvasService.exportFessCanvas(id, fess.template || 'default', 'portrait').catch(
+      (err) => {
+        console.error(`[AutoPost] Gagal export canvas fess ${id}:`, err);
+      }
+    );
+    if (onBackground) onBackground(autoPostTask);
 
     return this.serializeFess(updated, null);
   }

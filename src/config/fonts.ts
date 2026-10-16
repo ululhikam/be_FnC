@@ -1,28 +1,26 @@
 /**
- * Bootstrap fontconfig untuk rendering SVG → PNG via sharp (librsvg/pango).
+ * Font & aset renderer canvas.
  *
- * Runtime Vercel (Linux) tidak punya font sistem — tanpa ini, semua teks pada
- * card canvas ter-render sebagai kotak tofu ([ ]). Modul ini mengarahkan
- * fontconfig ke font yang ikut ter-bundle di folder `fonts/` (di-include ke
- * deployment lewat vercel.json → includeFiles) dan harus di-import paling awal,
- * sebelum render pertama (lihat import pertama di src/app.ts).
+ * Renderer PNG canvas memakai @resvg/resvg-js dengan daftar font yang ikut
+ * ter-bundle di folder `fonts/` (di-include ke deployment lewat vercel.json →
+ * includeFiles) supaya hasil render identik di lokal (Windows) dan Vercel
+ * (Linux tanpa font sistem).
  *
- * Efek samping lokal: karena fontconfig memakai daftar font ini juga di dev,
- * hasil render lokal identik dengan produksi.
+ * Catatan: Twemoji.Mozilla.ttf (COLR) sengaja TIDAK dipakai — resvg tidak
+ * merender font warna; emoji ditangani sebagai inline SVG Twemoji dari
+ * `assets/emoji-paths.json` (lihat src/config/emoji.ts).
  */
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-function xmlEscape(p: string): string {
-  return p.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
+let cachedFontsDir: string | null | undefined;
 
 /** Cari folder fonts/ dari lokasi modul (dev/dist) atau cwd (Vercel: /var/task/fonts). */
-function findFontsDir(): string | null {
+export function getFontsDir(): string | null {
+  if (cachedFontsDir !== undefined) return cachedFontsDir;
   const candidates = [
     path.resolve(__dirname, '../../fonts'),
     path.resolve(process.cwd(), 'fonts'),
@@ -30,71 +28,56 @@ function findFontsDir(): string | null {
   for (const dir of candidates) {
     try {
       if (fs.existsSync(dir) && fs.readdirSync(dir).some((f) => /\.(ttf|otf)$/i.test(f))) {
+        cachedFontsDir = dir;
         return dir;
       }
     } catch {
       /* lanjut ke kandidat berikutnya */
     }
   }
+  cachedFontsDir = null;
   return null;
 }
 
-function setupFonts(): void {
-  try {
-    if (process.env.FONTCONFIG_FILE) return; // sudah diatur manual — jangan timpa
+let cachedFontFiles: string[] | null = null;
 
-    const fontsDir = findFontsDir();
-    if (!fontsDir) {
-      console.warn(
-        '[fonts] Folder fonts/ tidak ditemukan — teks SVG bisa tampil sebagai kotak pada runtime tanpa font sistem.'
-      );
-      return;
-    }
-
-    const cacheDir = path.join(os.tmpdir(), 'fess-fontconfig-cache');
-    fs.mkdirSync(cacheDir, { recursive: true });
-
-    const confPath = path.join(os.tmpdir(), 'fess-fonts.conf');
-    const dir = xmlEscape(fontsDir.replace(/\\/g, '/'));
-    const cache = xmlEscape(cacheDir.replace(/\\/g, '/'));
-    const conf = `<?xml version="1.0"?>
-<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
-<fontconfig>
-  <dir>${dir}</dir>
-  <cachedir>${cache}</cachedir>
-  <alias>
-    <family>sans-serif</family>
-    <prefer><family>Noto Sans</family></prefer>
-  </alias>
-  <alias>
-    <family>serif</family>
-    <prefer><family>Noto Sans</family></prefer>
-  </alias>
-  <alias>
-    <family>Arial</family>
-    <prefer><family>Noto Sans</family></prefer>
-  </alias>
-  <alias>
-    <family>emoji</family>
-    <prefer><family>Twemoji Mozilla</family></prefer>
-    <acceptable><family>Noto Emoji</family></acceptable>
-  </alias>
-  <match target="pattern">
-    <test name="family" compare="eq"><string>emoji</string></test>
-    <edit name="family" mode="assign" binding="strong">
-      <string>Twemoji Mozilla</string>
-      <string>Noto Emoji</string>
-    </edit>
-  </match>
-</fontconfig>
-`;
-
-    fs.writeFileSync(confPath, conf);
-    process.env.FONTCONFIG_FILE = confPath;
-    console.log(`[fonts] fontconfig diarahkan ke ${fontsDir}`);
-  } catch (err: any) {
-    console.warn('[fonts] Gagal menyiapkan fontconfig:', err?.message || err);
+/**
+ * Daftar file font untuk resvg (Poppins + Noto Sans + Noto Emoji sebagai
+ * fallback glyph yang tidak ada di Poppins / emoji yang tidak punya aset
+ * Twemoji). Dikembalikan [] jika folder fonts/ tidak ada — pemanggil boleh
+ * jatuh ke font sistem.
+ */
+export function getFontFiles(): string[] {
+  if (cachedFontFiles) return cachedFontFiles;
+  const dir = getFontsDir();
+  if (!dir) {
+    console.warn('[fonts] Folder fonts/ tidak ditemukan — render teks memakai font sistem.');
+    cachedFontFiles = [];
+    return cachedFontFiles;
   }
+  cachedFontFiles = fs
+    .readdirSync(dir)
+    .filter((f) => /^(Poppins|NotoSans|NotoEmoji)[\w-]*\.(ttf|otf)$/i.test(f))
+    .sort()
+    .map((f) => path.join(dir, f));
+  return cachedFontFiles;
 }
 
-setupFonts();
+const POPPINS_FILES: Record<number, string> = {
+  400: 'Poppins-Regular.ttf',
+  500: 'Poppins-Medium.ttf',
+  600: 'Poppins-SemiBold.ttf',
+  700: 'Poppins-Bold.ttf',
+  800: 'Poppins-ExtraBold.ttf',
+  900: 'Poppins-Black.ttf',
+};
+
+/** Path file Poppins per weight (untuk pengukuran teks via opentype.js). */
+export function getPoppinsFontFile(weight: number): string | null {
+  const dir = getFontsDir();
+  if (!dir) return null;
+  const candidate = path.join(dir, POPPINS_FILES[weight] || POPPINS_FILES[600]);
+  if (fs.existsSync(candidate)) return candidate;
+  const fallback = path.join(dir, POPPINS_FILES[600]);
+  return fs.existsSync(fallback) ? fallback : null;
+}

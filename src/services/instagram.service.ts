@@ -219,10 +219,22 @@ export class InstagramService {
   }
 
   /**
-   * Auto-post fess card to Instagram Story/Feed via Meta Content Publishing API
+   * Auto-post fess card ke Instagram Feed via Meta Content Publishing API.
+   * Menerima 1 gambar (post tunggal) atau 2–10 gambar (carousel).
    */
-  static async autoPostFess(baseHandle: string, fessId: string, imageUrl: string, caption: string) {
+  static async autoPostFess(
+    baseHandle: string,
+    fessId: string,
+    imageUrls: string | string[],
+    caption: string
+  ) {
     try {
+      // Normalisasi daftar gambar: buang data-URI (Meta butuh URL publik) & batasi 10 (max carousel).
+      const urls = (Array.isArray(imageUrls) ? imageUrls : [imageUrls])
+        .filter((u) => typeof u === 'string' && u.length > 0 && !u.startsWith('data:'))
+        .slice(0, 10);
+      const isCarousel = urls.length > 1;
+
       // Find base & connected admin
       const base = prisma.base?.findUnique
         ? await prisma.base.findUnique({
@@ -250,70 +262,71 @@ export class InstagramService {
       let postCreationId: string | null = null;
 
       // If active Instagram access token exists, trigger Meta Content Publishing API (Feed only)
-      if (connection?.connected && connection.accessToken && !connection.accessToken.startsWith('mock_')) {
+      if (connection?.connected && connection.accessToken && !connection.accessToken.startsWith('mock_') && urls.length) {
         try {
-          // 1. Create a Feed Media Container (supports 1:1 square and 4:5 portrait)
-          const containerRes = await axios.post(
-            `https://graph.instagram.com/v19.0/me/media`,
-            null,
-            {
-              params: {
-                image_url: imageUrl,
-                caption: `${caption}\n\nDiposting via Fess n Curious (${baseHandle})`,
-                access_token: connection.accessToken,
-              },
-              timeout: 15000,
-            }
-          );
+          const apiBase = 'https://graph.instagram.com/v19.0';
+          const captionText = `${caption}\n\nDiposting via Fess n Curious (${baseHandle})`;
 
-          postCreationId = containerRes.data?.id;
-
-          // 2. Tunggu Meta selesai memproses container (status FINISHED) sebelum publish.
-          //    Publish saat container masih IN_PROGRESS selalu gagal: "Media ID is not available".
-          if (postCreationId) {
-            const deadline = Date.now() + 30_000;
-            let statusCode = 'IN_PROGRESS';
-
-            while (Date.now() < deadline) {
-              try {
-                const statusRes = await axios.get(
-                  `https://graph.instagram.com/v19.0/${postCreationId}`,
-                  {
-                    params: { fields: 'status_code', access_token: connection.accessToken },
-                    timeout: 10000,
-                  }
-                );
-                statusCode = statusRes.data?.status_code || statusCode;
-              } catch (statusErr: any) {
-                console.warn(
-                  '[Instagram AutoPost] Status check warning:',
-                  statusErr.response?.data?.error?.message || statusErr.message
-                );
-              }
-
-              if (statusCode === 'FINISHED') break;
-              if (statusCode === 'ERROR' || statusCode === 'EXPIRED') {
-                throw new Error(`Container media Meta berstatus ${statusCode} - periksa format/rasio gambar.`);
-              }
-              await new Promise((resolve) => setTimeout(resolve, 2500));
-            }
-
-            if (statusCode !== 'FINISHED') {
-              throw new Error('Container media Meta belum siap (masih IN_PROGRESS) setelah 30 detik.');
-            }
-
-            // 3. Publish the Feed Media Container
-            const pubRes = await axios.post(
-              `https://graph.instagram.com/v19.0/me/media_publish`,
-              null,
-              {
+          if (isCarousel) {
+            // 1. Buat item container untuk tiap gambar (tanpa caption)
+            const itemIds: string[] = [];
+            for (const url of urls) {
+              const itemRes = await axios.post(`${apiBase}/me/media`, null, {
                 params: {
-                  creation_id: postCreationId,
+                  image_url: url,
+                  is_carousel_item: 'true',
                   access_token: connection.accessToken,
                 },
                 timeout: 15000,
-              }
-            );
+              });
+              const itemId = itemRes.data?.id;
+              if (!itemId) throw new Error('Gagal membuat carousel item container (tanpa id).');
+              itemIds.push(itemId);
+            }
+
+            // 2. Tunggu tiap item selesai diproses sebelum merakit carousel.
+            for (const itemId of itemIds) {
+              await InstagramService.waitForContainerFinished(itemId, connection.accessToken);
+            }
+
+            // 3. Rakit container carousel (caption menempel di container, bukan item)
+            const carRes = await axios.post(`${apiBase}/me/media`, null, {
+              params: {
+                media_type: 'CAROUSEL',
+                children: itemIds.join(','),
+                caption: captionText,
+                access_token: connection.accessToken,
+              },
+              timeout: 15000,
+            });
+            postCreationId = carRes.data?.id || null;
+            if (!postCreationId) throw new Error('Gagal membuat carousel container (tanpa id).');
+          } else {
+            // 1. Buat Feed Media Container tunggal (mendukung 1:1 dan 4:5)
+            const containerRes = await axios.post(`${apiBase}/me/media`, null, {
+              params: {
+                image_url: urls[0],
+                caption: captionText,
+                access_token: connection.accessToken,
+              },
+              timeout: 15000,
+            });
+            postCreationId = containerRes.data?.id || null;
+          }
+
+          // 4. Tunggu Meta selesai memproses container (status FINISHED) sebelum publish.
+          //    Publish saat container masih IN_PROGRESS selalu gagal: "Media ID is not available".
+          if (postCreationId) {
+            await InstagramService.waitForContainerFinished(postCreationId, connection.accessToken);
+
+            // 5. Publish the Feed Media Container
+            const pubRes = await axios.post(`${apiBase}/me/media_publish`, null, {
+              params: {
+                creation_id: postCreationId,
+                access_token: connection.accessToken,
+              },
+              timeout: 15000,
+            });
             if (pubRes.data?.id) {
               metaPublished = true;
             }
@@ -324,12 +337,13 @@ export class InstagramService {
       }
 
       // Record audit log
+      const mediaLabel = isCarousel ? `carousel ${urls.length} card` : 'visual Feed card';
       await prisma.systemLog.create({
         data: {
           source: 'CANVAS_WORKER',
           message: metaPublished
-            ? `Fess #${fessId} berhasil dipublikasikan ke Instagram Feed ${baseIg}.`
-            : `Fess #${fessId} dirender ke visual Feed card (${baseIg}), tetapi publikasi ke Instagram belum berhasil.`,
+            ? `Fess #${fessId} berhasil dipublikasikan ke Instagram Feed ${baseIg} (${mediaLabel}).`
+            : `Fess #${fessId} dirender ke ${mediaLabel} (${baseIg}), tetapi publikasi ke Instagram belum berhasil.`,
           tone: metaPublished ? 'ok' : 'error',
         },
       });
@@ -339,11 +353,13 @@ export class InstagramService {
         platform: 'instagram',
         meta_published: metaPublished,
         creation_id: postCreationId,
-        imageUrl,
+        imageUrl: urls[0] || null,
+        imageUrls: urls,
+        is_carousel: isCarousel,
         fessId,
         base_ig: baseIg,
         message: metaPublished
-          ? `Card fess #${fessId} berhasil diposting otomatis ke Instagram Feed ${baseIg}!`
+          ? `Card fess #${fessId} berhasil diposting otomatis ke Instagram Feed ${baseIg}${isCarousel ? ` (carousel ${urls.length} card)` : ''}!`
           : `Card fess #${fessId} berhasil di-render dan siap diposting ke Instagram Feed ${baseIg}.`,
       };
     } catch (err: any) {
@@ -354,5 +370,37 @@ export class InstagramService {
         error: err.message,
       };
     }
+  }
+
+  /**
+   * Tunggu container media Meta selesai diproses (status FINISHED) sebelum publish.
+   * Publish saat container masih IN_PROGRESS selalu gagal: "Media ID is not available".
+   */
+  private static async waitForContainerFinished(containerId: string, accessToken: string): Promise<void> {
+    const deadline = Date.now() + 30_000;
+    let statusCode = 'IN_PROGRESS';
+
+    while (Date.now() < deadline) {
+      try {
+        const statusRes = await axios.get(`https://graph.instagram.com/v19.0/${containerId}`, {
+          params: { fields: 'status_code', access_token: accessToken },
+          timeout: 10000,
+        });
+        statusCode = statusRes.data?.status_code || statusCode;
+      } catch (statusErr: any) {
+        console.warn(
+          '[Instagram AutoPost] Status check warning:',
+          statusErr.response?.data?.error?.message || statusErr.message
+        );
+      }
+
+      if (statusCode === 'FINISHED') return;
+      if (statusCode === 'ERROR' || statusCode === 'EXPIRED') {
+        throw new Error(`Container media Meta berstatus ${statusCode} - periksa format/rasio gambar.`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+    }
+
+    throw new Error('Container media Meta belum siap (masih IN_PROGRESS) setelah 30 detik.');
   }
 }

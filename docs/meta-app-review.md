@@ -25,6 +25,8 @@ tersebut (Feed / carousel untuk gambar, Reels untuk video).
 - Halaman publik: Kebijakan Privasi, Ketentuan Layanan, Penghapusan Data.
 - Deauthorize Callback: `POST /api/auth/instagram/deauthorize` (verifikasi
   HMAC `signed_request`; token & koneksi otomatis dicabut).
+- Data Deletion Callback: `POST /api/auth/instagram/data-deletion` (menghapus
+  token koneksi IG + melepas binding login `instagramId`).
 - Dialog konfirmasi izin sebelum redirect OAuth (transparansi pengguna).
 - Tombol "Putuskan Koneksi" menghapus access token dari server.
 - Kegagalan publikasi tercatat di SystemLog dengan detail error Meta.
@@ -35,6 +37,7 @@ tersebut (Feed / carousel untuk gambar, Reels untuk video).
 | -------------------------------------- | ------------ |
 | OAuth Redirect URI                     | `https://<domain-backend>/api/auth/instagram/callback` |
 | Deauthorize Callback URL               | `https://<domain-backend>/api/auth/instagram/deauthorize` |
+| Data Deletion Callback URL (opsional)  | `https://<domain-backend>/api/auth/instagram/data-deletion` |
 | Data Deletion Request URL (instruksi)  | `https://<domain-frontend>/data-deletion` |
 | Privacy Policy URL                     | `https://<domain-frontend>/privacy` |
 | Terms of Service URL                   | `https://<domain-frontend>/terms` |

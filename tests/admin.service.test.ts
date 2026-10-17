@@ -157,4 +157,49 @@ describe('AdminService Unit Tests', () => {
       expect(prisma.payout.create).toHaveBeenCalled();
     });
   });
+
+  describe('platform connections', () => {
+    it('getPlatformConnections menyertakan token_expires_at dari metadata (khusus Instagram)', async () => {
+      vi.mocked(prisma.platformConnection.findMany).mockResolvedValueOnce([
+        {
+          platform: 'instagram',
+          connected: true,
+          accountHandle: '@concern_fess',
+          metadata: { tokenExpiresAt: '2026-12-16T00:00:00.000Z', igUserId: '1784' },
+        },
+        {
+          platform: 'twitter',
+          connected: false,
+          accountHandle: '',
+          metadata: null,
+        },
+      ] as any);
+
+      const { data } = await AdminService.getPlatformConnections({ id: 'usr_1' });
+      const ig = data.find((c: any) => c.id === 'instagram')!;
+      const tw = data.find((c: any) => c.id === 'twitter')!;
+
+      expect(ig.token_expires_at).toBe('2026-12-16T00:00:00.000Z');
+      expect(ig.account_handle).toBe('@concern_fess');
+      expect(tw.token_expires_at).toBeNull();
+    });
+
+    it('togglePlatformConnection disconnect → accessToken dihapus dari server', async () => {
+      vi.mocked(prisma.platformConnection.upsert).mockResolvedValueOnce({
+        platform: 'instagram',
+        name: 'Instagram Graph API (Auto-Post Feed & Reels)',
+        connected: false,
+        status: 'idle',
+        accountHandle: '@concern_fess',
+      } as any);
+
+      await AdminService.togglePlatformConnection({ id: 'usr_1' }, 'instagram', 'disconnect', '');
+
+      expect(prisma.platformConnection.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: expect.objectContaining({ connected: false, accessToken: null }),
+        })
+      );
+    });
+  });
 });

@@ -9,6 +9,7 @@ vi.mock('../src/config/prisma.js', () => ({
   prisma: {
     platformConnection: { findMany: vi.fn(), update: vi.fn() },
     systemLog: { create: vi.fn() },
+    user: { updateMany: vi.fn() },
   },
 }));
 
@@ -24,6 +25,7 @@ function signRequest(payload: Record<string, unknown>, secret: string): string {
 }
 
 const DEAUTH_URL = `${ENV.API_PREFIX}/auth/instagram/deauthorize`;
+const DATA_DELETION_URL = `${ENV.API_PREFIX}/auth/instagram/data-deletion`;
 
 describe('POST /auth/instagram/deauthorize — Deauthorize Callback Meta', () => {
   beforeEach(() => {
@@ -48,6 +50,7 @@ describe('POST /auth/instagram/deauthorize — Deauthorize Callback Meta', () =>
     ] as any);
     vi.mocked(prisma.platformConnection.update).mockResolvedValue({} as any);
     vi.mocked(prisma.systemLog.create).mockResolvedValue({} as any);
+    vi.mocked(prisma.user.updateMany).mockResolvedValue({ count: 1 } as any);
   });
 
   it('signed_request valid → koneksi dicabut, token dihapus, respons berisi URL penghapusan', async () => {
@@ -91,5 +94,42 @@ describe('POST /auth/instagram/deauthorize — Deauthorize Callback Meta', () =>
     expect(res.status).toBe(200);
     expect(res.body.url).toContain('/data-deletion');
     expect(prisma.platformConnection.update).not.toHaveBeenCalled();
+  });
+
+  it('data-deletion: signed_request valid → koneksi dicabut + binding instagramId dilepas', async () => {
+    const signed = signRequest({ user_id: '17841400000' }, ENV.INSTAGRAM_CLIENT_SECRET);
+
+    const res = await request(app).post(DATA_DELETION_URL).send({ signed_request: signed });
+
+    expect(res.status).toBe(200);
+    expect(res.body.url).toContain('/data-deletion');
+    expect(res.body.confirmation_code).toBeTruthy();
+
+    expect(prisma.platformConnection.update).toHaveBeenCalledTimes(1);
+    expect(prisma.platformConnection.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'pc_ig_1' },
+        data: expect.objectContaining({
+          connected: false,
+          status: 'revoked',
+          accessToken: null,
+        }),
+      })
+    );
+    expect(prisma.user.updateMany).toHaveBeenCalledWith({
+      where: { instagramId: '17841400000' },
+      data: { instagramId: null },
+    });
+  });
+
+  it('data-deletion: signed_request palsu → tetap 200 tanpa menghapus data', async () => {
+    const res = await request(app)
+      .post(DATA_DELETION_URL)
+      .send({ signed_request: 'sig_palsu.payload_palsu' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.url).toContain('/data-deletion');
+    expect(prisma.platformConnection.update).not.toHaveBeenCalled();
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
   });
 });

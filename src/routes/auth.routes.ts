@@ -353,45 +353,42 @@ router.post('/instagram/deauthorize', async (req: Request, res: Response) => {
   try {
     const payload = parseSignedRequest(signedRequest, ENV.INSTAGRAM_CLIENT_SECRET);
     const igUserId = payload?.user_id ? String(payload.user_id) : null;
-
     if (igUserId) {
-      const connections = await prisma.platformConnection.findMany({
-        where: { platform: 'instagram' },
-      });
-      const matched = connections.filter((conn) => {
-        const metadata = (conn.metadata || {}) as Record<string, unknown>;
-        return String(metadata.igUserId || '') === igUserId;
-      });
-
-      for (const conn of matched) {
-        const metadata = (conn.metadata || {}) as Record<string, unknown>;
-        await prisma.platformConnection.update({
-          where: { id: conn.id },
-          data: {
-            connected: false,
-            status: 'revoked',
-            accessToken: null,
-            metadata: { ...metadata, revokedAt: new Date().toISOString() },
-          },
-        });
-        await prisma.systemLog
-          .create({
-            data: {
-              source: 'CANVAS_WORKER',
-              message: `Akses Meta dicabut oleh pengguna Instagram (deauthorize) — koneksi ${
-                conn.accountHandle || conn.userId
-              } diputus otomatis.`,
-              tone: 'ok',
-            },
-          })
-          .catch(() => {});
-      }
+      await InstagramService.revokeInstagramAccess(igUserId, 'deauthorize');
     }
   } catch (err: any) {
     console.warn('[Instagram Deauthorize] Gagal memproses callback:', err?.message);
   }
 
   // Meta mengharapkan respons JSON berisi URL status penghapusan data.
+  return res.json({
+    url: `${ENV.FRONTEND_URL}/data-deletion?code=${confirmationCode}`,
+    confirmation_code: confirmationCode,
+  });
+});
+
+/**
+ * Data Deletion Callback Meta (setting "Data Deletion Request URL").
+ * Menghapus token koneksi Instagram terkait + melepaskan binding login akun
+ * IG tersebut, lalu merespons JSON status penghapusan sesuai spesifikasi Meta.
+ */
+router.post('/instagram/data-deletion', async (req: Request, res: Response) => {
+  const confirmationCode = crypto.randomBytes(12).toString('hex');
+  const signedRequest = String(req.body?.signed_request || req.query.signed_request || '');
+
+  try {
+    const payload = parseSignedRequest(signedRequest, ENV.INSTAGRAM_CLIENT_SECRET);
+    const igUserId = payload?.user_id ? String(payload.user_id) : null;
+    if (igUserId) {
+      const result = await InstagramService.revokeInstagramAccess(igUserId, 'permintaan hapus data');
+      console.log(
+        `[Instagram DataDeletion] IG user ${igUserId}: ${result.connections} koneksi dicabut, ${result.users} binding user dilepas.`
+      );
+    }
+  } catch (err: any) {
+    console.warn('[Instagram DataDeletion] Gagal memproses callback:', err?.message);
+  }
+
   return res.json({
     url: `${ENV.FRONTEND_URL}/data-deletion?code=${confirmationCode}`,
     confirmation_code: confirmationCode,

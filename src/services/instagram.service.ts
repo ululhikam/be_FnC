@@ -530,6 +530,64 @@ export class InstagramService {
     }
   }
 
+  /**
+   * Cabut seluruh akses Instagram untuk satu IG user id — dipakai oleh
+   * Deauthorize Callback & Data Deletion Callback Meta: hapus token koneksi
+   * base (token benar-benar dihapus dari server) + lepaskan binding login
+   * `instagramId` pada user. Aman dipanggil walau tidak ada data yang cocok.
+   */
+  static async revokeInstagramAccess(
+    igUserId: string,
+    reason: string
+  ): Promise<{ connections: number; users: number }> {
+    if (!igUserId) return { connections: 0, users: 0 };
+
+    let connections = 0;
+
+    const all = await prisma.platformConnection.findMany({
+      where: { platform: 'instagram' },
+    });
+    const matched = all.filter((conn) => {
+      const metadata = (conn.metadata || {}) as Record<string, unknown>;
+      return String(metadata.igUserId || '') === igUserId;
+    });
+
+    for (const conn of matched) {
+      const metadata = (conn.metadata || {}) as Record<string, unknown>;
+      await prisma.platformConnection.update({
+        where: { id: conn.id },
+        data: {
+          connected: false,
+          status: 'revoked',
+          accessToken: null,
+          metadata: { ...metadata, revokedAt: new Date().toISOString() },
+        },
+      });
+      await prisma.systemLog
+        .create({
+          data: {
+            source: 'CANVAS_WORKER',
+            message: `Akses Meta dicabut oleh pengguna Instagram (${reason}) — koneksi ${
+              conn.accountHandle || conn.userId
+            } diputus otomatis.`,
+            tone: 'ok',
+          },
+        })
+        .catch(() => {});
+      connections += 1;
+    }
+
+    // Lepaskan binding login Instagram pada user (bila ada).
+    const unlink = await prisma.user
+      .updateMany({
+        where: { instagramId: igUserId },
+        data: { instagramId: null },
+      })
+      .catch(() => ({ count: 0 }));
+
+    return { connections, users: unlink?.count || 0 };
+  }
+
   /** Cari koneksi Instagram (token nyata) milik kreator base. */
   private static async resolveInstagramConnection(
     baseHandle: string
@@ -741,7 +799,12 @@ export class InstagramService {
         published ? null : 'Meta tidak mengembalikan id media.'
       );
     } catch (err: any) {
-      const detail = err?.response?.data?.error?.message || err?.message || 'unknown error';
+      const metaError = err?.response?.data?.error;
+      let detail =
+        metaError?.error_user_msg || metaError?.message || err?.message || 'unknown error';
+      if (metaError?.code === 190) {
+        detail += ' — token Instagram kedaluwarsa/dicabut, hubungkan ulang akun via Meta OAuth';
+      }
       console.warn('[Instagram Finalize] gagal:', detail);
       await InstagramService.auditFinalize(payload, payload.baseHandle, false, detail).catch(() => {});
     }

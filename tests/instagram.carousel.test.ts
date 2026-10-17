@@ -196,6 +196,39 @@ describe('InstagramService carousel dengan media user (gambar + video)', () => {
     );
   });
 
+  it('worker: publish gagal (error 190) → audit menyertakan saran hubungkan ulang', async () => {
+    vi.mocked(prisma.fess.findUnique).mockResolvedValue({
+      id: 'fess_190w',
+      content: 'Isi fess',
+      postedToIg: false,
+    } as any);
+    vi.mocked(axios.get).mockResolvedValue({ data: { status_code: 'FINISHED' } } as any);
+    vi.mocked(axios.post).mockRejectedValueOnce({
+      message: 'Request failed with status code 400',
+      response: { data: { error: { code: 190, message: 'Session has expired' } } },
+    });
+
+    await InstagramService.finalizeInstagramPost({
+      fessId: 'fess_190w',
+      baseHandle: '@acc',
+      kind: 'reels',
+      itemIds: null,
+      containerId: 'reel_190',
+      attempts: 0,
+      exp: Date.now() + 60_000,
+    });
+
+    expect(prisma.fess.update).not.toHaveBeenCalled();
+    expect(prisma.systemLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          tone: 'error',
+          message: expect.stringContaining('kedaluwarsa'),
+        }),
+      })
+    );
+  });
+
   it('worker fase 1: item siap → rakit carousel (caption dari DB) → publish', async () => {
     vi.mocked(prisma.fess.findUnique).mockResolvedValue({
       id: 'fess_5',

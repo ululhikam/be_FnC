@@ -43,6 +43,10 @@ tersebut (Feed / carousel untuk gambar, Reels untuk video).
 | Terms of Service URL                   | `https://<domain-frontend>/terms` |
 | Webhook Callback URL (opsional/verifikasi) | `https://<domain-backend>/api/auth/instagram/webhook` (verify token = `INSTAGRAM_VERIFY_TOKEN`) |
 
+> Catatan: URL `deauthorize` & `data-deletion` adalah callback server-to-server
+> (Meta memanggil via `POST`). Membukanya manual di browser kini aman — tampil
+> halaman info "endpoint aktif", bukan "Cannot GET"/404.
+
 Env backend di produksi: `INSTAGRAM_CLIENT_ID`, `INSTAGRAM_CLIENT_SECRET`,
 `INSTAGRAM_CALLBACK_URL`, `INSTAGRAM_REDIRECT_URI`,
 `INSTAGRAM_API_VERSION=v25.0`,

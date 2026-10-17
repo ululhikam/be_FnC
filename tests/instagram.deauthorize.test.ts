@@ -132,4 +132,25 @@ describe('POST /auth/instagram/deauthorize — Deauthorize Callback Meta', () =>
     expect(prisma.platformConnection.update).not.toHaveBeenCalled();
     expect(prisma.user.updateMany).not.toHaveBeenCalled();
   });
+
+  it('GET deauthorize → halaman info 200 (bukan "Cannot GET"/404) tanpa efek samping', async () => {
+    const res = await request(app).get(DEAUTH_URL);
+
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('text/html');
+    expect(res.text).toContain('Endpoint Deauthorize aktif');
+    expect(prisma.platformConnection.update).not.toHaveBeenCalled();
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('GET data-deletion → halaman info 200 + tautan instruksi penghapusan', async () => {
+    const res = await request(app).get(DATA_DELETION_URL);
+
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('text/html');
+    expect(res.text).toContain('Endpoint Data Deletion aktif');
+    expect(res.text).toContain('/data-deletion');
+    expect(prisma.platformConnection.update).not.toHaveBeenCalled();
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
+  });
 });

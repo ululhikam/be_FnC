@@ -341,6 +341,52 @@ router.post('/instagram/webhook', (req: Request, res: Response) => {
 });
 
 /**
+ * Halaman info kecil untuk callback Meta — hanya agar URL-nya ramah saat
+ * dibuka manual di browser (Meta sendiri selalu memanggil via POST).
+ */
+function metaCallbackInfoPage(
+  title: string,
+  description: string,
+  linkHref = '',
+  linkLabel = ''
+): string {
+  const link = linkHref
+    ? `<p style="margin:18px 0 0"><a href="${linkHref}" style="color:#8ab4ff">${linkLabel}</a></p>`
+    : '';
+  return `<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${title} — Fess n Curious</title>
+</head>
+<body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#101014;color:#e9e9ee;font-family:system-ui,-apple-system,'Segoe UI',sans-serif">
+<main style="max-width:600px;padding:32px 24px;text-align:center">
+<h1 style="font-size:20px;margin:0 0 12px">✅ ${title}</h1>
+<p style="margin:0;line-height:1.7;color:#a9a9b4;font-size:15px">${description}</p>
+${link}
+</main>
+</body>
+</html>`;
+}
+
+/**
+ * Info GET Deauthorize Callback — saat URL dibuka di browser tidak lagi
+ * menampilkan "Cannot GET ..."; Meta tetap memakai POST di bawah.
+ */
+router.get('/instagram/deauthorize', (_req: Request, res: Response) => {
+  return res
+    .status(200)
+    .type('html')
+    .send(
+      metaCallbackInfoPage(
+        'Endpoint Deauthorize aktif',
+        'Halaman ini bukan untuk dibuka manual. Meta memanggil endpoint ini otomatis (POST) saat pengguna mencabut akses aplikasi dari pengaturan Instagram. Kalau Anda melihat pesan ini, berarti endpoint sudah berfungsi dengan baik.'
+      )
+    );
+});
+
+/**
  * Deauthorize Callback Meta (Instagram Business Login).
  * Meta memanggil endpoint ini saat pengguna mencabut akses aplikasi dari
  * pengaturan Instagram — token & koneksi terkait otomatis diputus.
@@ -365,6 +411,24 @@ router.post('/instagram/deauthorize', async (req: Request, res: Response) => {
     url: `${ENV.FRONTEND_URL}/data-deletion?code=${confirmationCode}`,
     confirmation_code: confirmationCode,
   });
+});
+
+/**
+ * Info GET Data Deletion Callback — ramah saat dibuka di browser; Meta tetap
+ * memakai POST di bawah. Disertakan tautan ke halaman instruksi penghapusan.
+ */
+router.get('/instagram/data-deletion', (_req: Request, res: Response) => {
+  return res
+    .status(200)
+    .type('html')
+    .send(
+      metaCallbackInfoPage(
+        'Endpoint Data Deletion aktif',
+        'Halaman ini bukan untuk dibuka manual. Meta memanggil endpoint ini otomatis (POST) saat pengguna meminta penghapusan data melalui Meta. Kalau Anda melihat pesan ini, berarti endpoint sudah berfungsi dengan baik.',
+        `${ENV.FRONTEND_URL}/data-deletion`,
+        'Buka halaman instruksi penghapusan data →'
+      )
+    );
 });
 
 /**

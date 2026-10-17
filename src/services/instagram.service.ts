@@ -347,6 +347,7 @@ export class InstagramService {
       let metaPublished = false;
       let igPending = false;
       let postCreationId: string | null = null;
+      let failureDetail = '';
       const mediaLabel = isCarousel
         ? `carousel ${items.length} media`
         : items[0]?.type === 'video'
@@ -459,7 +460,19 @@ export class InstagramService {
             }
           }
         } catch (apiErr: any) {
-          console.warn('[Instagram AutoPost] Meta API warning:', apiErr.response?.data?.error?.message || apiErr.message);
+          // Simpan penyebab agar tercatat di audit log — termasuk petunjuk
+          // khusus saat token kedaluwarsa/dicabut (error 190).
+          const metaError = apiErr?.response?.data?.error;
+          failureDetail =
+            metaError?.error_user_msg ||
+            metaError?.message ||
+            apiErr.message ||
+            'Kesalahan tidak diketahui';
+          if (metaError?.code === 190) {
+            failureDetail +=
+              ' — token Instagram kedaluwarsa/dicabut, hubungkan ulang akun via Meta OAuth';
+          }
+          console.warn('[Instagram AutoPost] Meta API warning:', failureDetail);
         }
       }
 
@@ -471,7 +484,7 @@ export class InstagramService {
             ? `Fess #${fessId} berhasil dipublikasikan ke Instagram Feed ${baseIg} (${mediaLabel}).`
             : igPending
               ? `Fess #${fessId}: video sedang diproses Meta — publikasi otomatis ke ${baseIg} sedang berjalan (${mediaLabel}).`
-              : `Fess #${fessId} dirender ke ${mediaLabel} (${baseIg}), tetapi publikasi ke Instagram belum berhasil.`,
+              : `Fess #${fessId} dirender ke ${mediaLabel} (${baseIg}), tetapi publikasi ke Instagram belum berhasil.${failureDetail ? ` Penyebab: ${failureDetail}.` : ''}`,
           tone: metaPublished || igPending ? 'ok' : 'error',
         },
       });
@@ -496,6 +509,19 @@ export class InstagramService {
       };
     } catch (err: any) {
       console.error('[Instagram AutoPost Error]', err.message);
+
+      // Catat kegagalan tak terduga (di luar alur Meta API) ke SystemLog agar
+      // terlihat oleh admin. Error Meta API ditangani di catch dalam.
+      await prisma.systemLog
+        .create({
+          data: {
+            source: 'CANVAS_WORKER',
+            message: `Auto-post fess #${fessId} gagal ke ${baseHandle}: ${err.message || 'Kesalahan tidak diketahui'}`,
+            tone: 'error',
+          },
+        })
+        .catch(() => {});
+
       return {
         success: false,
         platform: 'instagram',

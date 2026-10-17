@@ -64,7 +64,7 @@ describe('InstagramService Unit Tests (Meta for Developers Graph API)', () => {
     expect(prisma.systemLog.create).toHaveBeenCalled();
   });
 
-  it('should auto-post confession to Instagram Story via Graph API and log activity', async () => {
+  it('should auto-post confession to Instagram Feed via Graph API and log activity', async () => {
     const result = await InstagramService.autoPostFess(
       '@codememfess',
       'fess_101',

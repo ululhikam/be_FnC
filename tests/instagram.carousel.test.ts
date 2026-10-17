@@ -258,6 +258,55 @@ describe('InstagramService carousel dengan media user (gambar + video)', () => {
     expect(prisma.systemLog.create).not.toHaveBeenCalled();
   });
 
+  it('kegagalan Meta API → meta_published false + SystemLog berisi detail error', async () => {
+    const postSpy = vi.mocked(axios.post);
+    postSpy.mockRejectedValueOnce({
+      message: 'Request failed with status code 400',
+      response: { data: { error: { code: 9004, message: 'The media could not be fetched' } } },
+    });
+
+    const result: any = await InstagramService.autoPostFess(
+      '@acc',
+      'fess_err',
+      [{ type: 'image', url: 'https://cdn.example.com/kartu.jpg' }],
+      'Error media'
+    );
+
+    expect(result.meta_published).toBe(false);
+    expect(prisma.systemLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          tone: 'error',
+          message: expect.stringContaining('The media could not be fetched'),
+        }),
+      })
+    );
+  });
+
+  it('token kedaluwarsa (error 190) → SystemLog menyarankan hubungkan ulang', async () => {
+    vi.mocked(axios.post).mockRejectedValueOnce({
+      message: 'Request failed with status code 400',
+      response: { data: { error: { code: 190, message: 'Session has expired' } } },
+    });
+
+    const result: any = await InstagramService.autoPostFess(
+      '@acc',
+      'fess_190',
+      [{ type: 'image', url: 'https://cdn.example.com/kartu.jpg' }],
+      'Token expired'
+    );
+
+    expect(result.meta_published).toBe(false);
+    expect(prisma.systemLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          tone: 'error',
+          message: expect.stringContaining('kedaluwarsa'),
+        }),
+      })
+    );
+  });
+
   it('kuota penuh → publikasi diblokir & tercatat error (tidak panggil Meta)', async () => {
     const postSpy = vi.mocked(axios.post);
     vi.mocked(axios.get).mockResolvedValueOnce({

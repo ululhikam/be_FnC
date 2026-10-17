@@ -222,17 +222,21 @@ export class AdminService {
 
     const data = platforms.map((platform) => {
       const conn = connectionMap.get(platform);
+      const metadata = (conn?.metadata || {}) as Record<string, unknown>;
       return {
         id: platform,
         name:
           platform === 'instagram'
-            ? 'Instagram Graph API (Canvas Story)'
+            ? 'Instagram Graph API (Auto-Post Feed & Reels)'
             : platform === 'twitter'
             ? 'Twitter / X Autobase Bot'
             : 'Telegram Channel Broadcast',
         status: conn?.connected ? 'connected' : 'idle',
         connected: conn?.connected || false,
         account_handle: conn?.accountHandle || '',
+        // Info masa berlaku token (khusus Instagram — dari metadata koneksi).
+        token_expires_at:
+          typeof metadata.tokenExpiresAt === 'string' ? metadata.tokenExpiresAt : null,
       };
     });
 
@@ -262,7 +266,7 @@ export class AdminService {
         platform,
         name:
           platform === 'instagram'
-            ? 'Instagram Graph API (Canvas Story)'
+            ? 'Instagram Graph API (Auto-Post Feed & Reels)'
             : platform === 'twitter'
             ? 'Twitter / X Autobase Bot'
             : 'Telegram Channel Broadcast',
@@ -274,6 +278,9 @@ export class AdminService {
         status: connected ? 'connected' : 'idle',
         connected,
         ...(accountHandle ? { accountHandle } : {}),
+        // Putuskan koneksi = access token benar-benar dihapus dari server
+        // (sesuai Kebijakan Privasi & syarat review Meta).
+        ...(connected ? {} : { accessToken: null }),
       },
     });
 

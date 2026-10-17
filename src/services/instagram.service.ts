@@ -180,6 +180,30 @@ export class InstagramService {
   }
 
   /**
+   * Kuota publikasi Meta Content Publishing: maksimum 100 post per 24 jam per
+   * akun. Best-effort — bila endpoint gagal/tidak tersedia, kembalikan null
+   * supaya publikasi tetap dicoba (tidak memblokir fitur yang sudah jalan).
+   */
+  static async getPublishingQuota(
+    token: string
+  ): Promise<{ usage: number; total: number } | null> {
+    try {
+      const res = await axios.get(`${API_BASE}/me/content_publishing_limit`, {
+        params: { fields: 'quota_usage,config', access_token: token },
+        timeout: 8000,
+      });
+      const entry = Array.isArray(res.data?.data) ? res.data.data[0] : null;
+      if (!entry) return null;
+      const usage = Number(entry.quota_usage);
+      const total = Number(entry.config?.quota_total) || 100;
+      if (!Number.isFinite(usage)) return null;
+      return { usage, total };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Verify Instagram account by handle or token and update connection in database
    */
   static async verifyAndLinkAccount(
@@ -235,6 +259,14 @@ export class InstagramService {
       },
     });
 
+    // Metadata koneksi: expiry token + identitas akun IG (dipakai untuk
+    // auto-refresh token & pencocokan Deauthorize Callback Meta).
+    const connectionMetadata: Record<string, string> = {};
+    if (tokenExpiresAt) connectionMetadata.tokenExpiresAt = tokenExpiresAt;
+    if (profile.id) connectionMetadata.igUserId = String(profile.id);
+    if (profile.username) connectionMetadata.igUsername = String(profile.username);
+    const hasMetadata = Object.keys(connectionMetadata).length > 0;
+
     // Upsert PlatformConnection for Instagram
     await prisma.platformConnection.upsert({
       where: {
@@ -246,19 +278,19 @@ export class InstagramService {
       create: {
         userId,
         platform: 'instagram',
-        name: 'Instagram Graph API (Canvas Story)',
+        name: 'Instagram Graph API (Auto-Post Feed & Reels)',
         status: 'connected',
         connected: true,
         accountHandle: profile.username,
         accessToken: savedToken || null,
-        ...(tokenExpiresAt ? { metadata: { tokenExpiresAt } } : {}),
+        ...(hasMetadata ? { metadata: connectionMetadata } : {}),
       },
       update: {
         status: 'connected',
         connected: true,
         accountHandle: profile.username,
         ...(savedToken ? { accessToken: savedToken } : {}),
-        ...(tokenExpiresAt ? { metadata: { tokenExpiresAt } } : {}),
+        ...(hasMetadata ? { metadata: connectionMetadata } : {}),
       },
     });
 
@@ -323,6 +355,26 @@ export class InstagramService {
 
       // Jika token Instagram aktif ada, jalankan Meta Content Publishing API
       if (token && items.length) {
+        // Guard kuota Meta: maksimum 100 publikasi per 24 jam per akun.
+        // Best-effort — kegagalan cek kuota tidak menghalangi publikasi.
+        const quota = await InstagramService.getPublishingQuota(token);
+        if (quota && quota.usage >= quota.total) {
+          await prisma.systemLog
+            .create({
+              data: {
+                source: 'CANVAS_WORKER',
+                message: `Fess #${fessId} tidak dipublikasikan — kuota Instagram ${baseIg} penuh (${quota.usage}/${quota.total} per 24 jam).`,
+                tone: 'error',
+              },
+            })
+            .catch(() => {});
+          return {
+            success: false,
+            platform: 'instagram',
+            error: `Kuota publikasi Instagram ${baseIg} penuh (${quota.usage}/${quota.total} per 24 jam). Coba lagi setelah kuota direset Meta.`,
+          };
+        }
+
         try {
           // Instagram hanya menerima JPEG — konversi gambar non-JPEG
           // (PNG/WebP/GIF) ke JPEG publik sebelum container dibuat.

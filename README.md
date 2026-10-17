@@ -144,4 +144,4 @@ Hasil test: **12 test suites, 72 tests passed**.
 Sistem ini mendukung integrasi Instagram Graph API melalui Meta for Developers App:
 1. **Verifikasi Akun**: Endpoint `POST /api/auth/instagram/verify` memverifikasi token atau username Instagram via Graph API (`https://graph.instagram.com/me`).
 2. **Passport Instagram OAuth**: Endpoint `GET /api/auth/instagram` dan `GET /api/auth/instagram/callback` memungkinkan pengguna menautkan akun Instagram secara langsung.
-3. **Auto-Post Canvas Story**: Endpoint `POST /api/admin/canvas/export` merender confession menjadi kartu visual berukuran 9:16 (Instagram Story) atau 4:5 / 1:1 (Feed) dan memicu publikasi via Graph API.
+3. **Auto-Post Canvas**: Endpoint `POST /api/admin/canvas/export` merender confession menjadi kartu visual (Feed 1:1 / 4:5, JPEG) dan memicu publikasi via Meta Content Publishing API — gambar ke Feed/Carousel, video ke Reels. Kuota 100 post/24 jam dijaga otomatis (`content_publishing_limit`).

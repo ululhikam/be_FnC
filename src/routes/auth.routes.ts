@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import crypto from 'crypto';
 import passport from 'passport';
 import { AuthController } from '../controllers/auth.controller.js';
 import { validateBody } from '../middlewares/validate.middleware.js';
@@ -17,6 +18,7 @@ import { generateToken, verifyToken } from '../utils/jwt.util.js';
 import { ENV } from '../config/env.js';
 import { InstagramService } from '../services/instagram.service.js';
 import { prisma } from '../config/prisma.js';
+import { parseSignedRequest } from '../utils/meta-signed-request.util.js';
 
 const router = Router();
 
@@ -206,19 +208,27 @@ router.get('/instagram/callback', async (req: Request, res: Response) => {
         create: {
           userId: user.id,
           platform: 'instagram',
-          name: 'Instagram Graph API (Canvas Story)',
+          name: 'Instagram Graph API (Auto-Post Feed & Reels)',
           status: 'connected',
           connected: true,
           accountHandle: user.igAccount || profile.username,
           accessToken: longToken.accessToken,
-          metadata: { tokenExpiresAt },
+          metadata: {
+            tokenExpiresAt,
+            igUserId: String(profile.id),
+            igUsername: profile.username,
+          },
         },
         update: {
           status: 'connected',
           connected: true,
           accountHandle: user.igAccount || profile.username,
           accessToken: longToken.accessToken,
-          metadata: { tokenExpiresAt },
+          metadata: {
+            tokenExpiresAt,
+            igUserId: String(profile.id),
+            igUsername: profile.username,
+          },
         },
       });
 
@@ -328,6 +338,64 @@ router.get('/instagram/webhook', (req: Request, res: Response) => {
 router.post('/instagram/webhook', (req: Request, res: Response) => {
   console.log('[Meta Webhook Event Received]:', JSON.stringify(req.body));
   return res.status(200).send('EVENT_RECEIVED');
+});
+
+/**
+ * Deauthorize Callback Meta (Instagram Business Login).
+ * Meta memanggil endpoint ini saat pengguna mencabut akses aplikasi dari
+ * pengaturan Instagram — token & koneksi terkait otomatis diputus.
+ * Wajib merespons JSON berisi URL status penghapusan data + confirmation_code.
+ */
+router.post('/instagram/deauthorize', async (req: Request, res: Response) => {
+  const confirmationCode = crypto.randomBytes(12).toString('hex');
+  const signedRequest = String(req.body?.signed_request || req.query.signed_request || '');
+
+  try {
+    const payload = parseSignedRequest(signedRequest, ENV.INSTAGRAM_CLIENT_SECRET);
+    const igUserId = payload?.user_id ? String(payload.user_id) : null;
+
+    if (igUserId) {
+      const connections = await prisma.platformConnection.findMany({
+        where: { platform: 'instagram' },
+      });
+      const matched = connections.filter((conn) => {
+        const metadata = (conn.metadata || {}) as Record<string, unknown>;
+        return String(metadata.igUserId || '') === igUserId;
+      });
+
+      for (const conn of matched) {
+        const metadata = (conn.metadata || {}) as Record<string, unknown>;
+        await prisma.platformConnection.update({
+          where: { id: conn.id },
+          data: {
+            connected: false,
+            status: 'revoked',
+            accessToken: null,
+            metadata: { ...metadata, revokedAt: new Date().toISOString() },
+          },
+        });
+        await prisma.systemLog
+          .create({
+            data: {
+              source: 'CANVAS_WORKER',
+              message: `Akses Meta dicabut oleh pengguna Instagram (deauthorize) — koneksi ${
+                conn.accountHandle || conn.userId
+              } diputus otomatis.`,
+              tone: 'ok',
+            },
+          })
+          .catch(() => {});
+      }
+    }
+  } catch (err: any) {
+    console.warn('[Instagram Deauthorize] Gagal memproses callback:', err?.message);
+  }
+
+  // Meta mengharapkan respons JSON berisi URL status penghapusan data.
+  return res.json({
+    url: `${ENV.FRONTEND_URL}/data-deletion?code=${confirmationCode}`,
+    confirmation_code: confirmationCode,
+  });
 });
 
 export default router;

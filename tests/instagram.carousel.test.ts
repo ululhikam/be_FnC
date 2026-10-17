@@ -30,6 +30,14 @@ function mockConnection() {
   } as any);
   vi.mocked(prisma.systemLog.create).mockResolvedValue({} as any);
   vi.mocked(prisma.fess.update).mockResolvedValue({} as any);
+  // Default axios.get: cek kuota normal + status container FINISHED.
+  // Test bisa menimpanya dengan mockResolvedValue(Once) miliknya sendiri.
+  vi.mocked(axios.get).mockImplementation(async (url: string) => {
+    if (String(url).includes('content_publishing_limit')) {
+      return { data: { data: [{ quota_usage: 0, config: { quota_total: 100 } }] } } as any;
+    }
+    return { data: { status_code: 'FINISHED' } } as any;
+  });
 }
 
 const FINALIZE_URL = '/internal/instagram/finalize';
@@ -93,7 +101,10 @@ describe('InstagramService carousel dengan media user (gambar + video)', () => {
 
     expect(result.ig_pending).toBe(true);
     expect(result.meta_published).toBe(false);
-    expect(vi.mocked(axios.get)).not.toHaveBeenCalled();
+    // Hanya cek kuota — tidak ada polling status container (publish diserahkan worker).
+    const getCalls = vi.mocked(axios.get).mock.calls;
+    expect(getCalls.length).toBe(1);
+    expect(String(getCalls[0][0])).toContain('content_publishing_limit');
 
     // Item video dibuat lebih dulu agar Meta memprosesnya lebih awal.
     const videoParams = (postSpy.mock.calls[0][2] as any).params;
@@ -245,6 +256,50 @@ describe('InstagramService carousel dengan media user (gambar + video)', () => {
     expect(payload).toMatchObject({ containerId: 'car_6', attempts: 1 });
     expect(prisma.fess.update).not.toHaveBeenCalled();
     expect(prisma.systemLog.create).not.toHaveBeenCalled();
+  });
+
+  it('kuota penuh → publikasi diblokir & tercatat error (tidak panggil Meta)', async () => {
+    const postSpy = vi.mocked(axios.post);
+    vi.mocked(axios.get).mockResolvedValueOnce({
+      data: { data: [{ quota_usage: 100, config: { quota_total: 100 } }] },
+    } as any);
+
+    const result: any = await InstagramService.autoPostFess(
+      '@acc',
+      'fess_quota',
+      [{ type: 'image', url: 'https://cdn.example.com/kartu.jpg' }],
+      'Kuota penuh'
+    );
+
+    expect(result.success).toBe(false);
+    expect(String(result.error)).toContain('Kuota');
+    expect(postSpy).not.toHaveBeenCalled();
+    expect(prisma.systemLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ tone: 'error' }) })
+    );
+  });
+
+  it('cek kuota gagal → publikasi tetap lanjut (best-effort, tidak memblokir)', async () => {
+    vi.mocked(axios.get).mockImplementation(async (url: string) => {
+      if (String(url).includes('content_publishing_limit')) {
+        throw new Error('quota endpoint down');
+      }
+      return { data: { status_code: 'FINISHED' } } as any;
+    });
+    const postSpy = vi.mocked(axios.post);
+    postSpy
+      .mockResolvedValueOnce({ data: { id: 'konten_1' } } as any)
+      .mockResolvedValueOnce({ data: { id: 'media_1' } } as any);
+
+    const result: any = await InstagramService.autoPostFess(
+      '@acc',
+      'fess_ok',
+      [{ type: 'image', url: 'https://cdn.example.com/kartu.jpg' }],
+      'Kuota down'
+    );
+
+    expect(result.meta_published).toBe(true);
+    expect(postSpy).toHaveBeenCalledTimes(2);
   });
 
   it('payload finalize ditandatangani & tervalidasi (anti tamper)', () => {

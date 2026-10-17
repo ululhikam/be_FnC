@@ -1,6 +1,7 @@
 import { app } from './app.js';
 import { ENV } from './config/env.js';
 import { prisma } from './config/prisma.js';
+import { startInstagramTokenRefreshJob } from './jobs/instagram-token-refresh.job.js';
 
 const PORT = ENV.PORT;
 
@@ -12,6 +13,9 @@ const server = app.listen(PORT, () => {
   console.log(`🌍 Environment: ${ENV.NODE_ENV}`);
   console.log(`=================================================`);
 });
+
+// Pemeliharaan token Instagram (refresh 60-harian) — boot + tiap 24 jam.
+startInstagramTokenRefreshJob();
 
 // Graceful shutdown
 async function gracefulShutdown(signal: string) {

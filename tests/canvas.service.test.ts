@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { CanvasService } from '../src/services/canvas.service.js';
 import { InstagramService } from '../src/services/instagram.service.js';
+import { StorageService } from '../src/services/storage.service.js';
 import { prisma } from '../src/config/prisma.js';
 
 vi.mock('../src/config/prisma.js', () => ({
@@ -58,6 +59,10 @@ describe('CanvasService Unit Tests', () => {
 
     expect(result.image_url).toContain('https://storage.supabase.co');
     expect(result.posted_to).toContain('instagram');
+    // Instagram hanya menerima JPEG — kartu canvas harus diunggah sebagai .jpg
+    const uploadedFile = vi.mocked(StorageService.uploadMedia).mock.calls[0][0] as any;
+    expect(uploadedFile.mimetype).toBe('image/jpeg');
+    expect(uploadedFile.originalname).toMatch(/\.jpg$/);
     expect(prisma.fess.update).toHaveBeenCalledWith({
       where: { id: 'fess_101' },
       data: { postedToIg: true },

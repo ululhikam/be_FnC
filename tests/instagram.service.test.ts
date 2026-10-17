@@ -39,6 +39,14 @@ describe('InstagramService Unit Tests (Meta for Developers Graph API)', () => {
     expect(typeof token).toBe('string');
   });
 
+  it('URL authorization meminta content_publish & tidak meminta manage_messages', () => {
+    const url = InstagramService.getAuthorizationUrl('state_abc');
+    expect(url).toContain('instagram_business_basic');
+    expect(url).toContain('instagram_business_content_publish');
+    expect(url).not.toContain('manage_messages');
+    expect(url).toContain('state=state_abc');
+  });
+
   it('should verify and link Instagram account to user', async () => {
     vi.mocked(prisma.user.update).mockResolvedValueOnce({
       id: 'usr_mod',

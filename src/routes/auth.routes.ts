@@ -150,7 +150,8 @@ router.get('/instagram/callback', async (req: Request, res: Response) => {
       // Login via Instagram
       const shortToken = await InstagramService.exchangeCodeForToken(code);
       const longToken = await InstagramService.getLongLivedToken(shortToken);
-      const profile = await InstagramService.verifyToken(longToken);
+      const tokenExpiresAt = new Date(Date.now() + longToken.expiresIn * 1000).toISOString();
+      const profile = await InstagramService.verifyToken(longToken.accessToken);
 
       let user = await prisma.user.findUnique({
         where: { instagramId: profile.id },
@@ -209,13 +210,15 @@ router.get('/instagram/callback', async (req: Request, res: Response) => {
           status: 'connected',
           connected: true,
           accountHandle: user.igAccount || profile.username,
-          accessToken: longToken,
+          accessToken: longToken.accessToken,
+          metadata: { tokenExpiresAt },
         },
         update: {
           status: 'connected',
           connected: true,
           accountHandle: user.igAccount || profile.username,
-          accessToken: longToken,
+          accessToken: longToken.accessToken,
+          metadata: { tokenExpiresAt },
         },
       });
 

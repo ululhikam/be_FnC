@@ -38,6 +38,11 @@ export const ENV = {
   INSTAGRAM_CALLBACK_URL: process.env.INSTAGRAM_CALLBACK_URL || 'http://localhost:3000/api/auth/instagram/callback',
   INSTAGRAM_REDIRECT_URI: process.env.INSTAGRAM_REDIRECT_URI || 'http://localhost:3000/api/auth/instagram/callback',
   INSTAGRAM_VERIFY_TOKEN: process.env.INSTAGRAM_VERIFY_TOKEN || 'fess_instagram_verify_token_2026',
+  // Versi Graph API Instagram (naikkan sesuai rilis Meta terbaru).
+  INSTAGRAM_API_VERSION: process.env.INSTAGRAM_API_VERSION || 'v25.0',
+  // Scope OAuth — hanya permission yang benar-benar dipakai app (syarat App Review).
+  INSTAGRAM_SCOPES:
+    process.env.INSTAGRAM_SCOPES || 'instagram_business_basic,instagram_business_content_publish',
 
   // URL publik backend (dipakai worker internal untuk memanggil dirinya sendiri)
   BACKEND_PUBLIC_URL:

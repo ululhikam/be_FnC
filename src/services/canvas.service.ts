@@ -1,6 +1,7 @@
 ﻿import fs from 'fs';
 import opentype from 'opentype.js';
 import { Resvg } from '@resvg/resvg-js';
+import sharp from 'sharp';
 import { ASPECTS, getTemplateByKey } from '../constants/templates.js';
 import { StorageService } from './storage.service.js';
 import { prisma } from '../config/prisma.js';
@@ -75,17 +76,18 @@ export class CanvasService {
 
     const svgs = CanvasService.buildSvgPages(fess as unknown as FessLike, templateKey, aspectKey);
 
-    // ── SVG → PNG (resvg, font bundled) → upload per halaman ───────────────
+    // ── SVG → JPEG (resvg + sharp, font bundled) → upload per halaman ──────
+    // Instagram Content Publishing hanya menerima gambar JPEG.
     const imageUrls: string[] = [];
     for (let i = 0; i < svgs.length; i++) {
-      const png = CanvasService.renderSvgToPng(svgs[i]);
+      const jpeg = await CanvasService.renderSvgToJpeg(svgs[i]);
       const mockFile: Express.Multer.File = {
         fieldname: 'file',
-        originalname: `canvas_${fessId}_${template.key}_${aspect.key}_p${i + 1}.png`,
+        originalname: `canvas_${fessId}_${template.key}_${aspect.key}_p${i + 1}.jpg`,
         encoding: '7bit',
-        mimetype: 'image/png',
-        size: png.length,
-        buffer: png,
+        mimetype: 'image/jpeg',
+        size: jpeg.length,
+        buffer: jpeg,
         destination: '',
         filename: '',
         path: '',
@@ -382,6 +384,15 @@ export class CanvasService {
         : { defaultFontFamily: 'Poppins' },
     });
     return Buffer.from(resvg.render().asPng());
+  }
+
+  /** Render SVG card → Buffer JPEG — format wajib Instagram untuk gambar. */
+  static async renderSvgToJpeg(svg: string): Promise<Buffer> {
+    const png = CanvasService.renderSvgToPng(svg);
+    return sharp(png)
+      .flatten({ background: '#ffffff' }) // kartu transparan → latar putih
+      .jpeg({ quality: 92, mozjpeg: true })
+      .toBuffer();
   }
 }
 

@@ -2,9 +2,13 @@ import crypto from 'crypto';
 import axios from 'axios';
 import { ENV } from '../config/env.js';
 import { prisma } from '../config/prisma.js';
+import { ensureJpegUrl } from '../utils/instagram-media.util.js';
 
-const API_BASE = 'https://graph.instagram.com/v19.0';
+const API_VERSION = ENV.INSTAGRAM_API_VERSION || 'v25.0';
+const API_BASE = `https://graph.instagram.com/${API_VERSION}`;
 const FINALIZE_MAX_ATTEMPTS = 6;
+/** Masa berlaku long-lived token Meta (60 hari) — dipakai bila Meta tidak mengirim expires_in. */
+const LONG_LIVED_TTL_SECONDS = 60 * 24 * 60 * 60;
 
 export interface InstagramProfileData {
   id: string;
@@ -48,7 +52,7 @@ export class InstagramService {
       client_id: ENV.INSTAGRAM_CLIENT_ID,
       redirect_uri: ENV.INSTAGRAM_REDIRECT_URI,
       response_type: 'code',
-      scope: 'instagram_business_basic,instagram_business_manage_messages',
+      scope: ENV.INSTAGRAM_SCOPES,
     });
 
     if (state) {
@@ -64,7 +68,7 @@ export class InstagramService {
   static async verifyToken(accessToken: string): Promise<InstagramProfileData> {
     try {
       // Call Meta Instagram Basic Display or Graph API
-      const response = await axios.get('https://graph.instagram.com/me', {
+      const response = await axios.get(`${API_BASE}/me`, {
         params: {
           fields: 'id,username,account_type,media_count',
           access_token: accessToken,
@@ -122,10 +126,16 @@ export class InstagramService {
   }
 
   /**
-   * Exchange short-lived token to 60-day long-lived token
+   * Exchange short-lived token to 60-day long-lived token.
+   * Mengembalikan token + masa berlaku (detik) agar job refresh bisa
+   * memperpanjang sebelum kedaluwarsa.
    */
-  static async getLongLivedToken(shortToken: string): Promise<string> {
-    if (shortToken.startsWith('mock_')) return shortToken;
+  static async getLongLivedToken(
+    shortToken: string
+  ): Promise<{ accessToken: string; expiresIn: number }> {
+    if (shortToken.startsWith('mock_')) {
+      return { accessToken: shortToken, expiresIn: LONG_LIVED_TTL_SECONDS };
+    }
     try {
       const response = await axios.get('https://graph.instagram.com/access_token', {
         params: {
@@ -136,10 +146,37 @@ export class InstagramService {
         timeout: 8000,
       });
 
-      return response.data.access_token || shortToken;
+      const accessToken = response.data.access_token || shortToken;
+      const expiresIn = Number(response.data.expires_in) || LONG_LIVED_TTL_SECONDS;
+      return { accessToken, expiresIn };
     } catch {
-      return shortToken;
+      // Perilaku lama: token pendek tetap dikembalikan. Expiry 1 jam agar job
+      // refresh mencoba memperbaikinya (bukan diam-diam mati setelah 60 hari).
+      return { accessToken: shortToken, expiresIn: 3600 };
     }
+  }
+
+  /**
+   * Perpanjang long-lived token 60 hari lagi (syarat Meta: token ≥24 jam &
+   * belum kedaluwarsa). Error dilempar apa adanya — pemanggil (job) mencatat.
+   */
+  static async refreshLongLivedToken(
+    token: string
+  ): Promise<{ accessToken: string; expiresIn: number }> {
+    if (token.startsWith('mock_')) {
+      return { accessToken: token, expiresIn: LONG_LIVED_TTL_SECONDS };
+    }
+    const response = await axios.get('https://graph.instagram.com/refresh_access_token', {
+      params: {
+        grant_type: 'ig_refresh_token',
+        access_token: token,
+      },
+      timeout: 8000,
+    });
+
+    const accessToken = response.data?.access_token || token;
+    const expiresIn = Number(response.data?.expires_in) || LONG_LIVED_TTL_SECONDS;
+    return { accessToken, expiresIn };
   }
 
   /**
@@ -151,14 +188,16 @@ export class InstagramService {
   ) {
     let profile: InstagramProfileData;
     let savedToken: string | undefined = data.token;
+    let tokenExpiresAt: string | null = null;
 
     if (data.token) {
       profile = await this.verifyToken(data.token);
     } else if (data.code) {
       const shortToken = await this.exchangeCodeForToken(data.code);
       const longToken = await this.getLongLivedToken(shortToken);
-      savedToken = longToken;
-      profile = await this.verifyToken(longToken);
+      savedToken = longToken.accessToken;
+      tokenExpiresAt = new Date(Date.now() + longToken.expiresIn * 1000).toISOString();
+      profile = await this.verifyToken(longToken.accessToken);
     } else if (data.handle) {
       // Verify handle format and create verified record
       const cleanHandle = data.handle.startsWith('@') ? data.handle : `@${data.handle}`;
@@ -212,12 +251,14 @@ export class InstagramService {
         connected: true,
         accountHandle: profile.username,
         accessToken: savedToken || null,
+        ...(tokenExpiresAt ? { metadata: { tokenExpiresAt } } : {}),
       },
       update: {
         status: 'connected',
         connected: true,
         accountHandle: profile.username,
         ...(savedToken ? { accessToken: savedToken } : {}),
+        ...(tokenExpiresAt ? { metadata: { tokenExpiresAt } } : {}),
       },
     });
 
@@ -283,6 +324,14 @@ export class InstagramService {
       // Jika token Instagram aktif ada, jalankan Meta Content Publishing API
       if (token && items.length) {
         try {
+          // Instagram hanya menerima JPEG — konversi gambar non-JPEG
+          // (PNG/WebP/GIF) ke JPEG publik sebelum container dibuat.
+          for (const item of items) {
+            if (item.type === 'image') {
+              item.url = await ensureJpegUrl(item.url);
+            }
+          }
+
           const captionText = InstagramService.buildCaption(caption, baseHandle);
           const hasVideo = items.some((item) => item.type === 'video');
 

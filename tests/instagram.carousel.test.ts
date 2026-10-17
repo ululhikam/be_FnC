@@ -53,8 +53,8 @@ describe('InstagramService carousel dengan media user (gambar + video)', () => {
       '@acc',
       'fess_1',
       [
-        { type: 'image', url: 'https://cdn.example.com/card.png' },
-        { type: 'image', url: 'https://cdn.example.com/foto.png' },
+        { type: 'image', url: 'https://cdn.example.com/card.jpg' },
+        { type: 'image', url: 'https://cdn.example.com/foto.jpg' },
       ],
       'Isi fess lengkap'
     );
@@ -85,7 +85,7 @@ describe('InstagramService carousel dengan media user (gambar + video)', () => {
       '@acc',
       'fess_2',
       [
-        { type: 'image', url: 'https://cdn.example.com/card.png' },
+        { type: 'image', url: 'https://cdn.example.com/card.jpg' },
         { type: 'video', url: 'https://cdn.example.com/klip.mp4' },
       ],
       'Isi fess video'
@@ -103,7 +103,7 @@ describe('InstagramService carousel dengan media user (gambar + video)', () => {
       is_carousel_item: 'true',
     });
     const imageParams = (postSpy.mock.calls[1][2] as any).params;
-    expect(imageParams).toMatchObject({ image_url: 'https://cdn.example.com/card.png' });
+    expect(imageParams).toMatchObject({ image_url: 'https://cdn.example.com/card.jpg' });
 
     // Publish diserahkan ke endpoint worker internal (HMAC-signed).
     const finalizeCall = postSpy.mock.calls[2];

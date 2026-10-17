@@ -357,6 +357,84 @@ export class BaseService {
   }
 
   /**
+   * Daftar pengikut (follower) sebuah base — user nyata dari tabel Follow.
+   * Paginated + searchable (username/handle), urut dari yang terbaru mengikuti.
+   */
+  static async getBaseFollowers(
+    handle: string,
+    params: { search?: string; page?: number; limit?: number } = {}
+  ) {
+    const cleanHandle = normalizeHandle(handle);
+
+    const base = await prisma.base.findUnique({
+      where: { handle: cleanHandle },
+      select: { id: true },
+    });
+
+    if (!base) {
+      const err: any = new Error(`Base ${handle} tidak ditemukan`);
+      err.status = 404;
+      err.code = 'NOT_FOUND';
+      throw err;
+    }
+
+    const page = params.page || 1;
+    const limit = params.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const where: any = { baseId: base.id };
+    const search = params.search?.trim();
+    if (search) {
+      where.user = {
+        OR: [
+          { username: { contains: search, mode: 'insensitive' } },
+          { handle: { contains: search, mode: 'insensitive' } },
+        ],
+      };
+    }
+
+    const [total, follows] = await Promise.all([
+      prisma.follow.count({ where }),
+      prisma.follow.findMany({
+        where,
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              handle: true,
+              avatar: true,
+              level: true,
+              badges: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+    ]);
+
+    const data = follows.map((f) => ({
+      id: f.user.id,
+      username: f.user.username,
+      handle: f.user.handle,
+      avatar: f.user.avatar || null,
+      level: f.user.level ?? 1,
+      badges: f.user.badges || [],
+      followed_at: f.createdAt ? new Date(f.createdAt).getTime() : null,
+    }));
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      total_pages: Math.ceil(total / limit) || 1,
+    };
+  }
+
+  /**
    * Serialize Base model into exact OpenAPI Base schema shape
    */
   static serializeBase(base: any, isFollowing = false) {

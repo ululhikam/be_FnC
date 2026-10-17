@@ -5,6 +5,7 @@ import { validateBody, validateQuery } from '../middlewares/validate.middleware.
 import {
   GetBasesQuerySchema,
   BaseFessesQuerySchema,
+  BaseFollowersQuerySchema,
   CreateBaseSchema,
   UpdateBaseSettingsSchema,
 } from '../validators/base.validator.js';
@@ -22,6 +23,12 @@ router.post(
 router.get('/:handle', optionalAuth, BaseController.getBase);
 router.post('/:handle/follow', requireAuth, BaseController.followBase);
 router.get('/:handle/fesses', optionalAuth, validateQuery(BaseFessesQuerySchema), BaseController.getBaseFesses);
+router.get(
+  '/:handle/followers',
+  optionalAuth,
+  validateQuery(BaseFollowersQuerySchema),
+  BaseController.getBaseFollowers
+);
 router.patch(
   '/:handle/settings',
   requireAuth,

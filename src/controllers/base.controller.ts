@@ -64,6 +64,16 @@ export class BaseController {
     }
   }
 
+  static async getBaseFollowers(req: Request, res: Response, next: NextFunction) {
+    try {
+      const handle = String(req.params.handle);
+      const result = await BaseService.getBaseFollowers(handle, req.query as any);
+      return res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+
   static async updateBaseSettings(req: Request, res: Response, next: NextFunction) {
     try {
       const handle = String(req.params.handle);

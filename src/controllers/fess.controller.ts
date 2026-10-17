@@ -99,7 +99,7 @@ export class FessController {
     try {
       const id = String(req.params.id);
       const { template, aspect } = req.body || {};
-      const result = await CanvasService.exportFessCanvas(id, template, aspect || 'portrait');
+      const result = await CanvasService.exportFessCanvas(id, template, aspect);
 
       // Ratakan hasil auto-post agar UI (modal FessCard) bisa membaca
       // meta_published / message / image_url tanpa nesting ig_result.

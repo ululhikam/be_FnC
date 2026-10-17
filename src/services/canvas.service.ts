@@ -50,12 +50,15 @@ export class CanvasService {
   /**
    * Render confession card → PNG (satu atau beberapa halaman untuk carousel)
    * → upload ke Supabase → auto-post ke Instagram Feed.
-   * aspectKey harus 'square' (1:1) atau 'portrait' (4:5); kunci lain jatuh ke 'portrait'.
+   *
+   * aspectKey opsional: 'square' (1:1) atau 'portrait' (4:5). Kosong / kunci
+   * tak dikenal → ikut aspek template (agar kartu IG persis seperti pratinjau
+   * composer, termasuk template persegi).
    */
   static async exportFessCanvas(
     fessId: string,
     templateKey = 'default',
-    aspectKey = 'portrait'
+    aspectKey = ''
   ): Promise<CanvasExportResult> {
     const fess = await prisma.fess.findUnique({
       where: { id: fessId },
@@ -148,9 +151,9 @@ export class CanvasService {
    * Bangun SVG card (1..10 halaman) untuk sebuah fess — murni tanpa DB,
    * dipakai exportFessCanvas() dan skrip verifikasi lokal.
    */
-  static buildSvgPages(fess: FessLike, templateKey = 'default', aspectKey = 'portrait'): string[] {
+  static buildSvgPages(fess: FessLike, templateKey = 'default', aspectKey = ''): string[] {
     const template = getTemplateByKey(templateKey || fess.template || 'default');
-    // Resolve aspect — 'story' legacy key falls back to 'portrait'
+    // Resolve aspect — kosong / kunci legacy jatuh ke aspek template.
     const aspect = ASPECTS[aspectKey] || (template.aspect === 'square' ? ASPECTS.square : ASPECTS.portrait);
 
     // ── Visual variables ────────────────────────────────────────────────────

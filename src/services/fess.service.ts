@@ -242,7 +242,7 @@ export class FessService {
       // Non-blocking background task agar respon HTTP tidak tertahan render/upload canvas.
       // onBackground dipakai controller untuk waitUntil() di runtime Vercel supaya
       // task tidak dipotong saat response selesai.
-      const autoPostTask = CanvasService.exportFessCanvas(fess.id, fess.template || 'default', 'portrait').catch(
+      const autoPostTask = CanvasService.exportFessCanvas(fess.id, fess.template || 'default').catch(
         (err) => {
           console.error(`[AutoPost] Gagal export canvas fess ${fess.id}:`, err);
         }
@@ -580,7 +580,7 @@ export class FessService {
     // Non-blocking background task: jangan gunakan await agar tidak menahan response HTTP approve.
     // onBackground dipakai controller untuk waitUntil() di runtime Vercel supaya
     // task tidak dipotong saat response selesai.
-    const autoPostTask = CanvasService.exportFessCanvas(id, fess.template || 'default', 'portrait').catch(
+    const autoPostTask = CanvasService.exportFessCanvas(id, fess.template || 'default').catch(
       (err) => {
         console.error(`[AutoPost] Gagal export canvas fess ${id}:`, err);
       }

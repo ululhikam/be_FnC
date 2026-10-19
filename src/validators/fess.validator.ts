@@ -46,7 +46,21 @@ export const CreateFessSchema = z.object({
   scheduled_at: z.string().datetime().optional().nullable(),
   song: SongAttachmentSchema.optional().nullable(),
   template: z
-    .enum(['default', 'midnight', 'sunset', 'forest', 'noir', 'paper', 'ocean', 'violet'])
+    .enum([
+      'spotify',
+      'typewriter',
+      'journal',
+      'locker',
+      'clay',
+      'default',
+      'midnight',
+      'sunset',
+      'forest',
+      'noir',
+      'paper',
+      'ocean',
+      'violet',
+    ])
     .optional()
     .default('default'),
   quoted_fess: QuotedFessSchema.optional().nullable(),

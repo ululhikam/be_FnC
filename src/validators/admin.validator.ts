@@ -3,7 +3,21 @@ import { z } from 'zod';
 export const CanvasExportSchema = z.object({
   fess_id: z.string().min(1, 'ID fess wajib diisi'),
   template: z
-    .enum(['default', 'midnight', 'sunset', 'forest', 'noir', 'paper', 'ocean', 'violet'])
+    .enum([
+      'spotify',
+      'typewriter',
+      'journal',
+      'locker',
+      'clay',
+      'default',
+      'midnight',
+      'sunset',
+      'forest',
+      'noir',
+      'paper',
+      'ocean',
+      'violet',
+    ])
     .default('default'),
   aspect: z.enum(['square', 'portrait', 'story']).default('portrait'),
 });

@@ -122,6 +122,8 @@ describe('Fess Validators', () => {
     };
     const res = CreateFessSchema.safeParse(valid);
     expect(res.success).toBe(true);
+    expect(CreateFessSchema.safeParse({ ...valid, template: 'spotify' }).success).toBe(true);
+    expect(CreateFessSchema.safeParse({ ...valid, template: 'typewriter' }).success).toBe(true);
   });
 
   it('should reject empty fess content', () => {

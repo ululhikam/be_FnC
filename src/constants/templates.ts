@@ -50,7 +50,7 @@ export const TEMPLATES: TemplateConfig[] = [
     background: '#ffe600',
     accent: '#000000',
     category: 'pop',
-    strip: '★ RAW CONFESSION ★',
+    strip: '* RAW CONFESSION *',
     subline: 'POPARTS EDITION',
   },
 
@@ -78,7 +78,7 @@ export const TEMPLATES: TemplateConfig[] = [
     background: '#080c10',
     accent: '#00f0ff',
     category: 'tech',
-    strip: '● ● ● bash - session_01',
+    strip: 'o o o bash - session_01',
     subline: 'SYSTEM OUTPUT // 200 OK',
   },
 
@@ -92,7 +92,7 @@ export const TEMPLATES: TemplateConfig[] = [
     background: '#ff4b8b',
     accent: '#ffffff',
     category: 'pop',
-    strip: '✦ SWEET CONFESSION ✦',
+    strip: '+ SWEET CONFESSION +',
     subline: 'Y2K RETRO ARCHIVE',
   },
 
@@ -106,7 +106,7 @@ export const TEMPLATES: TemplateConfig[] = [
     background: '#f4f4f0',
     accent: '#e63946',
     category: 'modern',
-    strip: '№ 01 / ZÜRICH EDITORIAL',
+    strip: 'No. 01 / ZURICH EDITORIAL',
     subline: 'ARCHITECTURAL GRID',
   },
 
@@ -134,7 +134,7 @@ export const TEMPLATES: TemplateConfig[] = [
     background: '#ffffff',
     accent: '#000000',
     category: 'modern',
-    strip: '“CONFESSION” — SPEC 2026',
+    strip: '"CONFESSION" - SPEC 2026',
     subline: 'STREETWEAR ARCHIVE',
   },
 
@@ -166,21 +166,102 @@ export const TEMPLATES: TemplateConfig[] = [
     subline: 'SCALE: 1:1 SCHEMATIC',
   },
 
+  // ── 11. LEGACY: Tengah Malam ────────────────────────────────────────────
+  {
+    key: 'midnight',
+    label: 'Tengah Malam',
+    description: 'Biru tua pekat bertekstur bintang — cocok untuk curhat malam.',
+    aspect: 'portrait',
+    ink: 'light',
+    background: 'radial-gradient(120% 90% at 20% 0%, #16204d 0%, #0a0e22 45%, #05060f 100%)',
+    accent: '#7dd3fc',
+  },
+
+  // ── 12. LEGACY: Senja ───────────────────────────────────────────────────
+  {
+    key: 'sunset',
+    label: 'Senja',
+    description: 'Oranye ke merah muda, hangat dan ramah di feed.',
+    aspect: 'portrait',
+    ink: 'light',
+    background: 'linear-gradient(160deg, #ff7a18 0%, #ff3d6e 52%, #a01fff 100%)',
+    accent: '#fff4e8',
+  },
+
+  // ── 13. LEGACY: Rimba ───────────────────────────────────────────────────
+  {
+    key: 'forest',
+    label: 'Rimba',
+    description: 'Hijau teal yang menenangkan, pas untuk opini santai.',
+    aspect: 'square',
+    ink: 'light',
+    background: 'linear-gradient(140deg, #0f766e 0%, #059669 55%, #34d399 100%)',
+    accent: '#ecfdf5',
+  },
+
+  // ── 14. LEGACY: Noir ────────────────────────────────────────────────────
+  {
+    key: 'noir',
+    label: 'Noir',
+    description: 'Hitam pekat bergrid neon — gelap, tajam, misterius.',
+    aspect: 'square',
+    ink: 'light',
+    background: 'linear-gradient(180deg, #0b0d14 0%, #12141f 60%, #0b0d14 100%)',
+    accent: '#0038ff',
+  },
+
+  // ── 15. LEGACY: Kertas ──────────────────────────────────────────────────
+  {
+    key: 'paper',
+    label: 'Kertas',
+    description: 'Krem bersih bertekstur arsir — teks gelap, enak dibaca.',
+    aspect: 'portrait',
+    ink: 'dark',
+    background: 'linear-gradient(150deg, #fdf6ec 0%, #f6ead6 60%, #efe0c6 100%)',
+    accent: '#b45309',
+  },
+
+  // ── 16. LEGACY: Samudra ─────────────────────────────────────────────────
+  {
+    key: 'ocean',
+    label: 'Samudra',
+    description: 'Cyan ke biru tua, segar seperti biru laut.',
+    aspect: 'portrait',
+    ink: 'light',
+    background: 'linear-gradient(200deg, #22d3ee 0%, #0ea5e9 48%, #1e3a8a 100%)',
+    accent: '#ecfeff',
+  },
+
+  // ── 17. LEGACY: Violet ──────────────────────────────────────────────────
+  {
+    key: 'violet',
+    label: 'Violet',
+    description: 'Format feed potret 4:5, gradien ungu–pink cerah di feed Instagram.',
+    aspect: 'portrait',
+    ink: 'light',
+    background: 'linear-gradient(180deg, #7000ff 0%, #c026d3 45%, #f472b6 100%)',
+    accent: '#fdf4ff',
+  },
+
   // ── Standar Fallback ────────────────────────────────────────────────────
   {
     key: 'default',
-    label: 'Standar Fess',
-    description: 'Biru royal solid khas Fess n Curious bertekstur titik halus.',
+    label: 'Standar',
+    description: 'Gradien biru–ungu khas Fess n Curious, siap pakai di feed.',
     aspect: 'portrait',
     ink: 'light',
-    background: '#0038ff',
+    background: 'linear-gradient(135deg, #0038ff 0%, #4b1fff 55%, #7000ff 100%)',
     accent: '#ffffff',
     category: 'standard',
-    strip: 'FESS N CURIOUS',
-    subline: 'INSTAGRAM FEED',
   },
 ];
 
+export const DEFAULT_TEMPLATE_KEY = 'default';
+
 export function getTemplateByKey(key: string): TemplateConfig {
-  return TEMPLATES.find((t) => t.key === key) || TEMPLATES[0];
+  return (
+    TEMPLATES.find((t) => t.key === key) ||
+    TEMPLATES.find((t) => t.key === DEFAULT_TEMPLATE_KEY) ||
+    TEMPLATES[0]
+  );
 }

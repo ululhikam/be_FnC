@@ -67,7 +67,7 @@ export const CreateFessSchema = z.object({
       'violet',
     ])
     .optional()
-    .default('cyberpunk'),
+    .default('default'),
   quoted_fess: QuotedFessSchema.optional().nullable(),
   tag: z.enum(['Cerita', 'Tanya']).optional().nullable(),
 });

@@ -13,6 +13,71 @@ import { getEmojiSvgMarkup } from '../config/emoji.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+/**
+ * Template generasi lama (gradasi orisinal). Dipertahankan agar fess lama
+ * tetap dirender persis seperti sebelumnya: gradient khusus per key, tekstur
+ * titik halus, dan panel kartu versi lama.
+ */
+const LEGACY_TEMPLATE_KEYS = new Set([
+  'default',
+  'midnight',
+  'sunset',
+  'forest',
+  'noir',
+  'paper',
+  'ocean',
+  'violet',
+]);
+
+/** Definisi gradient SVG asli untuk template lama (persis versi sebelumnya). */
+const LEGACY_GRADIENTS: Record<string, string> = {
+  default: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#0038ff"/>
+          <stop offset="50%" stop-color="#4b1fff"/>
+          <stop offset="100%" stop-color="#7000ff"/>
+        </linearGradient>`,
+  midnight: `<radialGradient id="bgGrad" cx="30%" cy="20%" r="80%">
+          <stop offset="0%" stop-color="#1e295d"/>
+          <stop offset="60%" stop-color="#0a0e27"/>
+          <stop offset="100%" stop-color="#030511"/>
+        </radialGradient>`,
+  sunset: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#ff6b35"/>
+          <stop offset="45%" stop-color="#f72585"/>
+          <stop offset="100%" stop-color="#7209b7"/>
+        </linearGradient>`,
+  forest: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#0f766e"/>
+          <stop offset="60%" stop-color="#064e3b"/>
+          <stop offset="100%" stop-color="#022c22"/>
+        </linearGradient>`,
+  noir: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stop-color="#0f111a"/>
+          <stop offset="50%" stop-color="#161926"/>
+          <stop offset="100%" stop-color="#090a10"/>
+        </linearGradient>`,
+  paper: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#fef8ee"/>
+          <stop offset="60%" stop-color="#f5ede0"/>
+          <stop offset="100%" stop-color="#e9dfcf"/>
+        </linearGradient>`,
+  ocean: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#06b6d4"/>
+          <stop offset="45%" stop-color="#0284c7"/>
+          <stop offset="100%" stop-color="#1e3a8a"/>
+        </linearGradient>`,
+  violet: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#7c3aed"/>
+          <stop offset="50%" stop-color="#c026d3"/>
+          <stop offset="100%" stop-color="#f43f5e"/>
+        </linearGradient>`,
+};
+
+/** Tekstur titik halus yang dipakai semua template lama. */
+const LEGACY_PATTERN = `<pattern id="bgPattern" width="30" height="30" patternUnits="userSpaceOnUse">
+        <circle cx="7.5" cy="7.5" r="1.5" fill="rgba(255,255,255,0.10)"/>
+      </pattern>`;
+
 export interface CanvasExportResult {
   image_url: string;
   image_urls: string[];
@@ -176,6 +241,7 @@ export class CanvasService {
 
     const isDark = template.ink === 'dark';
     const isNeo = template.key === 'neobrutalism';
+    const isLegacy = LEGACY_TEMPLATE_KEYS.has(template.key);
 
     // ── Per-template tailored card styling ─────────────────────────────────
     let textColor = isDark ? '#1a1a2e' : '#ffffff';
@@ -226,10 +292,15 @@ export class CanvasService {
     } else if (template.key === 'bubblegum') {
       cardBg = 'rgba(255, 255, 255, 0.18)';
       cardBorder = 'rgba(255, 255, 255, 0.4)';
+    } else if (isLegacy) {
+      // Panel versi lama: putih transparan tipis di atas gradient.
+      cardBg = isDark ? 'rgba(255,255,255,0.88)' : 'rgba(255,255,255,0.08)';
+      cardBorder = isDark ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.18)';
     }
 
     const accentColor = template.accent || (isDark ? '#0038ff' : '#00b2ff');
     const accentInk = pickAccentInk(accentColor);
+    const avatarInk = isNeo ? '#ffe600' : pickAvatarInk(accentColor);
 
     // ── Patterns per template ──────────────────────────────────────────────
     const patterns: Record<string, string> = {
@@ -272,17 +343,23 @@ export class CanvasService {
       </pattern>`,
     };
 
-    const patternDef = patterns[template.key] || patterns.default;
+    const patternDef = isLegacy ? LEGACY_PATTERN : patterns[template.key] || patterns.default;
 
-    // Solid background color (or gradient fallback)
-    const isGradient = template.background.startsWith('linear-gradient') || template.background.startsWith('radial-gradient');
-    const bgDef = isGradient
+    // Background: gradient asli untuk template lama, gradient fallback untuk
+    // background bergaya CSS gradient lainnya, atau warna solid.
+    const legacyGradient = LEGACY_GRADIENTS[template.key];
+    const isGradient =
+      template.background.startsWith('linear-gradient') ||
+      template.background.startsWith('radial-gradient');
+    const bgDef = legacyGradient
+      ? legacyGradient
+      : isGradient
       ? `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
           <stop offset="0%" stop-color="#0038ff"/>
           <stop offset="100%" stop-color="#7000ff"/>
         </linearGradient>`
       : '';
-    const bgFill = isGradient ? 'url(#bgGrad)' : template.background;
+    const bgFill = legacyGradient || isGradient ? 'url(#bgGrad)' : template.background;
 
     const W = aspect.width;
     const H = aspect.height;
@@ -346,7 +423,20 @@ export class CanvasService {
     }
 
     if (!pages.length) pages = [[]];
-        const hasStrip = !!template.strip;
+    // Tandai fess yang terpotong (lebih dari MAX_PAGES) dengan ellipsis.
+    if (truncated && pages.length) {
+      const lastPage = pages[pages.length - 1];
+      const lastLine = lastPage[lastPage.length - 1];
+      if (lastLine) {
+        lastLine.push({
+          kind: 'text',
+          text: '\u2026',
+          width: measureFont ? measureFont.getAdvanceWidth('\u2026', fontSize) : fontSize * 0.55,
+        });
+      }
+    }
+
+    const hasStrip = !!template.strip;
     const stripSvg = hasStrip
       ? `<!-- Theme banner strip -->
   <rect x="${PAD + 58}" y="${PAD + 32}" width="${cardW - 116}" height="28" rx="${isNeo ? 4 : 6}"
@@ -419,7 +509,7 @@ export class CanvasService {
   <circle cx="${PAD + 74}" cy="${avatarCy}" r="38" fill="${accentColor}" opacity="0.25"/>
   <circle cx="${PAD + 74}" cy="${avatarCy}" r="32" fill="${accentColor}"/>
   <text x="${PAD + 74}" y="${avatarCy + 9}" font-family="Poppins, Arial, sans-serif" font-size="22"
-        font-weight="900" fill="${accentInk}" text-anchor="middle">${escapeXml(baseInitial)}</text>
+        font-weight="900" fill="${avatarInk}" text-anchor="middle">${escapeXml(baseInitial)}</text>
 
   <!-- Base name & handle -->
   <text x="${PAD + 126}" y="${headerNameY}" font-family="Poppins, Arial, sans-serif" font-size="26"
@@ -514,6 +604,23 @@ function pickAccentInk(color: string): string {
   const b = parseInt(match[1].slice(4, 6), 16);
   const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
   return luminance > 0.72 ? '#0038ff' : color;
+}
+
+/**
+ * Warna inisial avatar di atas lingkaran accent — dijamin kontras.
+ * Sebelumnya accent gelap/medium memakai warnanya sendiri sehingga inisial
+ * tidak terlihat (mis. hitam di atas hitam pada Neo-Brutalism).
+ */
+function pickAvatarInk(color: string): string {
+  const match = /^#([0-9a-f]{6})$/i.exec(String(color || '').trim());
+  if (!match) return '#ffffff';
+  const r = parseInt(match[1].slice(0, 2), 16);
+  const g = parseInt(match[1].slice(2, 4), 16);
+  const b = parseInt(match[1].slice(4, 6), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  if (luminance > 0.72) return '#0038ff'; // accent terang → biru brand (perilaku lama)
+  if (luminance < 0.45) return '#ffffff'; // accent gelap → putih
+  return '#0b1220'; // accent menengah → tinta gelap
 }
 
 /** Media user (gambar/video) yang layak ikut diposting ke Instagram. */

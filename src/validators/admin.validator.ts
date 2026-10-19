@@ -23,7 +23,7 @@ export const CanvasExportSchema = z.object({
       'ocean',
       'violet',
     ])
-    .default('cyberpunk'),
+    .default('default'),
   aspect: z.enum(['square', 'portrait', 'story']).default('portrait'),
 });
 

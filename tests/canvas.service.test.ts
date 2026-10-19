@@ -151,4 +151,35 @@ describe('CanvasService Unit Tests', () => {
       expect(png.length).toBeGreaterThan(100);
     }
   });
+
+  it('should render the 20 new templates full-bleed with scaled textures', () => {
+    const fullBleed = TEMPLATES.filter((t) => t.panel && t.pattern).map((t) => t.key);
+    expect(fullBleed.length).toBe(20);
+
+    for (const key of fullBleed) {
+      const svgs = CanvasService.buildSvgPages(
+        {
+          baseHandle: '@techfess',
+          content: 'Full bleed template',
+          template: key,
+          base: { name: 'Tech & Modern Base', initial: 'TM' },
+        } as any,
+        key
+      );
+      expect(svgs[0]).toContain('patternTransform="scale(5)"');
+      expect(svgs[0]).not.toContain('<!-- Card panel -->');
+    }
+
+    // Template lama tetap memakai panel kartu seperti sebelumnya.
+    const legacy = CanvasService.buildSvgPages(
+      {
+        baseHandle: '@techfess',
+        content: 'Legacy panel template',
+        template: 'midnight',
+        base: { name: 'Tech & Modern Base', initial: 'TM' },
+      } as any,
+      'midnight'
+    );
+    expect(legacy[0]).toContain('<!-- Card panel -->');
+  });
 });

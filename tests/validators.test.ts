@@ -16,6 +16,7 @@ import {
 } from '../src/validators/fess.validator.js';
 import { AddCommentSchema } from '../src/validators/comment.validator.js';
 import { UpdateBaseSettingsSchema } from '../src/validators/base.validator.js';
+import { TEMPLATES } from '../src/constants/templates.js';
 
 describe('Auth Validators', () => {
   it('should validate valid Login payload', () => {
@@ -126,6 +127,15 @@ describe('Fess Validators', () => {
     expect(CreateFessSchema.safeParse({ ...valid, template: 'neobrutalism' }).success).toBe(true);
     expect(CreateFessSchema.safeParse({ ...valid, template: 'rock' }).success).toBe(true);
     expect(CreateFessSchema.safeParse({ ...valid, template: 'terminal' }).success).toBe(true);
+
+    // Semua template (termasuk 20 template baru) harus lolos validator.
+    for (const t of TEMPLATES) {
+      expect(
+        CreateFessSchema.safeParse({ ...valid, template: t.key }).success,
+        `template ${t.key} seharusnya valid`
+      ).toBe(true);
+    }
+    expect(CreateFessSchema.safeParse({ ...valid, template: 'tidak-ada' }).success).toBe(false);
   });
 
   it('should reject empty fess content', () => {

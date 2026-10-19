@@ -1,29 +1,12 @@
 import { z } from 'zod';
+import { TEMPLATES } from '../constants/templates.js';
+
+/** Semua key template yang valid — otomatis ikut saat template baru ditambah. */
+const TEMPLATE_KEYS = TEMPLATES.map((t) => t.key) as [string, ...string[]];
 
 export const CanvasExportSchema = z.object({
   fess_id: z.string().min(1, 'ID fess wajib diisi'),
-  template: z
-    .enum([
-      'cyberpunk',
-      'neobrutalism',
-      'rock',
-      'terminal',
-      'bubblegum',
-      'swiss',
-      'acid',
-      'monochrome',
-      'indie',
-      'blueprint',
-      'default',
-      'midnight',
-      'sunset',
-      'forest',
-      'noir',
-      'paper',
-      'ocean',
-      'violet',
-    ])
-    .default('default'),
+  template: z.enum(TEMPLATE_KEYS).default('default'),
   aspect: z.enum(['square', 'portrait', 'story']).default('portrait'),
 });
 

@@ -1,4 +1,8 @@
 import { z } from 'zod';
+import { TEMPLATES } from '../constants/templates.js';
+
+/** Semua key template yang valid — otomatis ikut saat template baru ditambah. */
+const TEMPLATE_KEYS = TEMPLATES.map((t) => t.key) as [string, ...string[]];
 
 export const MediaItemSchema = z.object({
   type: z.enum(['image', 'video']),
@@ -70,29 +74,7 @@ export const CreateFessSchema = z.object({
   topic: z.string().optional().nullable(),
   scheduled_at: z.string().datetime().optional().nullable(),
   song: SongAttachmentSchema.optional().nullable(),
-  template: z
-    .enum([
-      'cyberpunk',
-      'neobrutalism',
-      'rock',
-      'terminal',
-      'bubblegum',
-      'swiss',
-      'acid',
-      'monochrome',
-      'indie',
-      'blueprint',
-      'default',
-      'midnight',
-      'sunset',
-      'forest',
-      'noir',
-      'paper',
-      'ocean',
-      'violet',
-    ])
-    .optional()
-    .default('default'),
+  template: z.enum(TEMPLATE_KEYS).optional().default('default'),
   quoted_fess: QuotedFessSchema.optional().nullable(),
   tag: z.enum(['Cerita', 'Tanya']).optional().nullable(),
 });

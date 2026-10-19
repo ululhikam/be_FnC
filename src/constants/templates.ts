@@ -633,11 +633,13 @@ export const TEMPLATES: TemplateConfig[] = [
   {
     key: 'graffiti',
     label: 'Graffiti',
-    description: 'Street art — beton terang, panel hitam, dan drip cat oranye yang berani.',
+    description: 'Street art — beton terang, drip cat oranye, dan tipografi poster berani.',
     aspect: 'portrait',
-    ink: 'light',
+    ink: 'dark',
     background: '#d4d4d8',
     accent: '#ff3d00',
+    textColor: '#18181b',
+    subtextColor: 'rgba(24,24,27,0.68)',
     typography: {
       family: 'display',
       weight: 400,
@@ -659,7 +661,7 @@ export const TEMPLATES: TemplateConfig[] = [
   {
     key: 'postcard',
     label: 'Postcard',
-    description: 'Kartu pos — langit biru, bingkai putus-putus, dan ombak yang santai.',
+    description: 'Kartu pos — langit biru, ombak santai, dan nuansa surat perjalanan.',
     aspect: 'portrait',
     ink: 'dark',
     background: '#a5d8ff',
@@ -725,9 +727,11 @@ export const TEMPLATES: TemplateConfig[] = [
     label: 'Sunrise',
     description: 'Sunrise hangat — oranye coral, lingkaran matahari, dan headline kapital.',
     aspect: 'square',
-    ink: 'light',
+    ink: 'dark',
     background: '#f97316',
     accent: '#fff7ed',
+    textColor: '#431407',
+    subtextColor: 'rgba(67,20,7,0.70)',
     typography: {
       family: 'display',
       weight: 400,
@@ -789,7 +793,7 @@ export const TEMPLATES: TemplateConfig[] = [
   {
     key: 'comiczine',
     label: 'Comic Zine',
-    description: 'Zine komik — kuning cerah, halftone, border tebal, dan headline ekspresif.',
+    description: 'Zine komik — kuning cerah, halftone, dan headline ekspresif.',
     aspect: 'square',
     ink: 'dark',
     background: '#fde68a',

@@ -263,6 +263,13 @@ export class CanvasService {
     const isLegacy = LEGACY_TEMPLATE_KEYS.has(template.key);
     const typo = resolveTypography(template);
 
+    // 20 template baru punya `panel` + `pattern` sendiri. Thumbnail di modal
+    // menampilkan background/tekstur penuh, jadi kartu hasilnya dibuat
+    // full-bleed (tanpa panel penutup) dan tekstur diperbesar agar bobot
+    // visualnya sama dengan thumbnail.
+    const isFullBleed = Boolean(template.panel && template.pattern);
+    const FULL_BLEED_PATTERN_SCALE = 5;
+
     // ── Per-template tailored card styling ─────────────────────────────────
     let textColor = template.textColor || (isDark ? '#1a1a2e' : '#ffffff');
     let subtextColor =
@@ -381,6 +388,12 @@ export class CanvasService {
     const patternDef = isLegacy
       ? LEGACY_PATTERNS[template.key] || LEGACY_PATTERNS.default
       : template.pattern || patterns[template.key] || patterns.default;
+    const scaledPatternDef = isFullBleed
+      ? patternDef.replace(
+          '<pattern ',
+          `<pattern patternTransform="scale(${FULL_BLEED_PATTERN_SCALE})" `
+        )
+      : patternDef;
 
     // Semua template memakai warna solid — tanpa gradient agar teks selalu
     // terbaca dan hasil render identik dengan pratinjau.
@@ -517,7 +530,7 @@ export class CanvasService {
 
       return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
   <defs>
-    ${patternDef}
+    ${scaledPatternDef}
     <filter id="cardShadow" x="-10%" y="-10%" width="120%" height="120%">
       ${shadowDef}
     </filter>
@@ -529,9 +542,9 @@ export class CanvasService {
   <!-- Geometric texture overlay -->
   <rect width="${W}" height="${H}" fill="url(#bgPattern)"/>
 
-  <!-- Card panel -->
+  ${isFullBleed ? '' : `<!-- Card panel -->
   <rect x="${PAD}" y="${PAD}" width="${cardW}" height="${cardH}" rx="${cardRadius}"
-        fill="${cardBg}" stroke="${cardBorder}" stroke-width="${cardBorderWidth}"${panelDashAttr}${cardFilter}/>
+        fill="${cardBg}" stroke="${cardBorder}" stroke-width="${cardBorderWidth}"${panelDashAttr}${cardFilter}/>`}
 
   <!-- Avatar -->
   <circle cx="${PAD + 74}" cy="${avatarCy}" r="38" fill="${accentColor}" opacity="0.25"/>

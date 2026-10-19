@@ -1,4 +1,6 @@
-﻿import fs from 'fs';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import opentype from 'opentype.js';
 import { Resvg } from '@resvg/resvg-js';
 import sharp from 'sharp';
@@ -8,6 +10,8 @@ import { prisma } from '../config/prisma.js';
 import { InstagramService } from './instagram.service.js';
 import { getFontFiles, getPoppinsFontFile } from '../config/fonts.js';
 import { getEmojiSvgMarkup } from '../config/emoji.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export interface CanvasExportResult {
   image_url: string;
@@ -230,10 +234,44 @@ export class CanvasService {
     const cardH = H - PAD * 2;
     const isSquare = aspect.key === 'square';
 
-    const contentX = PAD + 58;
-    const contentWidth = cardW - 116;
-    const footerTop = PAD + cardH - 72;
-    const restContentY = PAD + 195;
+    // Check if template has an image background
+    let templateImgBase64 = '';
+    if (template.bgImage) {
+      const candidates = [
+        path.resolve(process.cwd(), 'public' + template.bgImage),
+        path.resolve(process.cwd(), 'backend/public' + template.bgImage),
+        path.resolve(__dirname, '../../public' + template.bgImage),
+        path.resolve(__dirname, '../public' + template.bgImage),
+      ];
+      for (const p of candidates) {
+        try {
+          if (fs.existsSync(p)) {
+            const mime = p.endsWith('.svg') ? 'image/svg+xml' : 'image/jpeg';
+            templateImgBase64 = `data:${mime};base64,` + fs.readFileSync(p).toString('base64');
+            break;
+          }
+        } catch {
+          /* continue */
+        }
+      }
+    }
+
+    const hasThemedBg = !!templateImgBase64;
+    const parsePct = (val?: string, base = 1000) => {
+      if (!val) return 0;
+      if (val.endsWith('%')) return Math.round((parseFloat(val) / 100) * base);
+      return parseInt(val, 10) || 0;
+    };
+
+    const padTop = hasThemedBg && template.safeArea ? parsePct(template.safeArea.top, H) : PAD;
+    const padBottom = hasThemedBg && template.safeArea ? parsePct(template.safeArea.bottom, H) : PAD;
+    const padLeft = hasThemedBg && template.safeArea ? parsePct(template.safeArea.left, W) : PAD;
+    const padRight = hasThemedBg && template.safeArea ? parsePct(template.safeArea.right, W) : PAD;
+
+    const contentX = hasThemedBg ? padLeft : PAD + 58;
+    const contentWidth = hasThemedBg ? W - padLeft - padRight : cardW - 116;
+    const footerTop = hasThemedBg ? H - padBottom : PAD + cardH - 72;
+    const restContentY = hasThemedBg ? padTop + 50 : PAD + 195;
 
     const measureFont = getMeasureFont(600);
 
@@ -255,7 +293,11 @@ export class CanvasService {
     const quoteTopLimit = footerTop - 32 - quoteHeight;
 
     // ── Pilih ukuran font terbesar yang muat ≤ MAX_PAGES halaman ───────────
-    const tiers = isSquare ? [38, 33, 28, 24] : [42, 36, 30, 26];
+    const tiers = isSquare
+      ? [38, 33, 28, 24]
+      : aspect.key === 'story'
+      ? [44, 38, 32, 28]
+      : [42, 36, 30, 26];
     let fontSize = tiers[0];
     let lineHeightPx = Math.round(fontSize * 1.42);
     let pages: TextPage[] = [];
@@ -318,6 +360,29 @@ export class CanvasService {
 `
           : '';
       const footerRight = totalPages > 1 ? `${idx + 1}/${totalPages}` : 'fessncurious.vercel.app';
+
+      if (hasThemedBg) {
+        const watermarkText = escapeXml((template.watermarkLabel || '') + fess.baseHandle);
+        const topWatermark =
+          template.watermarkPos === 'top'
+            ? `<text x="${padLeft}" y="${padTop + 24}" font-family="Poppins, Arial, sans-serif" font-size="24" font-weight="800" fill="${textColor}" opacity="0.85">${watermarkText}</text>
+  <line x1="${padLeft}" y1="${padTop + 36}" x2="${W - padRight}" y2="${padTop + 36}" stroke="${textColor}" stroke-width="1.5" stroke-dasharray="6,4" opacity="0.3"/>`
+            : '';
+        const bottomWatermark =
+          template.watermarkPos === 'bottom'
+            ? `<text x="${padLeft + (template.key === 'spotify' ? 40 : 0)}" y="${H - padBottom + 10}" font-family="Poppins, Arial, sans-serif" font-size="22" font-weight="700" fill="${textColor}" opacity="0.8">${watermarkText}</text>
+  <text x="${W - padRight}" y="${H - padBottom + 10}" font-family="Poppins, Arial, sans-serif" font-size="20" font-weight="600" fill="${textColor}" opacity="0.6" text-anchor="end">${escapeXml(footerRight)}</text>`
+            : '';
+
+        return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+  <image href="${templateImgBase64}" xlink:href="${templateImgBase64}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="xMidYMid slice" />
+
+  ${topWatermark}
+  ${pageQuoteSvg}
+  ${textSvg}
+  ${bottomWatermark}
+</svg>`;
+      }
 
       return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
   <defs>

@@ -1,0 +1,133 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1350" viewBox="0 0 1080 1350">
+  <defs>
+    <!-- Locker Grey Steel Gradient -->
+    <linearGradient id="lockerSteel" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#474b54"/>
+      <stop offset="30%" stop-color="#555a65"/>
+      <stop offset="70%" stop-color="#4d525d"/>
+      <stop offset="100%" stop-color="#3d4047"/>
+    </linearGradient>
+
+    <!-- Red Poster Shadow -->
+    <filter id="posterShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="16" stdDeviation="22" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+
+    <!-- Tape Strip Shadow -->
+    <filter id="tapeShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="1" dy="3" stdDeviation="4" flood-color="#000000" flood-opacity="0.18"/>
+    </filter>
+
+    <!-- Hanging Phone Shadow -->
+    <filter id="phoneShadow" x="-20%" y="-10%" width="140%" height="120%">
+      <feDropShadow dx="-6" dy="12" stdDeviation="16" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <!-- Locker Door Background -->
+  <rect width="1080" height="1350" fill="url(#lockerSteel)"/>
+
+  <!-- Locker Door Seam Lines & Frame -->
+  <rect x="30" y="30" width="1020" height="1290" fill="none" stroke="#2b2d32" stroke-width="6"/>
+  <line x1="30" y1="210" x2="1050" y2="210" stroke="#33363c" stroke-width="3"/>
+  <line x1="30" y1="1140" x2="1050" y2="1140" stroke="#33363c" stroke-width="3"/>
+
+  <!-- Locker Number Plate "112" Top Center -->
+  <g transform="translate(500, 50)">
+    <rect x="0" y="0" width="80" height="32" rx="4" fill="#a89260"/>
+    <circle cx="8" cy="16" r="3" fill="#2b2d32"/>
+    <circle cx="72" cy="16" r="3" fill="#2b2d32"/>
+    <text x="40" y="22" font-family="'Courier Prime', monospace" font-size="16" font-weight="900" fill="#18181b" text-anchor="middle" letter-spacing="2">112</text>
+  </g>
+
+  <!-- Locker Ventilation Slots (Louvers) Top -->
+  <g transform="translate(420, 100)" fill="#27292d">
+    <rect x="0" y="0" width="240" height="12" rx="6"/>
+    <rect x="0" y="22" width="240" height="12" rx="6"/>
+    <rect x="0" y="44" width="240" height="12" rx="6"/>
+    <rect x="0" y="66" width="240" height="12" rx="6"/>
+  </g>
+
+  <!-- Locker Ventilation Slots (Louvers) Bottom -->
+  <g transform="translate(420, 1180)" fill="#27292d">
+    <rect x="0" y="0" width="240" height="12" rx="6"/>
+    <rect x="0" y="22" width="240" height="12" rx="6"/>
+    <rect x="0" y="44" width="240" height="12" rx="6"/>
+  </g>
+
+  <!-- Brass Masterlock on the right door latch -->
+  <g transform="translate(970, 780)">
+    <!-- Shackle -->
+    <path d="M 12,20 L 12,0 C 12,-15 36,-15 36,0 L 36,20" fill="none" stroke="#94a3b8" stroke-width="6"/>
+    <!-- Padlock Body -->
+    <rect x="0" y="16" width="48" height="42" rx="6" fill="#c29b38"/>
+    <!-- Dial -->
+    <circle cx="24" cy="37" r="12" fill="#18181b"/>
+    <circle cx="24" cy="37" r="8" fill="#e2e8f0"/>
+  </g>
+
+  <!-- Central Vibrant Red Paper Poster -->
+  <g filter="url(#posterShadow)">
+    <rect x="250" y="220" width="710" height="910" rx="4" fill="#d90429"/>
+    <!-- Fine paper texture lines / noise overlay -->
+    <rect x="250" y="220" width="710" height="910" rx="4" fill="#ef233c" opacity="0.4"/>
+  </g>
+
+  <!-- Masking Tape on Corners -->
+  <!-- Top-Left Tape -->
+  <g transform="translate(210, 200) rotate(-35)" filter="url(#tapeShadow)">
+    <rect x="0" y="0" width="130" height="42" fill="rgba(250,248,240,0.86)"/>
+  </g>
+  <!-- Top-Right Tape -->
+  <g transform="translate(900, 180) rotate(35)" filter="url(#tapeShadow)">
+    <rect x="0" y="0" width="130" height="42" fill="rgba(250,248,240,0.86)"/>
+  </g>
+  <!-- Bottom-Left Tape -->
+  <g transform="translate(205, 1100) rotate(30)" filter="url(#tapeShadow)">
+    <rect x="0" y="0" width="130" height="42" fill="rgba(250,248,240,0.86)"/>
+  </g>
+  <!-- Bottom-Right Tape -->
+  <g transform="translate(895, 1110) rotate(-32)" filter="url(#tapeShadow)">
+    <rect x="0" y="0" width="130" height="42" fill="rgba(250,248,240,0.86)"/>
+  </g>
+
+  <!-- Exclamation Mark Alert Stickers Bottom-Right -->
+  <g transform="translate(860, 970)">
+    <!-- Yellow comic burst -->
+    <polygon points="50,15 62,32 82,28 78,48 95,60 78,72 82,92 62,88 50,105 38,88 18,92 22,72 5,60 22,48 18,28 38,32" fill="#ffd166" stroke="#18181b" stroke-width="4"/>
+    <text x="50" y="72" font-family="'Impact', sans-serif" font-size="38" font-weight="900" fill="#18181b" text-anchor="middle">!</text>
+
+    <!-- Red diagonal exclamation tag -->
+    <g transform="translate(-40, 20) rotate(-15)">
+      <polygon points="12,0 36,0 28,65 20,65" fill="#780000" stroke="#18181b" stroke-width="3"/>
+      <circle cx="24" cy="80" r="7" fill="#780000" stroke="#18181b" stroke-width="3"/>
+    </g>
+  </g>
+
+  <!-- Hanging Vintage Telephone Receiver on Left -->
+  <g filter="url(#phoneShadow)">
+    <!-- Spiral Cord -->
+    <path d="M 180,0 
+             Q 160,30 180,60 Q 200,90 180,120 
+             Q 160,150 180,180 Q 200,210 180,240 
+             Q 160,270 180,300 Q 200,330 180,360 
+             Q 160,390 180,420 L 180,450" 
+          fill="none" stroke="#111215" stroke-width="8" stroke-linecap="round"/>
+
+    <!-- Handset Handle & Ear/Mouth Pieces -->
+    <g transform="translate(130, 440) rotate(-8)">
+      <!-- Top Earpiece -->
+      <ellipse cx="50" cy="50" rx="42" ry="32" fill="#18181b"/>
+      <ellipse cx="50" cy="50" rx="30" ry="22" fill="#27272a"/>
+
+      <!-- Center Bar Handle -->
+      <path d="M 38,65 Q 18,170 38,275 L 62,275 Q 42,170 62,65 Z" fill="#18181b"/>
+
+      <!-- Bottom Mouthpiece -->
+      <ellipse cx="50" cy="290" rx="42" ry="32" fill="#18181b"/>
+      <ellipse cx="50" cy="290" rx="30" ry="22" fill="#27272a"/>
+      <!-- Soft reflection shine -->
+      <path d="M 32,100 Q 24,170 32,240" fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="4" stroke-linecap="round"/>
+    </g>
+  </g>
+</svg>

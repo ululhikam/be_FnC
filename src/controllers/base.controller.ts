@@ -51,6 +51,26 @@ export class BaseController {
   static async getBaseFesses(req: Request, res: Response, next: NextFunction) {
     try {
       const handle = String(req.params.handle);
+
+      // Filter "fess dilaporkan" hanya untuk admin base / super admin —
+      // jangan sampai endpoint publik membuka daftar laporan pending.
+      if (req.query.reported === 'true') {
+        const user = req.user;
+        const normalized = handle.replace(/^@/, '').toLowerCase();
+        const isSuperAdmin = user?.role === 'Super Admin';
+        const isBaseAdmin = Boolean(
+          user?.managedBases?.some(
+            (managed) => String(managed).replace(/^@/, '').toLowerCase() === normalized
+          )
+        );
+        if (!user || (!isSuperAdmin && !isBaseAdmin)) {
+          return res.status(403).json({
+            message: 'Hanya admin base yang dapat melihat fess yang dilaporkan',
+            code: 'FORBIDDEN',
+          });
+        }
+      }
+
       const result = await FessService.getFesses(
         {
           ...(req.query as any),

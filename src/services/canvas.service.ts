@@ -4,11 +4,21 @@ import { fileURLToPath } from 'url';
 import opentype from 'opentype.js';
 import { Resvg } from '@resvg/resvg-js';
 import sharp from 'sharp';
-import { ASPECTS, getTemplateByKey } from '../constants/templates.js';
+import {
+  ASPECTS,
+  getTemplateByKey,
+  type TemplateConfig,
+  type TemplateTypography,
+} from '../constants/templates.js';
 import { StorageService } from './storage.service.js';
 import { prisma } from '../config/prisma.js';
 import { InstagramService } from './instagram.service.js';
-import { getFontFiles, getPoppinsFontFile } from '../config/fonts.js';
+import {
+  getFontFiles,
+  getFontFileFor,
+  getFontCssStack,
+  type FontFamilyKey,
+} from '../config/fonts.js';
 import { getEmojiSvgMarkup } from '../config/emoji.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -100,6 +110,27 @@ interface TextSegment {
 
 type TextLine = TextSegment[];
 type TextPage = TextLine[];
+
+/** Tipografi default — dipakai template lama yang belum punya konfigurasi. */
+const DEFAULT_TYPOGRAPHY: TemplateTypography = {
+  family: 'sans',
+  weight: 600,
+  uppercase: false,
+  align: 'left',
+  letterSpacing: 0,
+  lineHeight: 1.42,
+  scale: 1,
+};
+
+/** Gabungkan konfigurasi tipografi template dengan default yang aman. */
+function resolveTypography(template: TemplateConfig): TemplateTypography {
+  return { ...DEFAULT_TYPOGRAPHY, ...(template.typography || {}) };
+}
+
+const SOFT_SHADOW =
+  '<feDropShadow dx="0" dy="18" stdDeviation="28" flood-color="#000000" flood-opacity="0.25"/>';
+const HARD_SHADOW =
+  '<feDropShadow dx="12" dy="12" stdDeviation="0" flood-color="#000000" flood-opacity="1"/>';
 
 const MAX_PAGES = 10; // batas carousel Instagram
 const MAX_QUOTE_LINES = 4;
@@ -230,24 +261,35 @@ export class CanvasService {
     const isDark = template.ink === 'dark';
     const isNeo = template.key === 'neobrutalism';
     const isLegacy = LEGACY_TEMPLATE_KEYS.has(template.key);
+    const typo = resolveTypography(template);
 
     // ── Per-template tailored card styling ─────────────────────────────────
-    let textColor = isDark ? '#1a1a2e' : '#ffffff';
-    let subtextColor = isDark ? 'rgba(26,26,46,0.7)' : 'rgba(255,255,255,0.75)';
+    let textColor = template.textColor || (isDark ? '#1a1a2e' : '#ffffff');
+    let subtextColor =
+      template.subtextColor || (isDark ? 'rgba(26,26,46,0.7)' : 'rgba(255,255,255,0.75)');
     let cardBg = isDark ? 'rgba(255,255,255,0.92)' : 'rgba(255,255,255,0.08)';
     let cardBorder = isDark ? 'rgba(0,0,0,0.14)' : 'rgba(255,255,255,0.18)';
     let cardBorderWidth = 2;
     let cardRadius = 36;
-    let shadowDef = `<feDropShadow dx="0" dy="18" stdDeviation="28" flood-color="#000000" flood-opacity="0.25"/>`;
+    let panelDash = '';
+    let cardShadow: 'soft' | 'hard' | 'none' = 'soft';
 
-    if (template.key === 'neobrutalism') {
+    if (template.panel) {
+      // Template baru: seluruh gaya panel ditentukan dari config.
+      cardBg = template.panel.bg;
+      cardBorder = template.panel.border;
+      cardBorderWidth = template.panel.width ?? 2;
+      cardRadius = template.panel.radius ?? 36;
+      panelDash = template.panel.dash || '';
+      cardShadow = template.panel.shadow || 'soft';
+    } else if (template.key === 'neobrutalism') {
       textColor = '#000000';
       subtextColor = 'rgba(0,0,0,0.75)';
       cardBg = '#ffffff';
       cardBorder = '#000000';
       cardBorderWidth = 4;
       cardRadius = 24;
-      shadowDef = `<feDropShadow dx="12" dy="12" stdDeviation="0" flood-color="#000000" flood-opacity="1"/>`;
+      cardShadow = 'hard';
     } else if (template.key === 'cyberpunk') {
       cardBg = 'rgba(13, 20, 32, 0.94)';
       cardBorder = 'rgba(0, 255, 102, 0.4)';
@@ -281,10 +323,14 @@ export class CanvasService {
       cardBg = 'rgba(255, 255, 255, 0.18)';
       cardBorder = 'rgba(255, 255, 255, 0.4)';
     } else if (isLegacy) {
-      // Panel versi lama: putih transparan tipis di atas gradient.
+      // Panel versi lama: putih transparan tipis di atas warna solid.
       cardBg = isDark ? 'rgba(255,255,255,0.88)' : 'rgba(255,255,255,0.08)';
       cardBorder = isDark ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.18)';
     }
+
+    const shadowDef = cardShadow === 'hard' ? HARD_SHADOW : SOFT_SHADOW;
+    const cardFilter = cardShadow === 'none' ? '' : ' filter="url(#cardShadow)"';
+    const panelDashAttr = panelDash ? ` stroke-dasharray="${panelDash}"` : '';
 
     const accentColor = template.accent || (isDark ? '#0038ff' : '#00b2ff');
     const accentInk = pickAccentInk(accentColor);
@@ -334,7 +380,7 @@ export class CanvasService {
 
     const patternDef = isLegacy
       ? LEGACY_PATTERNS[template.key] || LEGACY_PATTERNS.default
-      : patterns[template.key] || patterns.default;
+      : template.pattern || patterns[template.key] || patterns.default;
 
     // Semua template memakai warna solid — tanpa gradient agar teks selalu
     // terbaca dan hasil render identik dengan pratinjau.
@@ -352,7 +398,10 @@ export class CanvasService {
     const footerTop = PAD + cardH - 72;
     const restContentY = PAD + 195;
 
-    const measureFont = getMeasureFont(600);
+    const measureFont = getMeasureFont(typo.family, typo.weight);
+    const bodyText = typo.uppercase
+      ? String(fess.content || '').toUpperCase()
+      : String(fess.content || '');
 
     // ── Kotak kutipan (halaman pertama) — mengikuti kartu frontend: kotak
     //    kutipan diletakkan DI BAWAH isi fess, bukan menumpuk di atasnya. ──
@@ -375,20 +424,23 @@ export class CanvasService {
     const quoteTopLimit = footerTop - 32 - quoteHeight;
 
     // ── Pilih ukuran font terbesar yang muat ≤ MAX_PAGES halaman ───────────
-    const tiers = isSquare
+    const baseTiers = isSquare
       ? [38, 33, 28, 24]
       : aspect.key === 'story'
       ? [44, 38, 32, 28]
       : [42, 36, 30, 26];
+    const tiers = baseTiers.map((size) => Math.round(size * typo.scale));
     let fontSize = tiers[0];
-    let lineHeightPx = Math.round(fontSize * 1.42);
+    let letterSpacingPx = typo.letterSpacing * fontSize;
+    let lineHeightPx = Math.round(fontSize * typo.lineHeight);
     let pages: TextPage[] = [];
     let truncated = false;
 
     for (const tier of tiers) {
       fontSize = tier;
-      lineHeightPx = Math.round(fontSize * 1.42);
-      const lines = layoutText(fess.content || '', contentWidth, fontSize, measureFont);
+      letterSpacingPx = typo.letterSpacing * fontSize;
+      lineHeightPx = Math.round(fontSize * typo.lineHeight);
+      const lines = layoutText(bodyText, contentWidth, fontSize, measureFont, letterSpacingPx);
       const restCap = Math.max(3, Math.floor((footerTop - 40 - restContentY) / lineHeightPx));
       // Halaman 1 dengan kutipan: kapasitas baris dikurangi agar baris terakhir
       // (beserta descender) tetap berada di atas area kutipan.
@@ -413,7 +465,7 @@ export class CanvasService {
         lastLine.push({
           kind: 'text',
           text: '\u2026',
-          width: measureFont ? measureFont.getAdvanceWidth('\u2026', fontSize) : fontSize * 0.55,
+          width: measureTextWidth('\u2026', measureFont, fontSize, letterSpacingPx),
         });
       }
     }
@@ -427,7 +479,21 @@ export class CanvasService {
 
     return pages.map((page, idx) => {
       const contentY = restContentY;
-      const textSvg = renderTextLines(page, contentX, contentY, fontSize, lineHeightPx, textColor, 600);
+      const textSvg = renderTextLines(
+        page,
+        contentX,
+        contentY,
+        fontSize,
+        lineHeightPx,
+        textColor,
+        {
+          family: typo.family,
+          weight: typo.weight,
+          letterSpacingPx,
+          align: typo.align,
+        },
+        contentWidth
+      );
       // Kutipan diletakkan tepat di bawah baris terakhir halaman pertama, dan
       // di-clamp supaya kotaknya tidak pernah melewati batas bawah kartu.
       const pageQuoteSvg =
@@ -441,7 +507,7 @@ export class CanvasService {
             ) + '\n\n  '
           : '';
       const decoQuote =
-        idx === 0 && !quoteBlock
+        idx === 0 && !quoteBlock && typo.align === 'left'
           ? `<!-- Opening quote -->
   <text x="${PAD + 52}" y="${PAD + 172}" font-family="Poppins, Noto Sans, serif" font-size="72"
         font-weight="bold" fill="${accentInk}" opacity="0.28">&#8220;</text>
@@ -465,8 +531,7 @@ export class CanvasService {
 
   <!-- Card panel -->
   <rect x="${PAD}" y="${PAD}" width="${cardW}" height="${cardH}" rx="${cardRadius}"
-        fill="${cardBg}" stroke="${cardBorder}" stroke-width="${cardBorderWidth}"
-        filter="url(#cardShadow)"/>
+        fill="${cardBg}" stroke="${cardBorder}" stroke-width="${cardBorderWidth}"${panelDashAttr}${cardFilter}/>
 
   <!-- Avatar -->
   <circle cx="${PAD + 74}" cy="${avatarCy}" r="38" fill="${accentColor}" opacity="0.25"/>
@@ -598,11 +663,35 @@ function pickPillStyle(
   background: string
 ): { fill: string; opacity: number; text: string } {
   const accentLum = colorLuminance(accent);
+  const bgLum = colorLuminance(background);
+
+  // Aksen terang → pill solid dengan teks gelap/warna background gelap.
   if (accentLum !== null && accentLum > 0.72) {
-    const bgLum = colorLuminance(background);
     const text = bgLum !== null && bgLum < 0.55 ? background : '#0b0d14';
     return { fill: accent, opacity: 0.95, text };
   }
+
+  // Aksen gelap → pill solid + teks putih/hitam sesuai luminance aksen.
+  // Sebelumnya teks aksen di atas fill transparan senada bisa tenggelam
+  // (mis. merah di atas merah tua pada template Poster).
+  if (accentLum !== null && accentLum < 0.5) {
+    return {
+      fill: accent,
+      opacity: 0.96,
+      text: accentLum >= 0.48 ? '#0b0d14' : '#ffffff',
+    };
+  }
+
+  // Aksen medium di atas kartu terang → pill solid agar kontras aman.
+  if (bgLum !== null && bgLum > 0.55) {
+    return {
+      fill: accent,
+      opacity: 0.96,
+      text: accentLum !== null && accentLum >= 0.48 ? '#0b0d14' : '#ffffff',
+    };
+  }
+
+  // Aksen medium di atas kartu gelap → gaya transparan tetap terbaca.
   return { fill: accent, opacity: 0.22, text: accent };
 }
 
@@ -643,21 +732,25 @@ function collectMediaItems(media: unknown): { type: 'image' | 'video'; url: stri
 
 // ── Pengukuran teks (opentype.js) ──────────────────────────────────────────
 
-const opentypeCache = new Map<number, opentype.Font | null>();
+const opentypeCache = new Map<string, opentype.Font | null>();
 
-/** Muat font Poppins untuk pengukuran lebar teks (cache per weight). */
-function getMeasureFont(weight: number): opentype.Font | null {
-  if (opentypeCache.has(weight)) return opentypeCache.get(weight)!;
-  const file = getPoppinsFontFile(weight);
+/** Muat file font sesuai keluarga + weight untuk pengukuran lebar teks. */
+function getMeasureFont(
+  family: FontFamilyKey = 'sans',
+  weight = 400
+): opentype.Font | null {
+  const cacheKey = `${family}:${weight}`;
+  if (opentypeCache.has(cacheKey)) return opentypeCache.get(cacheKey)!;
+  const file = getFontFileFor(family, weight);
   let font: opentype.Font | null = null;
   if (file) {
     try {
       font = opentype.parse(fs.readFileSync(file) as unknown as ArrayBuffer);
     } catch (err: any) {
-      console.warn('[Canvas] Gagal memuat font pengukuran Poppins:', err?.message || err);
+      console.warn(`[Canvas] Gagal memuat font pengukuran ${family}:`, err?.message || err);
     }
   }
-  opentypeCache.set(weight, font);
+  opentypeCache.set(cacheKey, font);
   return font;
 }
 
@@ -666,8 +759,24 @@ function approxWidth(text: string, fontSize: number): number {
   return text.length * fontSize * 0.55;
 }
 
+/** Lebar teks termasuk letter-spacing (dalam px pada ukuran font saat ini). */
+function measureTextWidth(
+  text: string,
+  font: opentype.Font | null,
+  fontSize: number,
+  letterSpacingPx = 0
+): number {
+  const base = font ? font.getAdvanceWidth(text, fontSize) : approxWidth(text, fontSize);
+  return base + Math.max(0, text.length) * letterSpacingPx;
+}
+
 /** Pecah satu paragraf menjadi segmen teks/emoji dengan lebar terukur. */
-function segmentsFor(text: string, fontSize: number, font: opentype.Font | null): TextSegment[] {
+function segmentsFor(
+  text: string,
+  fontSize: number,
+  font: opentype.Font | null,
+  letterSpacingPx = 0
+): TextSegment[] {
   const segments: TextSegment[] = [];
   const parts = text.split(EMOJI_SEQ_RE);
   parts.forEach((part, i) => {
@@ -690,7 +799,7 @@ function segmentsFor(text: string, fontSize: number, font: opentype.Font | null)
         segments.push({
           kind: 'text',
           text: token,
-          width: font ? font.getAdvanceWidth(token, fontSize) : approxWidth(token, fontSize),
+          width: measureTextWidth(token, font, fontSize, letterSpacingPx),
         });
       }
     }
@@ -703,7 +812,8 @@ function layoutText(
   rawText: string,
   maxWidth: number,
   fontSize: number,
-  font: opentype.Font | null
+  font: opentype.Font | null,
+  letterSpacingPx = 0
 ): TextLine[] {
   const lines: TextLine[] = [];
 
@@ -722,7 +832,7 @@ function layoutText(
       lineWidth = 0;
     };
 
-    for (const rawSegment of segmentsFor(paragraph, fontSize, font)) {
+    for (const rawSegment of segmentsFor(paragraph, fontSize, font, letterSpacingPx)) {
       let segment = rawSegment;
 
       // Buang spasi di awal baris baru.
@@ -732,7 +842,7 @@ function layoutText(
         segment = {
           ...segment,
           text: trimmed,
-          width: font ? font.getAdvanceWidth(trimmed, fontSize) : approxWidth(trimmed, fontSize),
+          width: measureTextWidth(trimmed, font, fontSize, letterSpacingPx),
         };
       }
 
@@ -744,7 +854,7 @@ function layoutText(
           segment = {
             ...segment,
             text: trimmed,
-            width: font ? font.getAdvanceWidth(trimmed, fontSize) : approxWidth(trimmed, fontSize),
+            width: measureTextWidth(trimmed, font, fontSize, letterSpacingPx),
           };
         }
       }
@@ -776,6 +886,14 @@ function paginate(
   return { pages, truncated: idx < lines.length };
 }
 
+/** Gaya render satu blok teks (isi fess atau kutipan). */
+interface TextRenderStyle {
+  family: FontFamilyKey;
+  weight: number;
+  letterSpacingPx: number;
+  align: 'left' | 'center';
+}
+
 /** Render baris teks + emoji inline menjadi elemen SVG absolut. */
 function renderTextLines(
   lines: TextLine[],
@@ -784,18 +902,28 @@ function renderTextLines(
   fontSize: number,
   lineHeightPx: number,
   color: string,
-  weight: number
+  style: TextRenderStyle,
+  maxWidth: number
 ): string {
   const out: string[] = [];
   const emojiSize = fontSize * 1.12;
+  const fontStack = getFontCssStack(style.family);
+  const letterSpacingAttr =
+    style.letterSpacingPx > 0
+      ? ` letter-spacing="${style.letterSpacingPx.toFixed(2)}"`
+      : '';
 
   lines.forEach((line, li) => {
     const baseline = Math.round(y + li * lineHeightPx);
-    let cursor = x;
+    const lineWidth = line.reduce((sum, segment) => sum + segment.width, 0);
+    let cursor =
+      style.align === 'center'
+        ? x + Math.max(0, (maxWidth - lineWidth) / 2)
+        : x;
     for (const segment of line) {
       if (segment.kind === 'text') {
         out.push(
-          `<text x="${cursor.toFixed(1)}" y="${baseline}" font-family="Poppins, Noto Sans, Arial, sans-serif" font-size="${fontSize}" font-weight="${weight}" fill="${color}" xml:space="preserve">${escapeXml(segment.text)}</text>`
+          `<text x="${cursor.toFixed(1)}" y="${baseline}" font-family="${fontStack}" font-size="${fontSize}" font-weight="${style.weight}"${letterSpacingAttr} fill="${color}" xml:space="preserve">${escapeXml(segment.text)}</text>`
         );
       } else if (segment.svg) {
         const scale = emojiSize / 36;
@@ -804,7 +932,7 @@ function renderTextLines(
         );
       } else {
         out.push(
-          `<text x="${cursor.toFixed(1)}" y="${baseline}" font-family="Noto Emoji, Poppins, Noto Sans, sans-serif" font-size="${fontSize}" font-weight="${weight}" fill="${color}">${escapeXml(segment.text)}</text>`
+          `<text x="${cursor.toFixed(1)}" y="${baseline}" font-family="Noto Emoji, ${fontStack}" font-size="${fontSize}" font-weight="${style.weight}" fill="${color}">${escapeXml(segment.text)}</text>`
         );
       }
       cursor += segment.width;
@@ -846,7 +974,7 @@ function buildQuoteBlock(
     'FS'
   ).toUpperCase();
 
-  const measureFont = getMeasureFont(500);
+  const measureFont = getMeasureFont('sans', 500);
   let qlines = layoutText(content, width - PADQ * 2, QFONT, measureFont);
   if (qlines.length > MAX_QUOTE_LINES) {
     qlines = qlines.slice(0, MAX_QUOTE_LINES);
@@ -855,14 +983,14 @@ function buildQuoteBlock(
       lastLine.push({
         kind: 'text',
         text: '\u2026',
-        width: measureFont ? measureFont.getAdvanceWidth('\u2026', QFONT) : approxWidth('\u2026', QFONT),
+        width: measureTextWidth('\u2026', measureFont, QFONT),
       });
     }
   }
 
   const height = PADQ + HEADER_H + Math.max(1, qlines.length) * QLH + 14;
   const boxBg = theme.isDark ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.07)';
-  const handleWidth = measureFont ? measureFont.getAdvanceWidth(handle, 22) : approxWidth(handle, 22);
+  const handleWidth = measureTextWidth(handle, measureFont, 22);
 
   const render = (x: number, y: number): string => {
     const avatarCx = x + PADQ + 21;
@@ -886,7 +1014,8 @@ function buildQuoteBlock(
       QFONT,
       QLH,
       theme.subtextColor,
-      500
+      { family: 'sans', weight: 500, letterSpacingPx: 0, align: 'left' },
+      width - PADQ * 2
     );
 
     return `<!-- Quoted fess box -->

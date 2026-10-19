@@ -49,7 +49,8 @@ describe('AdminService Unit Tests', () => {
         .mockResolvedValueOnce(50) // total
         .mockResolvedValueOnce(30) // published
         .mockResolvedValueOnce(15) // pending
-        .mockResolvedValueOnce(5); // rejected
+        .mockResolvedValueOnce(5) // rejected
+        .mockResolvedValueOnce(7); // reported
 
       vi.mocked(prisma.vote.count).mockResolvedValueOnce(200);
       vi.mocked(prisma.base.count).mockResolvedValueOnce(10);
@@ -65,6 +66,7 @@ describe('AdminService Unit Tests', () => {
       expect(stats.published).toBe(30);
       expect(stats.pending).toBe(15);
       expect(stats.rejected).toBe(5);
+      expect(stats.reported).toBe(7);
       expect(stats.total_votes).toBe(200);
     });
   });

@@ -88,6 +88,37 @@ describe('FessService Unit Tests', () => {
       expect(result.data[0].upvotes).toBe(10);
     });
 
+    it('should filter fesses that have pending reports when reported=true', async () => {
+      vi.mocked(prisma.fess.count).mockResolvedValueOnce(1);
+      vi.mocked(prisma.fess.findMany).mockResolvedValueOnce([
+        {
+          id: 'fess_reported',
+          baseHandle: '@concern_fess',
+          content: 'Reported confession',
+          upvotes: 4,
+          downvotes: 2,
+          status: 'published',
+          createdAt: new Date(),
+          comments: [],
+        } as any,
+      ]);
+      vi.mocked(prisma.vote.findMany).mockResolvedValueOnce([]);
+
+      const result = await FessService.getFesses(
+        { base: '@concern_fess', reported: 'true', page: 1, limit: 10 },
+        'usr_mod'
+      );
+
+      expect(prisma.fess.count).toHaveBeenCalledWith({
+        where: expect.objectContaining({
+          baseHandle: '@concern_fess',
+          reports: { some: { status: 'pending' } },
+        }),
+      });
+      expect(result.total).toBe(1);
+      expect(result.data[0].id).toBe('fess_reported');
+    });
+
     it('should restrict to followed bases when following=true', async () => {
       vi.mocked(prisma.follow.findMany).mockResolvedValueOnce([{ baseId: 'base_1' }] as any);
       vi.mocked(prisma.fess.count).mockResolvedValueOnce(1);

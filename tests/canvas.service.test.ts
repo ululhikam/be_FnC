@@ -3,6 +3,7 @@ import { CanvasService } from '../src/services/canvas.service.js';
 import { InstagramService } from '../src/services/instagram.service.js';
 import { StorageService } from '../src/services/storage.service.js';
 import { prisma } from '../src/config/prisma.js';
+import { TEMPLATES } from '../src/constants/templates.js';
 
 vi.mock('../src/config/prisma.js', () => ({
   prisma: {
@@ -114,38 +115,38 @@ describe('CanvasService Unit Tests', () => {
     expect(captionArg).toBe('A'.repeat(2500));
   });
 
-  it('should render all 10 modern non-gradient templates without error', () => {
-    const templates = [
-      'cyberpunk',
-      'neobrutalism',
-      'rock',
-      'terminal',
-      'bubblegum',
-      'swiss',
-      'acid',
-      'monochrome',
-      'indie',
-      'blueprint',
-    ];
+  it('should build SVG for every template and render each font family', () => {
+    const templates = TEMPLATES.map((t) => t.key);
+    expect(templates.length).toBe(38);
 
     for (const key of templates) {
       const svgs = CanvasService.buildSvgPages(
         {
           baseHandle: '@techfess',
-          content: `Test confession with modern non-gradient template: ${key}`,
+          content: `Test confession with template: ${key}`,
           template: key,
           base: { name: 'Tech & Modern Base', initial: 'TM' },
         } as any,
-        key,
-        'portrait'
+        key
       );
 
       expect(svgs.length).toBeGreaterThanOrEqual(1);
       expect(svgs[0]).toContain('<svg');
       expect(svgs[0]).toContain('bgPattern');
       expect(svgs[0]).toContain('Tech &amp; Modern Base');
+    }
 
-      // Verify PNG buffer rendering works without throwing
+    // Render satu wakil per keluarga font: sans, display, serif, mono.
+    for (const key of ['cyberpunk', 'sunburst', 'newsprint', 'railway']) {
+      const svgs = CanvasService.buildSvgPages(
+        {
+          baseHandle: '@techfess',
+          content: `Font render check: ${key}`,
+          template: key,
+          base: { name: 'Tech & Modern Base', initial: 'TM' },
+        } as any,
+        key
+      );
       const png = CanvasService.renderSvgToPng(svgs[0]);
       expect(png.length).toBeGreaterThan(100);
     }

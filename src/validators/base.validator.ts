@@ -53,6 +53,8 @@ export const UpdateBaseSettingsSchema = z.object({
 
 export const BaseFessesQuerySchema = z.object({
   status: z.enum(['published', 'approved', 'pending', 'rejected']).optional(),
+  /** Khusus admin base: hanya fess yang memiliki laporan pending. */
+  reported: z.enum(['true', 'false']).optional(),
   sort: z.enum(['newest', 'popular']).default('newest'),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),

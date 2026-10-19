@@ -43,6 +43,7 @@ export class FessService {
       status?: string;
       query?: string;
       following?: 'true' | 'false';
+      reported?: 'true' | 'false';
       sort?: 'newest' | 'popular';
       page?: number;
       limit?: number;
@@ -71,6 +72,12 @@ export class FessService {
       where.content = { contains: params.query, mode: 'insensitive' };
     }
 
+    // Filter khusus admin base: fess yang punya laporan berstatus pending.
+    // Endpoint publik dilindungi oleh BaseController.getBaseFesses.
+    if (params.reported === 'true') {
+      where.reports = { some: { status: 'pending' } };
+    }
+
     // "Mengikuti" feed: restrict to bases followed by the signed-in user.
     if (params.following === 'true') {
       const emptyPage = { data: [], total: 0, page, limit, total_pages: 1 };
@@ -93,7 +100,7 @@ export class FessService {
 
     const isPublicQuery = !params.query && params.following !== 'true';
     const cacheKey = isPublicQuery
-      ? `fesses:${params.base || 'all'}:${params.status || 'published'}:${params.sort || 'newest'}:${page}:${limit}`
+      ? `fesses:${params.base || 'all'}:${params.status || 'published'}:${params.reported || 'false'}:${params.sort || 'newest'}:${page}:${limit}`
       : null;
 
     const [total, fesses] = cacheKey

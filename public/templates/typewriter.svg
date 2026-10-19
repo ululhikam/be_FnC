@@ -37,13 +37,6 @@
     <path d="M 160,110 Q 540,95 920,110 L 920,950 L 160,950 Z" fill="#faf6ef"/>
     <path d="M 160,110 Q 540,95 920,110 L 920,120 Q 540,105 160,120 Z" fill="#f0ebe0"/>
 
-    <!-- Paper subtle top header line -->
-    <line x1="210" y1="180" x2="870" y2="180" stroke="#d6cec2" stroke-width="2"/>
-    <line x1="210" y1="185" x2="870" y2="185" stroke="#e3dcce" stroke-width="1"/>
-
-    <!-- Tiny typewriter stamp header on paper -->
-    <text x="210" y="165" font-family="'Courier Prime', 'Courier New', monospace" font-size="16" font-weight="700" fill="#78716c" letter-spacing="2">BORING OFFICE // TYPEWRITER ARCHIVE</text>
-    <text x="870" y="165" font-family="'Courier Prime', 'Courier New', monospace" font-size="16" font-weight="700" fill="#78716c" letter-spacing="1" text-anchor="end">CONFIDENTIAL</text>
   </g>
 
   <!-- Pastel Baby Blue Vintage Typewriter (Anchored at the bottom) -->

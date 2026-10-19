@@ -175,57 +175,114 @@ export class CanvasService {
       : fess.baseHandle;
 
     const isDark = template.ink === 'dark';
-    const textColor = isDark ? '#1a1a2e' : '#ffffff';
-    const subtextColor = isDark ? 'rgba(26,26,46,0.7)' : 'rgba(255,255,255,0.75)';
-    const cardBg = isDark ? 'rgba(255,255,255,0.88)' : 'rgba(255,255,255,0.08)';
-    const cardBorder = isDark ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.18)';
+    const isNeo = template.key === 'neobrutalism';
+
+    // ── Per-template tailored card styling ─────────────────────────────────
+    let textColor = isDark ? '#1a1a2e' : '#ffffff';
+    let subtextColor = isDark ? 'rgba(26,26,46,0.7)' : 'rgba(255,255,255,0.75)';
+    let cardBg = isDark ? 'rgba(255,255,255,0.92)' : 'rgba(255,255,255,0.08)';
+    let cardBorder = isDark ? 'rgba(0,0,0,0.14)' : 'rgba(255,255,255,0.18)';
+    let cardBorderWidth = 2;
+    let cardRadius = 36;
+    let shadowDef = `<feDropShadow dx="0" dy="18" stdDeviation="28" flood-color="#000000" flood-opacity="0.25"/>`;
+
+    if (template.key === 'neobrutalism') {
+      textColor = '#000000';
+      subtextColor = 'rgba(0,0,0,0.75)';
+      cardBg = '#ffffff';
+      cardBorder = '#000000';
+      cardBorderWidth = 4;
+      cardRadius = 24;
+      shadowDef = `<feDropShadow dx="12" dy="12" stdDeviation="0" flood-color="#000000" flood-opacity="1"/>`;
+    } else if (template.key === 'cyberpunk') {
+      cardBg = 'rgba(13, 20, 32, 0.94)';
+      cardBorder = 'rgba(0, 255, 102, 0.4)';
+    } else if (template.key === 'terminal') {
+      cardBg = 'rgba(10, 16, 24, 0.94)';
+      cardBorder = 'rgba(0, 240, 255, 0.35)';
+    } else if (template.key === 'rock') {
+      cardBg = 'rgba(22, 22, 22, 0.96)';
+      cardBorder = 'rgba(255, 0, 60, 0.35)';
+    } else if (template.key === 'acid') {
+      cardBg = 'rgba(28, 12, 44, 0.94)';
+      cardBorder = 'rgba(204, 255, 0, 0.4)';
+    } else if (template.key === 'swiss') {
+      textColor = '#111827';
+      subtextColor = '#4b5563';
+      cardBg = '#ffffff';
+      cardBorder = 'rgba(0, 0, 0, 0.12)';
+    } else if (template.key === 'monochrome') {
+      textColor = '#000000';
+      subtextColor = '#374151';
+      cardBg = '#ffffff';
+      cardBorder = 'rgba(0, 0, 0, 0.35)';
+      cardBorderWidth = 3;
+    } else if (template.key === 'indie') {
+      cardBg = 'rgba(56, 18, 10, 0.65)';
+      cardBorder = 'rgba(253, 240, 213, 0.35)';
+    } else if (template.key === 'blueprint') {
+      cardBg = 'rgba(12, 42, 78, 0.90)';
+      cardBorder = 'rgba(72, 202, 228, 0.45)';
+    } else if (template.key === 'bubblegum') {
+      cardBg = 'rgba(255, 255, 255, 0.18)';
+      cardBorder = 'rgba(255, 255, 255, 0.4)';
+    }
+
     const accentColor = template.accent || (isDark ? '#0038ff' : '#00b2ff');
     const accentInk = pickAccentInk(accentColor);
 
-    // ── Gradient definitions per template ──────────────────────────────────
-    const gradients: Record<string, string> = {
-      default: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#0038ff"/>
-        <stop offset="50%" stop-color="#4b1fff"/>
-        <stop offset="100%" stop-color="#7000ff"/>
-      </linearGradient>`,
-      midnight: `<radialGradient id="bgGrad" cx="30%" cy="20%" r="80%">
-        <stop offset="0%" stop-color="#1e295d"/>
-        <stop offset="60%" stop-color="#0a0e27"/>
-        <stop offset="100%" stop-color="#030511"/>
-      </radialGradient>`,
-      sunset: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#ff6b35"/>
-        <stop offset="45%" stop-color="#f72585"/>
-        <stop offset="100%" stop-color="#7209b7"/>
-      </linearGradient>`,
-      forest: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#0f766e"/>
-        <stop offset="60%" stop-color="#064e3b"/>
-        <stop offset="100%" stop-color="#022c22"/>
-      </linearGradient>`,
-      noir: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-        <stop offset="0%" stop-color="#0f111a"/>
-        <stop offset="50%" stop-color="#161926"/>
-        <stop offset="100%" stop-color="#090a10"/>
-      </linearGradient>`,
-      paper: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#fef8ee"/>
-        <stop offset="60%" stop-color="#f5ede0"/>
-        <stop offset="100%" stop-color="#e9dfcf"/>
-      </linearGradient>`,
-      ocean: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#06b6d4"/>
-        <stop offset="45%" stop-color="#0284c7"/>
-        <stop offset="100%" stop-color="#1e3a8a"/>
-      </linearGradient>`,
-      violet: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#7c3aed"/>
-        <stop offset="50%" stop-color="#c026d3"/>
-        <stop offset="100%" stop-color="#f43f5e"/>
-      </linearGradient>`,
+    // ── Patterns per template ──────────────────────────────────────────────
+    const patterns: Record<string, string> = {
+      cyberpunk: `<pattern id="bgPattern" width="32" height="32" patternUnits="userSpaceOnUse">
+        <path d="M32 0H0v32" fill="none" stroke="rgba(0,255,102,0.18)" stroke-width="1"/>
+        <circle cx="32" cy="32" r="1.5" fill="rgba(0,255,102,0.18)"/>
+      </pattern>`,
+      neobrutalism: `<pattern id="bgPattern" width="24" height="24" patternUnits="userSpaceOnUse">
+        <circle cx="12" cy="12" r="2.4" fill="rgba(0,0,0,0.15)"/>
+      </pattern>`,
+      rock: `<pattern id="bgPattern" width="20" height="20" patternUnits="userSpaceOnUse">
+        <path d="M0 20 L20 0 M-10 10 L10 -10 M10 30 L30 10" stroke="rgba(255,0,60,0.22)" stroke-width="1.5"/>
+      </pattern>`,
+      terminal: `<pattern id="bgPattern" width="10" height="6" patternUnits="userSpaceOnUse">
+        <line x1="0" y1="1" x2="10" y2="1" stroke="rgba(0,240,255,0.18)" stroke-width="1"/>
+      </pattern>`,
+      bubblegum: `<pattern id="bgPattern" width="40" height="40" patternUnits="userSpaceOnUse">
+        <path d="M10 4 L11 8 L15 9 L11 10 L10 14 L9 10 L5 9 L9 8 Z" fill="rgba(255,255,255,0.24)"/>
+        <circle cx="28" cy="24" r="1.8" fill="rgba(255,255,255,0.24)"/>
+        <circle cx="14" cy="32" r="1.2" fill="rgba(255,255,255,0.24)"/>
+      </pattern>`,
+      swiss: `<pattern id="bgPattern" width="28" height="28" patternUnits="userSpaceOnUse">
+        <path d="M28 0H0v28" fill="none" stroke="rgba(0,0,0,0.08)" stroke-width="1"/>
+      </pattern>`,
+      acid: `<pattern id="bgPattern" width="36" height="36" patternUnits="userSpaceOnUse">
+        <path d="M0 18 Q9 0 18 18 T36 18" fill="none" stroke="rgba(204,255,0,0.22)" stroke-width="1.5"/>
+      </pattern>`,
+      monochrome: `<pattern id="bgPattern" width="30" height="30" patternUnits="userSpaceOnUse">
+        <path d="M12 15h6 M15 12v6" stroke="rgba(0,0,0,0.16)" stroke-width="1.2"/>
+      </pattern>`,
+      indie: `<pattern id="bgPattern" width="16" height="16" patternUnits="userSpaceOnUse">
+        <path d="M0 0 L16 16" stroke="rgba(253,240,213,0.18)" stroke-width="1.2"/>
+      </pattern>`,
+      blueprint: `<pattern id="bgPattern" width="40" height="40" patternUnits="userSpaceOnUse">
+        <path d="M40 0H0v40" fill="none" stroke="rgba(72,202,228,0.22)" stroke-width="1.2"/>
+        <path d="M20 0v40 M0 20h40" fill="none" stroke="rgba(72,202,228,0.22)" stroke-dasharray="2,2" stroke-width="0.8"/>
+      </pattern>`,
+      default: `<pattern id="bgPattern" width="30" height="30" patternUnits="userSpaceOnUse">
+        <circle cx="7.5" cy="7.5" r="1.5" fill="rgba(255,255,255,0.16)"/>
+      </pattern>`,
     };
-    const bgDef = gradients[template.key] || gradients.default;
+
+    const patternDef = patterns[template.key] || patterns.default;
+
+    // Solid background color (or gradient fallback)
+    const isGradient = template.background.startsWith('linear-gradient') || template.background.startsWith('radial-gradient');
+    const bgDef = isGradient
+      ? `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#0038ff"/>
+          <stop offset="100%" stop-color="#7000ff"/>
+        </linearGradient>`
+      : '';
+    const bgFill = isGradient ? 'url(#bgGrad)' : template.background;
 
     const W = aspect.width;
     const H = aspect.height;
@@ -234,44 +291,10 @@ export class CanvasService {
     const cardH = H - PAD * 2;
     const isSquare = aspect.key === 'square';
 
-    // Check if template has an image background
-    let templateImgBase64 = '';
-    if (template.bgImage) {
-      const candidates = [
-        path.resolve(process.cwd(), 'public' + template.bgImage),
-        path.resolve(process.cwd(), 'backend/public' + template.bgImage),
-        path.resolve(__dirname, '../../public' + template.bgImage),
-        path.resolve(__dirname, '../public' + template.bgImage),
-      ];
-      for (const p of candidates) {
-        try {
-          if (fs.existsSync(p)) {
-            const mime = p.endsWith('.svg') ? 'image/svg+xml' : 'image/jpeg';
-            templateImgBase64 = `data:${mime};base64,` + fs.readFileSync(p).toString('base64');
-            break;
-          }
-        } catch {
-          /* continue */
-        }
-      }
-    }
-
-    const hasThemedBg = !!templateImgBase64;
-    const parsePct = (val?: string, base = 1000) => {
-      if (!val) return 0;
-      if (val.endsWith('%')) return Math.round((parseFloat(val) / 100) * base);
-      return parseInt(val, 10) || 0;
-    };
-
-    const padTop = hasThemedBg && template.safeArea ? parsePct(template.safeArea.top, H) : PAD;
-    const padBottom = hasThemedBg && template.safeArea ? parsePct(template.safeArea.bottom, H) : PAD;
-    const padLeft = hasThemedBg && template.safeArea ? parsePct(template.safeArea.left, W) : PAD;
-    const padRight = hasThemedBg && template.safeArea ? parsePct(template.safeArea.right, W) : PAD;
-
-    const contentX = hasThemedBg ? padLeft : PAD + 58;
-    const contentWidth = hasThemedBg ? W - padLeft - padRight : cardW - 116;
-    const footerTop = hasThemedBg ? H - padBottom : PAD + cardH - 72;
-    const restContentY = hasThemedBg ? padTop + 50 : PAD + 195;
+    const contentX = PAD + 58;
+    const contentWidth = cardW - 116;
+    const footerTop = PAD + cardH - 72;
+    const restContentY = PAD + 195;
 
     const measureFont = getMeasureFont(600);
 
@@ -361,49 +384,25 @@ export class CanvasService {
           : '';
       const footerRight = totalPages > 1 ? `${idx + 1}/${totalPages}` : 'fessncurious.vercel.app';
 
-      if (hasThemedBg) {
-        const watermarkText = escapeXml((template.watermarkLabel || '') + fess.baseHandle);
-        const topWatermark =
-          template.watermarkPos === 'top'
-            ? `<text x="${padLeft}" y="${padTop + 24}" font-family="Poppins, Arial, sans-serif" font-size="24" font-weight="800" fill="${textColor}" opacity="0.85">${watermarkText}</text>
-  <line x1="${padLeft}" y1="${padTop + 36}" x2="${W - padRight}" y2="${padTop + 36}" stroke="${textColor}" stroke-width="1.5" stroke-dasharray="6,4" opacity="0.3"/>`
-            : '';
-        const bottomWatermark =
-          template.watermarkPos === 'bottom'
-            ? `<text x="${padLeft + (template.key === 'spotify' ? 40 : 0)}" y="${H - padBottom + 10}" font-family="Poppins, Arial, sans-serif" font-size="22" font-weight="700" fill="${textColor}" opacity="0.8">${watermarkText}</text>
-  <text x="${W - padRight}" y="${H - padBottom + 10}" font-family="Poppins, Arial, sans-serif" font-size="20" font-weight="600" fill="${textColor}" opacity="0.6" text-anchor="end">${escapeXml(footerRight)}</text>`
-            : '';
-
-        return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
-  <image href="${templateImgBase64}" xlink:href="${templateImgBase64}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="xMidYMid slice" />
-
-  ${topWatermark}
-  ${pageQuoteSvg}
-  ${textSvg}
-  ${bottomWatermark}
-</svg>`;
-      }
 
       return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
   <defs>
     ${bgDef}
+    ${patternDef}
     <filter id="cardShadow" x="-10%" y="-10%" width="120%" height="120%">
-      <feDropShadow dx="0" dy="18" stdDeviation="28" flood-color="#000000" flood-opacity="0.25"/>
+      ${shadowDef}
     </filter>
   </defs>
 
   <!-- Background -->
-  <rect width="${W}" height="${H}" fill="url(#bgGrad)"/>
+  <rect width="${W}" height="${H}" fill="${bgFill}"/>
 
-  <!-- Dot grid overlay -->
-  <pattern id="dots" width="30" height="30" patternUnits="userSpaceOnUse">
-    <circle cx="7.5" cy="7.5" r="1.5" fill="rgba(255,255,255,0.10)"/>
-  </pattern>
-  <rect width="${W}" height="${H}" fill="url(#dots)"/>
+  <!-- Geometric texture overlay -->
+  <rect width="${W}" height="${H}" fill="url(#bgPattern)"/>
 
   <!-- Card panel -->
-  <rect x="${PAD}" y="${PAD}" width="${cardW}" height="${cardH}" rx="36"
-        fill="${cardBg}" stroke="${cardBorder}" stroke-width="2"
+  <rect x="${PAD}" y="${PAD}" width="${cardW}" height="${cardH}" rx="${cardRadius}"
+        fill="${cardBg}" stroke="${cardBorder}" stroke-width="${cardBorderWidth}"
         filter="url(#cardShadow)"/>
 
   <!-- Avatar -->

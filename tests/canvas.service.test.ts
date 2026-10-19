@@ -113,4 +113,41 @@ describe('CanvasService Unit Tests', () => {
     const captionArg = autoPostMock.mock.calls[0][3] as string;
     expect(captionArg).toBe('A'.repeat(2500));
   });
+
+  it('should render all 10 modern non-gradient templates without error', () => {
+    const templates = [
+      'cyberpunk',
+      'neobrutalism',
+      'rock',
+      'terminal',
+      'bubblegum',
+      'swiss',
+      'acid',
+      'monochrome',
+      'indie',
+      'blueprint',
+    ];
+
+    for (const key of templates) {
+      const svgs = CanvasService.buildSvgPages(
+        {
+          baseHandle: '@techfess',
+          content: `Test confession with modern non-gradient template: ${key}`,
+          template: key,
+          base: { name: 'Tech & Modern Base', initial: 'TM' },
+        } as any,
+        key,
+        'portrait'
+      );
+
+      expect(svgs.length).toBeGreaterThanOrEqual(1);
+      expect(svgs[0]).toContain('<svg');
+      expect(svgs[0]).toContain('bgPattern');
+      expect(svgs[0]).toContain('Tech &amp; Modern Base');
+
+      // Verify PNG buffer rendering works without throwing
+      const png = CanvasService.renderSvgToPng(svgs[0]);
+      expect(png.length).toBeGreaterThan(100);
+    }
+  });
 });

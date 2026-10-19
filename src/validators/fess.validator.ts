@@ -47,11 +47,16 @@ export const CreateFessSchema = z.object({
   song: SongAttachmentSchema.optional().nullable(),
   template: z
     .enum([
-      'spotify',
-      'typewriter',
-      'journal',
-      'locker',
-      'clay',
+      'cyberpunk',
+      'neobrutalism',
+      'rock',
+      'terminal',
+      'bubblegum',
+      'swiss',
+      'acid',
+      'monochrome',
+      'indie',
+      'blueprint',
       'default',
       'midnight',
       'sunset',
@@ -62,7 +67,7 @@ export const CreateFessSchema = z.object({
       'violet',
     ])
     .optional()
-    .default('default'),
+    .default('cyberpunk'),
   quoted_fess: QuotedFessSchema.optional().nullable(),
   tag: z.enum(['Cerita', 'Tanya']).optional().nullable(),
 });

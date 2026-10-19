@@ -4,11 +4,16 @@ export const CanvasExportSchema = z.object({
   fess_id: z.string().min(1, 'ID fess wajib diisi'),
   template: z
     .enum([
-      'spotify',
-      'typewriter',
-      'journal',
-      'locker',
-      'clay',
+      'cyberpunk',
+      'neobrutalism',
+      'rock',
+      'terminal',
+      'bubblegum',
+      'swiss',
+      'acid',
+      'monochrome',
+      'indie',
+      'blueprint',
       'default',
       'midnight',
       'sunset',
@@ -18,7 +23,7 @@ export const CanvasExportSchema = z.object({
       'ocean',
       'violet',
     ])
-    .default('default'),
+    .default('cyberpunk'),
   aspect: z.enum(['square', 'portrait', 'story']).default('portrait'),
 });
 

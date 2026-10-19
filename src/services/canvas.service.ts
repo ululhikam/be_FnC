@@ -436,26 +436,10 @@ export class CanvasService {
       }
     }
 
-    const hasStrip = !!template.strip;
-    const stripSvg = hasStrip
-      ? `<!-- Theme banner strip -->
-  <rect x="${PAD + 58}" y="${PAD + 32}" width="${cardW - 116}" height="28" rx="${isNeo ? 4 : 6}"
-        fill="${isNeo ? '#000000' : isDark ? 'rgba(0,0,0,0.22)' : 'rgba(255,255,255,0.18)'}"
-        stroke="${isNeo ? '#000000' : cardBorder}" stroke-width="1"/>
-  <text x="${PAD + 70}" y="${PAD + 50}" font-family="Poppins, Arial, monospace" font-size="11"
-        font-weight="800" fill="${isNeo ? '#ffe600' : accentInk}" letter-spacing="0.8">${escapeXml(template.strip || '')}</text>
-  <circle cx="${PAD + cardW - 74}" cy="${PAD + 46}" r="3.5" fill="${isNeo ? '#ffe600' : accentColor}"/>`
-      : '';
-
-    const avatarCy = hasStrip ? PAD + 104 : PAD + 74;
-    const headerNameY = hasStrip ? PAD + 93 : PAD + 63;
-    const headerHandleY = hasStrip ? PAD + 123 : PAD + 93;
-    const tagPillY = hasStrip ? PAD + 80 : PAD + 50;
-
-    const sublineSvg = template.subline
-      ? `<text x="${PAD + 58}" y="${PAD + cardH - 18}" font-family="Poppins, Arial, monospace" font-size="11"
-        font-weight="700" fill="${subtextColor}" opacity="0.65" letter-spacing="0.6">${escapeXml(template.subline || '')}</text>`
-      : '';
+    const avatarCy = PAD + 74;
+    const headerNameY = PAD + 63;
+    const headerHandleY = PAD + 93;
+    const tagPillY = PAD + 50;
 
     const totalPages = pages.length;
 
@@ -503,8 +487,6 @@ export class CanvasService {
         fill="${cardBg}" stroke="${cardBorder}" stroke-width="${cardBorderWidth}"
         filter="url(#cardShadow)"/>
 
-  ${stripSvg}
-
   <!-- Avatar -->
   <circle cx="${PAD + 74}" cy="${avatarCy}" r="38" fill="${accentColor}" opacity="0.25"/>
   <circle cx="${PAD + 74}" cy="${avatarCy}" r="32" fill="${accentColor}"/>
@@ -531,9 +513,8 @@ export class CanvasService {
         stroke="${cardBorder}" stroke-width="1.5"/>
 
   <!-- Footer branding -->
-  <text x="${PAD + 58}" y="${PAD + cardH - (template.subline ? 38 : 36)}" font-family="Poppins, Arial, sans-serif" font-size="17"
+  <text x="${PAD + 58}" y="${PAD + cardH - 36}" font-family="Poppins, Arial, sans-serif" font-size="17"
         font-weight="800" fill="${textColor}">Instagram Feed · ${escapeXml(baseIg)}</text>
-  ${sublineSvg}
   <text x="${PAD + cardW - 58}" y="${PAD + cardH - 36}" font-family="Poppins, Arial, sans-serif" font-size="15"
         font-weight="600" fill="${subtextColor}" text-anchor="end">${escapeXml(footerRight)}</text>
 </svg>`;

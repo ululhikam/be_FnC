@@ -21,6 +21,8 @@ export interface TemplateConfig {
   background: string;
   accent: string;
   category?: string;
+  strip?: string;
+  subline?: string;
 }
 
 export const TEMPLATES: TemplateConfig[] = [
@@ -34,6 +36,8 @@ export const TEMPLATES: TemplateConfig[] = [
     background: '#0a0e17',
     accent: '#00ff66',
     category: 'tech',
+    strip: '[HUD // ENCRYPTED 256-BIT]',
+    subline: 'TERMINAL BROADCAST',
   },
 
   // ── 2. POP: Neo-Brutalisme ──────────────────────────────────────────────
@@ -46,6 +50,8 @@ export const TEMPLATES: TemplateConfig[] = [
     background: '#ffe600',
     accent: '#000000',
     category: 'pop',
+    strip: '★ RAW CONFESSION ★',
+    subline: 'POPARTS EDITION',
   },
 
   // ── 3. ROCK: Rock Grunge ────────────────────────────────────────────────
@@ -58,6 +64,8 @@ export const TEMPLATES: TemplateConfig[] = [
     background: '#121212',
     accent: '#ff003c',
     category: 'rock',
+    strip: '/// ROCK ARCHIVE // SIDE A ///',
+    subline: 'UNFILTERED SOUNDS',
   },
 
   // ── 4. TECH: Terminal Hacker ────────────────────────────────────────────
@@ -70,6 +78,8 @@ export const TEMPLATES: TemplateConfig[] = [
     background: '#080c10',
     accent: '#00f0ff',
     category: 'tech',
+    strip: '● ● ● bash - session_01',
+    subline: 'SYSTEM OUTPUT // 200 OK',
   },
 
   // ── 5. POP: Bubblegum Y2K ───────────────────────────────────────────────
@@ -82,6 +92,8 @@ export const TEMPLATES: TemplateConfig[] = [
     background: '#ff4b8b',
     accent: '#ffffff',
     category: 'pop',
+    strip: '✦ SWEET CONFESSION ✦',
+    subline: 'Y2K RETRO ARCHIVE',
   },
 
   // ── 6. MODERN: Swiss Minimalist ─────────────────────────────────────────
@@ -94,6 +106,8 @@ export const TEMPLATES: TemplateConfig[] = [
     background: '#f4f4f0',
     accent: '#e63946',
     category: 'modern',
+    strip: '№ 01 / ZÜRICH EDITORIAL',
+    subline: 'ARCHITECTURAL GRID',
   },
 
   // ── 7. MODERN/TECH: Acid Techno ─────────────────────────────────────────
@@ -106,6 +120,8 @@ export const TEMPLATES: TemplateConfig[] = [
     background: '#180828',
     accent: '#ccff00',
     category: 'modern',
+    strip: '[145 BPM // RAW FREQUENCY]',
+    subline: 'UNDERGROUND SOUND',
   },
 
   // ── 8. MODERN: Monochrome Bold ──────────────────────────────────────────
@@ -118,6 +134,8 @@ export const TEMPLATES: TemplateConfig[] = [
     background: '#ffffff',
     accent: '#000000',
     category: 'modern',
+    strip: '“CONFESSION” — SPEC 2026',
+    subline: 'STREETWEAR ARCHIVE',
   },
 
   // ── 9. ROCK: Indie Cassette ─────────────────────────────────────────────
@@ -130,6 +148,8 @@ export const TEMPLATES: TemplateConfig[] = [
     background: '#b84227',
     accent: '#fdf0d5',
     category: 'rock',
+    strip: '[ CASSETTE SIDE A // 45 RPM ]',
+    subline: 'ANALOG MASTER TAPE',
   },
 
   // ── 10. TECH: Blueprint Schematic ───────────────────────────────────────
@@ -142,6 +162,8 @@ export const TEMPLATES: TemplateConfig[] = [
     background: '#0a2d54',
     accent: '#48cae4',
     category: 'tech',
+    strip: 'DWG NO: FNC-2026 // REV A',
+    subline: 'SCALE: 1:1 SCHEMATIC',
   },
 
   // ── Standar Fallback ────────────────────────────────────────────────────
@@ -154,6 +176,8 @@ export const TEMPLATES: TemplateConfig[] = [
     background: '#0038ff',
     accent: '#ffffff',
     category: 'standard',
+    strip: 'FESS N CURIOUS',
+    subline: 'INSTAGRAM FEED',
   },
 ];
 

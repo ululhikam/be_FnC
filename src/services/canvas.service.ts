@@ -346,17 +346,26 @@ export class CanvasService {
     }
 
     if (!pages.length) pages = [[]];
-    if (truncated && pages.length) {
-      const lastPage = pages[pages.length - 1];
-      const lastLine = lastPage[lastPage.length - 1];
-      if (lastLine) {
-        lastLine.push({
-          kind: 'text',
-          text: '\u2026',
-          width: measureFont ? measureFont.getAdvanceWidth('\u2026', fontSize) : fontSize * 0.55,
-        });
-      }
-    }
+        const hasStrip = !!template.strip;
+    const stripSvg = hasStrip
+      ? `<!-- Theme banner strip -->
+  <rect x="${PAD + 58}" y="${PAD + 32}" width="${cardW - 116}" height="28" rx="${isNeo ? 4 : 6}"
+        fill="${isNeo ? '#000000' : isDark ? 'rgba(0,0,0,0.22)' : 'rgba(255,255,255,0.18)'}"
+        stroke="${isNeo ? '#000000' : cardBorder}" stroke-width="1"/>
+  <text x="${PAD + 70}" y="${PAD + 50}" font-family="Poppins, Arial, monospace" font-size="11"
+        font-weight="800" fill="${isNeo ? '#ffe600' : accentInk}" letter-spacing="0.8">${escapeXml(template.strip || '')}</text>
+  <circle cx="${PAD + cardW - 74}" cy="${PAD + 46}" r="3.5" fill="${isNeo ? '#ffe600' : accentColor}"/>`
+      : '';
+
+    const avatarCy = hasStrip ? PAD + 104 : PAD + 74;
+    const headerNameY = hasStrip ? PAD + 93 : PAD + 63;
+    const headerHandleY = hasStrip ? PAD + 123 : PAD + 93;
+    const tagPillY = hasStrip ? PAD + 80 : PAD + 50;
+
+    const sublineSvg = template.subline
+      ? `<text x="${PAD + 58}" y="${PAD + cardH - 18}" font-family="Poppins, Arial, monospace" font-size="11"
+        font-weight="700" fill="${subtextColor}" opacity="0.65" letter-spacing="0.6">${escapeXml(template.subline || '')}</text>`
+      : '';
 
     const totalPages = pages.length;
 
@@ -384,7 +393,6 @@ export class CanvasService {
           : '';
       const footerRight = totalPages > 1 ? `${idx + 1}/${totalPages}` : 'fessncurious.vercel.app';
 
-
       return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
   <defs>
     ${bgDef}
@@ -405,23 +413,25 @@ export class CanvasService {
         fill="${cardBg}" stroke="${cardBorder}" stroke-width="${cardBorderWidth}"
         filter="url(#cardShadow)"/>
 
+  ${stripSvg}
+
   <!-- Avatar -->
-  <circle cx="${PAD + 74}" cy="${PAD + 74}" r="38" fill="${accentColor}" opacity="0.25"/>
-  <circle cx="${PAD + 74}" cy="${PAD + 74}" r="32" fill="${accentColor}"/>
-  <text x="${PAD + 74}" y="${PAD + 83}" font-family="Poppins, Arial, sans-serif" font-size="22"
+  <circle cx="${PAD + 74}" cy="${avatarCy}" r="38" fill="${accentColor}" opacity="0.25"/>
+  <circle cx="${PAD + 74}" cy="${avatarCy}" r="32" fill="${accentColor}"/>
+  <text x="${PAD + 74}" y="${avatarCy + 9}" font-family="Poppins, Arial, sans-serif" font-size="22"
         font-weight="900" fill="${accentInk}" text-anchor="middle">${escapeXml(baseInitial)}</text>
 
   <!-- Base name & handle -->
-  <text x="${PAD + 126}" y="${PAD + 63}" font-family="Poppins, Arial, sans-serif" font-size="26"
+  <text x="${PAD + 126}" y="${headerNameY}" font-family="Poppins, Arial, sans-serif" font-size="26"
         font-weight="900" fill="${textColor}">${escapeXml(baseName)}</text>
-  <text x="${PAD + 126}" y="${PAD + 93}" font-family="Poppins, Arial, sans-serif" font-size="18"
+  <text x="${PAD + 126}" y="${headerHandleY}" font-family="Poppins, Arial, sans-serif" font-size="18"
         font-weight="600" fill="${subtextColor}">${escapeXml(fess.baseHandle)} · Fess n Curious</text>
 
   <!-- Tag pill -->
-  <rect x="${PAD + cardW - 130}" y="${PAD + 50}" width="106" height="34" rx="17"
-        fill="${accentInk}" opacity="0.22"/>
-  <text x="${PAD + cardW - 77}" y="${PAD + 73}" font-family="Poppins, Arial, sans-serif" font-size="14"
-        font-weight="800" fill="${accentInk}" text-anchor="middle">${escapeXml(fess.tag || 'Confession')}</text>
+  <rect x="${PAD + cardW - 130}" y="${tagPillY}" width="106" height="34" rx="${isNeo ? 6 : 17}"
+        fill="${accentInk}" opacity="${isNeo ? 1 : 0.22}"/>
+  <text x="${PAD + cardW - 77}" y="${tagPillY + 23}" font-family="Poppins, Arial, sans-serif" font-size="14"
+        font-weight="800" fill="${isNeo ? '#ffe600' : accentInk}" text-anchor="middle">${escapeXml(fess.tag || 'Confession')}</text>
 
   ${decoQuote}${pageQuoteSvg}<!-- Confession text -->
   ${textSvg}
@@ -431,8 +441,9 @@ export class CanvasService {
         stroke="${cardBorder}" stroke-width="1.5"/>
 
   <!-- Footer branding -->
-  <text x="${PAD + 58}" y="${PAD + cardH - 36}" font-family="Poppins, Arial, sans-serif" font-size="17"
+  <text x="${PAD + 58}" y="${PAD + cardH - (template.subline ? 38 : 36)}" font-family="Poppins, Arial, sans-serif" font-size="17"
         font-weight="800" fill="${textColor}">Instagram Feed · ${escapeXml(baseIg)}</text>
+  ${sublineSvg}
   <text x="${PAD + cardW - 58}" y="${PAD + cardH - 36}" font-family="Poppins, Arial, sans-serif" font-size="15"
         font-weight="600" fill="${subtextColor}" text-anchor="end">${escapeXml(footerRight)}</text>
 </svg>`;

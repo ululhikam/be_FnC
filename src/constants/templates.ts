@@ -20,7 +20,6 @@ export interface TemplateConfig {
   ink: 'light' | 'dark';
   background: string;
   accent: string;
-  category?: string;
 }
 
 export const TEMPLATES: TemplateConfig[] = [
@@ -33,7 +32,6 @@ export const TEMPLATES: TemplateConfig[] = [
     ink: 'light',
     background: '#0a0e17',
     accent: '#00ff66',
-    category: 'tech',
   },
 
   // ── 2. POP: Neo-Brutalisme ──────────────────────────────────────────────
@@ -45,7 +43,6 @@ export const TEMPLATES: TemplateConfig[] = [
     ink: 'dark',
     background: '#ffe600',
     accent: '#000000',
-    category: 'pop',
   },
 
   // ── 3. ROCK: Rock Grunge ────────────────────────────────────────────────
@@ -57,7 +54,6 @@ export const TEMPLATES: TemplateConfig[] = [
     ink: 'light',
     background: '#121212',
     accent: '#ff003c',
-    category: 'rock',
   },
 
   // ── 4. TECH: Terminal Hacker ────────────────────────────────────────────
@@ -69,7 +65,6 @@ export const TEMPLATES: TemplateConfig[] = [
     ink: 'light',
     background: '#080c10',
     accent: '#00f0ff',
-    category: 'tech',
   },
 
   // ── 5. POP: Bubblegum Y2K ───────────────────────────────────────────────
@@ -81,7 +76,6 @@ export const TEMPLATES: TemplateConfig[] = [
     ink: 'light',
     background: '#ff4b8b',
     accent: '#ffffff',
-    category: 'pop',
   },
 
   // ── 6. MODERN: Swiss Minimalist ─────────────────────────────────────────
@@ -93,7 +87,6 @@ export const TEMPLATES: TemplateConfig[] = [
     ink: 'dark',
     background: '#f4f4f0',
     accent: '#e63946',
-    category: 'modern',
   },
 
   // ── 7. MODERN/TECH: Acid Techno ─────────────────────────────────────────
@@ -105,7 +98,6 @@ export const TEMPLATES: TemplateConfig[] = [
     ink: 'light',
     background: '#180828',
     accent: '#ccff00',
-    category: 'modern',
   },
 
   // ── 8. MODERN: Monochrome Bold ──────────────────────────────────────────
@@ -117,7 +109,6 @@ export const TEMPLATES: TemplateConfig[] = [
     ink: 'dark',
     background: '#ffffff',
     accent: '#000000',
-    category: 'modern',
   },
 
   // ── 9. ROCK: Indie Cassette ─────────────────────────────────────────────
@@ -129,7 +120,6 @@ export const TEMPLATES: TemplateConfig[] = [
     ink: 'light',
     background: '#b84227',
     accent: '#fdf0d5',
-    category: 'rock',
   },
 
   // ── 10. TECH: Blueprint Schematic ───────────────────────────────────────
@@ -141,17 +131,16 @@ export const TEMPLATES: TemplateConfig[] = [
     ink: 'light',
     background: '#0a2d54',
     accent: '#48cae4',
-    category: 'tech',
   },
 
   // ── 11. LEGACY: Tengah Malam ────────────────────────────────────────────
   {
     key: 'midnight',
     label: 'Tengah Malam',
-    description: 'Biru tua pekat bertekstur bintang — cocok untuk curhat malam.',
+    description: 'Biru tua pekat — cocok untuk curhat malam.',
     aspect: 'portrait',
     ink: 'light',
-    background: 'radial-gradient(120% 90% at 20% 0%, #16204d 0%, #0a0e22 45%, #05060f 100%)',
+    background: '#0a0e27',
     accent: '#7dd3fc',
   },
 
@@ -159,10 +148,10 @@ export const TEMPLATES: TemplateConfig[] = [
   {
     key: 'sunset',
     label: 'Senja',
-    description: 'Oranye ke merah muda, hangat dan ramah di feed.',
+    description: 'Merah rose hangat dan ramah di feed.',
     aspect: 'portrait',
     ink: 'light',
-    background: 'linear-gradient(160deg, #ff7a18 0%, #ff3d6e 52%, #a01fff 100%)',
+    background: '#e11d48',
     accent: '#fff4e8',
   },
 
@@ -170,10 +159,10 @@ export const TEMPLATES: TemplateConfig[] = [
   {
     key: 'forest',
     label: 'Rimba',
-    description: 'Hijau teal yang menenangkan, pas untuk opini santai.',
+    description: 'Hijau emerald yang menenangkan, pas untuk opini santai.',
     aspect: 'square',
     ink: 'light',
-    background: 'linear-gradient(140deg, #0f766e 0%, #059669 55%, #34d399 100%)',
+    background: '#065f46',
     accent: '#ecfdf5',
   },
 
@@ -184,7 +173,7 @@ export const TEMPLATES: TemplateConfig[] = [
     description: 'Hitam pekat bergrid neon — gelap, tajam, misterius.',
     aspect: 'square',
     ink: 'light',
-    background: 'linear-gradient(180deg, #0b0d14 0%, #12141f 60%, #0b0d14 100%)',
+    background: '#0b0d14',
     accent: '#0038ff',
   },
 
@@ -195,7 +184,7 @@ export const TEMPLATES: TemplateConfig[] = [
     description: 'Krem bersih bertekstur arsir — teks gelap, enak dibaca.',
     aspect: 'portrait',
     ink: 'dark',
-    background: 'linear-gradient(150deg, #fdf6ec 0%, #f6ead6 60%, #efe0c6 100%)',
+    background: '#f5ede0',
     accent: '#b45309',
   },
 
@@ -203,10 +192,10 @@ export const TEMPLATES: TemplateConfig[] = [
   {
     key: 'ocean',
     label: 'Samudra',
-    description: 'Cyan ke biru tua, segar seperti biru laut.',
+    description: 'Biru laut dalam, segar dan tenang.',
     aspect: 'portrait',
     ink: 'light',
-    background: 'linear-gradient(200deg, #22d3ee 0%, #0ea5e9 48%, #1e3a8a 100%)',
+    background: '#0369a1',
     accent: '#ecfeff',
   },
 
@@ -214,10 +203,10 @@ export const TEMPLATES: TemplateConfig[] = [
   {
     key: 'violet',
     label: 'Violet',
-    description: 'Format feed potret 4:5, gradien ungu–pink cerah di feed Instagram.',
+    description: 'Ungu cerah yang menonjol di feed Instagram.',
     aspect: 'portrait',
     ink: 'light',
-    background: 'linear-gradient(180deg, #7000ff 0%, #c026d3 45%, #f472b6 100%)',
+    background: '#7c3aed',
     accent: '#fdf4ff',
   },
 
@@ -225,12 +214,11 @@ export const TEMPLATES: TemplateConfig[] = [
   {
     key: 'default',
     label: 'Standar',
-    description: 'Gradien biru–ungu khas Fess n Curious, siap pakai di feed.',
+    description: 'Biru khas Fess n Curious, siap pakai di feed.',
     aspect: 'portrait',
     ink: 'light',
-    background: 'linear-gradient(135deg, #0038ff 0%, #4b1fff 55%, #7000ff 100%)',
+    background: '#0038ff',
     accent: '#ffffff',
-    category: 'standard',
   },
 ];
 

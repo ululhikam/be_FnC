@@ -38,6 +38,31 @@ export const QuotedFessSchema = z.object({
   avatar_text: z.string().optional().nullable(),
 });
 
+/** Validasi payload pratinjau kartu (tanpa menyimpan fess / posting). */
+export const CanvasPreviewSchema = z.object({
+  base_handle: z.string().min(1, 'Base tujuan wajib dipilih'),
+  content: z
+    .string()
+    .min(1, 'Konten confession minimal 1 karakter')
+    .max(2000, 'Konten maksimal 2000 karakter'),
+  template: z.string().max(40).optional().default('default'),
+  tag: z.enum(['Cerita', 'Tanya']).optional().nullable(),
+  quoted_fess: z
+    .object({
+      id: z.union([z.string(), z.number()]).optional().nullable(),
+      handle: z.string().optional().nullable(),
+      senderHandle: z.string().optional().nullable(),
+      content: z.string(),
+      time: z.string().optional().nullable(),
+      avatar_bg: z.string().optional().nullable(),
+      avatar_text: z.string().optional().nullable(),
+      avatarBg: z.string().optional().nullable(),
+      avatarText: z.string().optional().nullable(),
+    })
+    .optional()
+    .nullable(),
+});
+
 export const CreateFessSchema = z.object({
   base_handle: z.string().min(1, 'Base tujuan wajib dipilih'),
   content: z.string().min(1, 'Konten confession minimal 1 karakter').max(2000, 'Konten maksimal 2000 karakter'),

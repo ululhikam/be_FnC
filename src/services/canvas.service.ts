@@ -14,9 +14,9 @@ import { getEmojiSvgMarkup } from '../config/emoji.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
- * Template generasi lama (gradasi orisinal). Dipertahankan agar fess lama
- * tetap dirender persis seperti sebelumnya: gradient khusus per key, tekstur
- * titik halus, dan panel kartu versi lama.
+ * Template generasi lama (solid, tanpa gradient). Dipertahankan agar fess lama
+ * tetap bisa dirender: warna solid per key, tekstur halus, dan panel kartu
+ * versi lama.
  */
 const LEGACY_TEMPLATE_KEYS = new Set([
   'default',
@@ -29,54 +29,42 @@ const LEGACY_TEMPLATE_KEYS = new Set([
   'violet',
 ]);
 
-/** Definisi gradient SVG asli untuk template lama (persis versi sebelumnya). */
-const LEGACY_GRADIENTS: Record<string, string> = {
-  default: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="#0038ff"/>
-          <stop offset="50%" stop-color="#4b1fff"/>
-          <stop offset="100%" stop-color="#7000ff"/>
-        </linearGradient>`,
-  midnight: `<radialGradient id="bgGrad" cx="30%" cy="20%" r="80%">
-          <stop offset="0%" stop-color="#1e295d"/>
-          <stop offset="60%" stop-color="#0a0e27"/>
-          <stop offset="100%" stop-color="#030511"/>
-        </radialGradient>`,
-  sunset: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="#ff6b35"/>
-          <stop offset="45%" stop-color="#f72585"/>
-          <stop offset="100%" stop-color="#7209b7"/>
-        </linearGradient>`,
-  forest: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="#0f766e"/>
-          <stop offset="60%" stop-color="#064e3b"/>
-          <stop offset="100%" stop-color="#022c22"/>
-        </linearGradient>`,
-  noir: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%" stop-color="#0f111a"/>
-          <stop offset="50%" stop-color="#161926"/>
-          <stop offset="100%" stop-color="#090a10"/>
-        </linearGradient>`,
-  paper: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="#fef8ee"/>
-          <stop offset="60%" stop-color="#f5ede0"/>
-          <stop offset="100%" stop-color="#e9dfcf"/>
-        </linearGradient>`,
-  ocean: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="#06b6d4"/>
-          <stop offset="45%" stop-color="#0284c7"/>
-          <stop offset="100%" stop-color="#1e3a8a"/>
-        </linearGradient>`,
-  violet: `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="#7c3aed"/>
-          <stop offset="50%" stop-color="#c026d3"/>
-          <stop offset="100%" stop-color="#f43f5e"/>
-        </linearGradient>`,
+/**
+ * Tekstur template generasi lama — kembar dengan helper `texture` pada
+ * frontend/src/config/templates.js supaya pratinjau dan hasil render sama.
+ */
+const LEGACY_PATTERNS: Record<string, string> = {
+  default: `<pattern id="bgPattern" width="28" height="28" patternUnits="userSpaceOnUse">
+        <circle cx="7" cy="7" r="1.6" fill="rgba(255,255,255,0.16)"/>
+      </pattern>`,
+  midnight: `<pattern id="bgPattern" width="34" height="34" patternUnits="userSpaceOnUse">
+        <circle cx="8.5" cy="8.5" r="1.2" fill="rgba(255,255,255,0.30)"/>
+      </pattern>`,
+  sunset: `<pattern id="bgPattern" width="18" height="18" patternUnits="userSpaceOnUse">
+        <path d="M-18,0 l36,36 M0,-18 l36,36 M18,36 l36,36" fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="2"/>
+      </pattern>`,
+  forest: `<pattern id="bgPattern" width="60" height="60" patternUnits="userSpaceOnUse">
+        <circle cx="7" cy="11" r="1.5" fill="rgba(255,255,255,0.22)"/>
+        <circle cx="31" cy="6" r="1.1" fill="rgba(255,255,255,0.22)"/>
+        <circle cx="46" cy="24" r="1.7" fill="rgba(255,255,255,0.22)"/>
+        <circle cx="19" cy="38" r="1.2" fill="rgba(255,255,255,0.22)"/>
+        <circle cx="52" cy="49" r="1.4" fill="rgba(255,255,255,0.22)"/>
+        <circle cx="34" cy="53" r="1" fill="rgba(255,255,255,0.22)"/>
+      </pattern>`,
+  noir: `<pattern id="bgPattern" width="40" height="40" patternUnits="userSpaceOnUse">
+        <path d="M40 0H0v40" fill="none" stroke="rgba(0,56,255,0.35)" stroke-width="1"/>
+      </pattern>`,
+  paper: `<pattern id="bgPattern" width="16" height="16" patternUnits="userSpaceOnUse">
+        <path d="M-16,0 l32,32 M0,-16 l32,32 M16,32 l32,32" fill="none" stroke="rgba(60,40,20,0.10)" stroke-width="2"/>
+      </pattern>`,
+  ocean: `<pattern id="bgPattern" width="64" height="24" patternUnits="userSpaceOnUse">
+        <path d="M0 12q8-8 16 0t16 0 16 0 16 0" fill="none" stroke="rgba(255,255,255,0.28)" stroke-width="2"/>
+      </pattern>`,
+  violet: `<pattern id="bgPattern" width="90" height="90" patternUnits="userSpaceOnUse">
+        <circle cx="45" cy="45" r="18" fill="none" stroke="rgba(255,255,255,0.16)"/>
+        <circle cx="45" cy="45" r="34" fill="none" stroke="rgba(255,255,255,0.16)"/>
+      </pattern>`,
 };
-
-/** Tekstur titik halus yang dipakai semua template lama. */
-const LEGACY_PATTERN = `<pattern id="bgPattern" width="30" height="30" patternUnits="userSpaceOnUse">
-        <circle cx="7.5" cy="7.5" r="1.5" fill="rgba(255,255,255,0.10)"/>
-      </pattern>`;
 
 export interface CanvasExportResult {
   image_url: string;
@@ -300,6 +288,7 @@ export class CanvasService {
 
     const accentColor = template.accent || (isDark ? '#0038ff' : '#00b2ff');
     const accentInk = pickAccentInk(accentColor);
+    const pill = pickPillStyle(accentColor, template.background);
     const avatarInk = isNeo ? '#ffe600' : pickAvatarInk(accentColor);
 
     // ── Patterns per template ──────────────────────────────────────────────
@@ -343,23 +332,13 @@ export class CanvasService {
       </pattern>`,
     };
 
-    const patternDef = isLegacy ? LEGACY_PATTERN : patterns[template.key] || patterns.default;
+    const patternDef = isLegacy
+      ? LEGACY_PATTERNS[template.key] || LEGACY_PATTERNS.default
+      : patterns[template.key] || patterns.default;
 
-    // Background: gradient asli untuk template lama, gradient fallback untuk
-    // background bergaya CSS gradient lainnya, atau warna solid.
-    const legacyGradient = LEGACY_GRADIENTS[template.key];
-    const isGradient =
-      template.background.startsWith('linear-gradient') ||
-      template.background.startsWith('radial-gradient');
-    const bgDef = legacyGradient
-      ? legacyGradient
-      : isGradient
-      ? `<linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="#0038ff"/>
-          <stop offset="100%" stop-color="#7000ff"/>
-        </linearGradient>`
-      : '';
-    const bgFill = legacyGradient || isGradient ? 'url(#bgGrad)' : template.background;
+    // Semua template memakai warna solid — tanpa gradient agar teks selalu
+    // terbaca dan hasil render identik dengan pratinjau.
+    const bgFill = template.background;
 
     const W = aspect.width;
     const H = aspect.height;
@@ -385,6 +364,9 @@ export class CanvasService {
           subtextColor,
           cardBorder,
           accentColor: accentInk,
+          pillFill: pill.fill,
+          pillOpacity: pill.opacity,
+          pillText: pill.text,
         })
       : null;
     const quoteHeight = quoteBlock ? quoteBlock.height : 0;
@@ -469,7 +451,6 @@ export class CanvasService {
 
       return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
   <defs>
-    ${bgDef}
     ${patternDef}
     <filter id="cardShadow" x="-10%" y="-10%" width="120%" height="120%">
       ${shadowDef}
@@ -501,9 +482,9 @@ export class CanvasService {
 
   <!-- Tag pill -->
   <rect x="${PAD + cardW - 130}" y="${tagPillY}" width="106" height="34" rx="${isNeo ? 6 : 17}"
-        fill="${accentInk}" opacity="${isNeo ? 1 : 0.22}"/>
+        fill="${isNeo ? accentInk : pill.fill}" opacity="${isNeo ? 1 : pill.opacity}"/>
   <text x="${PAD + cardW - 77}" y="${tagPillY + 23}" font-family="Poppins, Arial, sans-serif" font-size="14"
-        font-weight="800" fill="${isNeo ? '#ffe600' : accentInk}" text-anchor="middle">${escapeXml(fess.tag || 'Confession')}</text>
+        font-weight="800" fill="${isNeo ? '#ffe600' : pill.text}" text-anchor="middle">${escapeXml(fess.tag || 'Confession')}</text>
 
   ${decoQuote}${pageQuoteSvg}<!-- Confession text -->
   ${textSvg}
@@ -540,6 +521,17 @@ export class CanvasService {
       .jpeg({ quality: 92, mozjpeg: true })
       .toBuffer();
   }
+
+  /**
+   * Render pratinjau kartu (PNG data URI) untuk modal konfirmasi posting.
+   * Memakai builder & renderer yang sama dengan auto-post Instagram, jadi
+   * bentuk teks, warna, dan paginasi identik dengan hasil yang diposting.
+   */
+  static renderPreviewImages(fess: FessLike, templateKey = 'default'): string[] {
+    return CanvasService.buildSvgPages(fess, templateKey).map(
+      (svg) => `data:image/png;base64,${CanvasService.renderSvgToPng(svg).toString('base64')}`
+    );
+  }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -574,17 +566,44 @@ function splitGraphemes(text: string): string[] {
 }
 
 /**
+ * Ambang luminance sederhana (WCAG kasar) untuk memilih warna ink.
+ * true = warna termasuk terang (mis. putih, krem, mint).
+ */
+function colorLuminance(color: string): number | null {
+  const match = /^#([0-9a-f]{6})$/i.exec(String(color || '').trim());
+  if (!match) return null;
+  const r = parseInt(match[1].slice(0, 2), 16);
+  const g = parseInt(match[1].slice(2, 4), 16);
+  const b = parseInt(match[1].slice(4, 6), 16);
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+}
+
+/**
  * Warna aksen terang (mis. putih template default) tidak terbaca sebagai teks
  * di atas kartu — ganti ke biru brand untuk elemen ink.
  */
 function pickAccentInk(color: string): string {
-  const match = /^#([0-9a-f]{6})$/i.exec(String(color || '').trim());
-  if (!match) return color;
-  const r = parseInt(match[1].slice(0, 2), 16);
-  const g = parseInt(match[1].slice(2, 4), 16);
-  const b = parseInt(match[1].slice(4, 6), 16);
-  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  const luminance = colorLuminance(color);
+  if (luminance === null) return color;
   return luminance > 0.72 ? '#0038ff' : color;
+}
+
+/**
+ * Gaya pill (tag "Cerita/Tanya" & badge "Kutip") supaya teksnya selalu
+ * terbaca: aksen terang memakai pill solid dengan teks senada background,
+ * aksen medium/gelap tetap gaya transparan seperti semula.
+ */
+function pickPillStyle(
+  accent: string,
+  background: string
+): { fill: string; opacity: number; text: string } {
+  const accentLum = colorLuminance(accent);
+  if (accentLum !== null && accentLum > 0.72) {
+    const bgLum = colorLuminance(background);
+    const text = bgLum !== null && bgLum < 0.55 ? background : '#0b0d14';
+    return { fill: accent, opacity: 0.95, text };
+  }
+  return { fill: accent, opacity: 0.22, text: accent };
 }
 
 /**
@@ -799,7 +818,16 @@ function renderTextLines(
 function buildQuoteBlock(
   quote: any,
   width: number,
-  theme: { isDark: boolean; textColor: string; subtextColor: string; cardBorder: string; accentColor: string }
+  theme: {
+    isDark: boolean;
+    textColor: string;
+    subtextColor: string;
+    cardBorder: string;
+    accentColor: string;
+    pillFill: string;
+    pillOpacity: number;
+    pillText: string;
+  }
 ): { height: number; render: (x: number, y: number) => string } {
   const PADQ = 18;
   const HEADER_H = 48;
@@ -871,9 +899,9 @@ function buildQuoteBlock(
         font-weight="700" fill="${theme.textColor}">${escapeXml(handle)}</text>
   ${timeSvg}
   <rect x="${pillX}" y="${pillY}" width="${pillW}" height="${pillH}" rx="15"
-        fill="${theme.accentColor}" fill-opacity="0.16" stroke="${theme.accentColor}" stroke-opacity="0.3" stroke-width="1"/>
+        fill="${theme.pillFill}" fill-opacity="${theme.pillOpacity}" stroke="${theme.pillFill}" stroke-opacity="0.3" stroke-width="1"/>
   <text x="${(pillX + pillW / 2).toFixed(1)}" y="${pillY + 20}" font-family="Poppins, Arial, sans-serif" font-size="15"
-        font-weight="800" fill="${theme.accentColor}" text-anchor="middle">Kutip</text>
+        font-weight="800" fill="${theme.pillText}" text-anchor="middle">Kutip</text>
   ${linesSvg}`;
   };
 

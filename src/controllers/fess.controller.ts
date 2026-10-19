@@ -1,6 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { FessService } from '../services/fess.service.js';
 import { CanvasService } from '../services/canvas.service.js';
+import { prisma } from '../config/prisma.js';
+import { normalizeHandle } from '../utils/format.util.js';
 import { trackBackground } from '../utils/background.js';
 import { successResponse, errorResponse } from '../utils/response.util.js';
 
@@ -18,6 +20,38 @@ export class FessController {
     try {
       const fess = await FessService.createFess(req.body, req.user?.id, trackBackground);
       return successResponse(res, fess, 201);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Pratinjau kartu fess untuk modal konfirmasi posting.
+   *
+   * Memakai renderer kanvas yang sama dengan auto-post, jadi gambar PNG yang
+   * dikembalikan identik dengan hasil yang nanti diposting ke Instagram.
+   */
+  static async previewCanvas(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { base_handle, content, template, tag, quoted_fess } = req.body;
+      const handle = normalizeHandle(String(base_handle || ''));
+      const base = await prisma.base.findUnique({ where: { handle } });
+
+      const images = CanvasService.renderPreviewImages(
+        {
+          content,
+          baseHandle: handle,
+          template,
+          tag: tag || null,
+          quotedFess: quoted_fess || null,
+          base: base
+            ? { name: base.name, initial: base.initial, igAccount: base.igAccount }
+            : null,
+        },
+        template
+      );
+
+      return successResponse(res, { images, page_count: images.length }, 200);
     } catch (error) {
       next(error);
     }

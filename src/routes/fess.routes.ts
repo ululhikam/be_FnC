@@ -4,6 +4,7 @@ import { CommentController } from '../controllers/comment.controller.js';
 import { optionalAuth, requireAuth, requireRole } from '../middlewares/auth.middleware.js';
 import { validateBody, validateQuery } from '../middlewares/validate.middleware.js';
 import {
+  CanvasPreviewSchema,
   CreateFessSchema,
   GetFessesQuerySchema,
   VoteSchema,
@@ -15,6 +16,13 @@ const router = Router();
 
 router.get('/', optionalAuth, validateQuery(GetFessesQuerySchema), FessController.getFesses);
 router.post('/', optionalAuth, validateBody(CreateFessSchema), FessController.createFess);
+// Pratinjau kartu untuk modal konfirmasi posting (tanpa menyimpan apa pun).
+router.post(
+  '/canvas/preview',
+  optionalAuth,
+  validateBody(CanvasPreviewSchema),
+  FessController.previewCanvas
+);
 router.get('/:id', optionalAuth, FessController.getFess);
 router.post('/:id/vote', requireAuth, validateBody(VoteSchema), FessController.voteFess);
 router.post(

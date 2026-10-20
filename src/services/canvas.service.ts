@@ -438,10 +438,10 @@ export class CanvasService {
 
     // ── Pilih ukuran font terbesar yang muat ≤ MAX_PAGES halaman ───────────
     const baseTiers = isSquare
-      ? [38, 33, 28, 24]
+      ? [45, 39, 33, 28]
       : aspect.key === 'story'
-      ? [44, 38, 32, 28]
-      : [42, 36, 30, 26];
+      ? [52, 45, 38, 33]
+      : [50, 42, 35, 31];
     const tiers = baseTiers.map((size) => Math.round(size * typo.scale));
     let fontSize = tiers[0];
     let letterSpacingPx = typo.letterSpacing * fontSize;
@@ -972,8 +972,8 @@ function buildQuoteBlock(
 ): { height: number; render: (x: number, y: number) => string } {
   const PADQ = 18;
   const HEADER_H = 48;
-  const QFONT = 25;
-  const QLH = 34;
+  const QFONT = 29;
+  const QLH = 40;
 
   const rawHandle = String(quote.handle || quote.senderHandle || '@anonim');
   const handle = rawHandle.startsWith('@') ? rawHandle : `@${rawHandle}`;

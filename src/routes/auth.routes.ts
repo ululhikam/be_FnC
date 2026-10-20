@@ -245,8 +245,11 @@ router.get('/instagram/callback', async (req: Request, res: Response) => {
         );
       }
       if (origin === 'register') {
+        // OAuth registrasi sudah membuat akun Base Admin. Akun tanpa base
+        // harus melanjutkan ke onboarding, bukan kembali ke form registrasi
+        // (yang akan langsung diarahkan oleh route guard).
         return res.redirect(
-          `${ENV.FRONTEND_URL}/register/base?token=${encodeURIComponent(authToken)}&ig_connected=true&ig_user=${encodeURIComponent(profile.username)}`
+          `${ENV.FRONTEND_URL}/onboarding/base?token=${encodeURIComponent(authToken)}&ig_connected=true&ig_user=${encodeURIComponent(profile.username)}`
         );
       }
       if (origin === 'login') {
@@ -285,7 +288,7 @@ router.get('/instagram/callback', async (req: Request, res: Response) => {
     }
     if (origin === 'register') {
       return res.redirect(
-        `${ENV.FRONTEND_URL}/register/base?ig_connected=true&ig_user=${encodeURIComponent(result.profile.username)}${tokenQuery}`
+        `${ENV.FRONTEND_URL}/onboarding/base?ig_connected=true&ig_user=${encodeURIComponent(result.profile.username)}${tokenQuery}`
       );
     }
     if (origin === 'login') {

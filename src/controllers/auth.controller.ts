@@ -84,6 +84,39 @@ export class AuthController {
     }
   }
 
+  /** Verifikasi OTP email; sekaligus menerbitkan sesi akses. */
+  static async verifyEmail(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { ticket, otp } = req.body;
+      const result = await AuthService.verifyEmail(ticket, otp);
+      return successResponse(res, result, 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Kirim ulang OTP verifikasi email. */
+  static async resendEmailVerification(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { ticket } = req.body;
+      const result = await AuthService.resendEmailVerification(ticket);
+      return successResponse(res, result, 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Ganti email sebelum email akun terverifikasi. */
+  static async changeVerificationEmail(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { ticket, new_email } = req.body;
+      const result = await AuthService.changeVerificationEmail(ticket, new_email);
+      return successResponse(res, result, 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
   static async getMe(req: Request, res: Response, next: NextFunction) {
     try {
       if (!req.user) {

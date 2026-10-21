@@ -1,7 +1,8 @@
 /**
  * EmailService — pengiriman email transaksional via Resend SDK.
  * ---------------------------------------------------------------------------
- * Dipakai untuk kode OTP reset kata sandi. Konfigurasi lewat env:
+ * Dipakai untuk kode OTP verifikasi email akun dan reset kata sandi.
+ * Konfigurasi lewat env:
  *   RESEND_API_KEY, EMAIL_FROM
  */
 
@@ -49,6 +50,40 @@ export class EmailService {
     }
 
     return data;
+  }
+
+  /** Email kode OTP verifikasi alamat email akun (berlaku 10 menit). */
+  static async sendEmailVerificationOtp(to: string, otp: string) {
+    const subject = 'Verifikasi Email — Fess n Curious';
+    const text = [
+      `Kode verifikasi email kamu: ${otp}`,
+      '',
+      'Kode ini berlaku 10 menit dan hanya bisa dipakai sekali.',
+      'Jika kamu tidak merasa mendaftar di Fess n Curious, abaikan email ini.',
+    ].join('\n');
+
+    const html = `
+      <div style="font-family: Arial, Helvetica, sans-serif; max-width: 480px; margin: 0 auto; color: #111;">
+        <h2 style="margin: 0 0 12px;">Verifikasi Email</h2>
+        <p style="margin: 0 0 16px; line-height: 1.5;">
+          Gunakan kode OTP berikut untuk memverifikasi alamat email akun
+          <strong>Fess n Curious</strong> kamu:
+        </p>
+        <div style="font-size: 32px; font-weight: 800; letter-spacing: 8px; text-align: center;
+                    background: #f4f6ff; border: 1px solid #dfe4ff; border-radius: 12px;
+                    padding: 16px; margin: 0 0 16px;">
+          ${otp}
+        </div>
+        <p style="margin: 0 0 8px; font-size: 13px; color: #444;">
+          Kode ini berlaku <strong>10 menit</strong> dan hanya bisa dipakai sekali.
+        </p>
+        <p style="margin: 0; font-size: 13px; color: #444;">
+          Jika kamu tidak merasa mendaftar, abaikan email ini.
+        </p>
+      </div>
+    `;
+
+    await this.sendMail({ to, subject, text, html });
   }
 
   /** Email kode OTP reset kata sandi (berlaku 10 menit). */

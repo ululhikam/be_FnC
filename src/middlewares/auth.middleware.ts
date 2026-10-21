@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { verifyToken } from '../utils/jwt.util.js';
+import { generateEmailVerificationTicket, verifyToken } from '../utils/jwt.util.js';
 import { errorResponse } from '../utils/response.util.js';
 import { prisma } from '../config/prisma.js';
 
@@ -51,6 +51,22 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       return errorResponse(res, 'Sesi tidak valid atau akun telah dibekukan.', 401, 'UNAUTHORIZED');
     }
 
+    // JWT lama tetap bisa terbaca, tetapi akun yang emailnya belum diverifikasi
+    // tidak boleh mengakses data apa pun. Frontend memakai ticket di bawah untuk
+    // melanjutkan ke halaman verifikasi tanpa perlu login ulang.
+    if (user.email && !user.emailVerifiedAt) {
+      return res.status(403).json({
+        message: 'Verifikasi email diperlukan sebelum melanjutkan.',
+        code: 'EMAIL_NOT_VERIFIED',
+        email: user.email,
+        verification_ticket: generateEmailVerificationTicket({
+          sub: user.id,
+          role: user.role,
+          email: user.email,
+        }),
+      });
+    }
+
     req.user = {
       id: user.id,
       username: user.username,
@@ -94,7 +110,7 @@ export async function optionalAuth(req: Request, res: Response, next: NextFuncti
       },
     });
 
-    if (user && !user.isBanned) {
+    if (user && !user.isBanned && (!user.email || user.emailVerifiedAt)) {
       req.user = {
         id: user.id,
         username: user.username,

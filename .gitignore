@@ -19,3 +19,4 @@ Thumbs.db
 
 # Skrip verifikasi lokal (jangan di-commit)
 tmp_verify_*.ts
+.vercel

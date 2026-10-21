@@ -1,9 +1,10 @@
 import { z } from 'zod';
+import { AvatarSchema } from './avatar.validator.js';
 
 export const UpdateProfileSchema = z.object({
   username: z.string().min(3).max(30).optional(),
   bio: z.string().max(160).optional().nullable(),
-  avatar: z.string().url().optional().nullable(),
+  avatar: AvatarSchema,
 });
 
 export const UserFessesQuerySchema = z.object({

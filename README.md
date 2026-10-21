@@ -70,7 +70,7 @@ FRONTEND_URL=http://localhost:5173
 
 # JWT
 JWT_SECRET=fess_super_secret_jwt_key_replace_with_strong_secret_in_prod_2026
-JWT_EXPIRES_IN=7d
+JWT_EXPIRES_IN=1d
 
 # Supabase PostgreSQL (Prisma)
 DATABASE_URL=postgresql://postgres.yourproject:yourpassword@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres?pgbouncer=true
@@ -85,6 +85,11 @@ SUPABASE_BUCKET=confess-media
 GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=your-google-client-secret
 GOOGLE_CALLBACK_URL=http://localhost:3000/api/auth/google/callback
+
+# Resend (OTP verifikasi email & reset kata sandi)
+# EMAIL_FROM wajib memakai domain yang sudah diverifikasi di Resend untuk production.
+RESEND_API_KEY=re_your_resend_api_key
+EMAIL_FROM=Fess n Curious <no-reply@your-verified-domain.com>
 
 # Meta for Developers / Instagram Graph API
 INSTAGRAM_CLIENT_ID=your-meta-instagram-app-id

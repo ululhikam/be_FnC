@@ -13,14 +13,32 @@ import {
   ForgotPasswordSchema,
   VerifyResetOtpSchema,
   ResetPasswordSchema,
+  VerifyEmailSchema,
+  ResendEmailVerificationSchema,
+  ChangeVerificationEmailSchema,
 } from '../validators/auth.validator.js';
 import { generateToken, verifyToken } from '../utils/jwt.util.js';
 import { ENV } from '../config/env.js';
 import { InstagramService } from '../services/instagram.service.js';
+import { AuthService } from '../services/auth.service.js';
 import { prisma } from '../config/prisma.js';
 import { parseSignedRequest } from '../utils/meta-signed-request.util.js';
 
 const router = Router();
+
+/**
+ * Ticket verifikasi tidak boleh ikut terkirim ke server/referrer lewat query.
+ * Taruh di fragment URL; frontend membacanya lalu langsung membersihkan hash.
+ */
+function emailVerificationRedirectUrl(
+  email: string,
+  challenge: { verification_ticket: string; email_sent: boolean }
+) {
+  const query = new URLSearchParams({ email });
+  if (!challenge.email_sent) query.set('sent', '0');
+  const fragment = new URLSearchParams({ ticket: challenge.verification_ticket });
+  return `${ENV.FRONTEND_URL}/verify-email?${query.toString()}#${fragment.toString()}`;
+}
 
 // Standard API Contract Endpoints
 router.post('/login', validateBody(LoginSchema), AuthController.login);
@@ -35,6 +53,11 @@ router.post('/refresh', requireAuth, AuthController.refreshToken);
 router.post('/forgot-password', validateBody(ForgotPasswordSchema), AuthController.forgotPassword);
 router.post('/verify-reset-otp', validateBody(VerifyResetOtpSchema), AuthController.verifyResetOtp);
 router.post('/reset-password', validateBody(ResetPasswordSchema), AuthController.resetPassword);
+
+// Verifikasi email akun (OTP via Resend) — tanpa sesi login.
+router.post('/email-verification/verify', validateBody(VerifyEmailSchema), AuthController.verifyEmail);
+router.post('/email-verification/resend', validateBody(ResendEmailVerificationSchema), AuthController.resendEmailVerification);
+router.post('/email-verification/change-email', validateBody(ChangeVerificationEmailSchema), AuthController.changeVerificationEmail);
 
 // Instagram Verification via Meta for Developers App
 router.post('/instagram/verify', requireAuth, validateBody(InstagramVerifySchema), AuthController.verifyInstagram);
@@ -60,8 +83,21 @@ router.get('/google', (req, res, next) => {
 router.get(
   '/google/callback',
   passport.authenticate('google', { session: false, failureRedirect: `${ENV.FRONTEND_URL}/login?error=google_failed` }),
-  (req: Request, res: Response) => {
+  async (req: Request, res: Response) => {
     const user = req.user as any;
+
+    // Akun lama yang belum pernah verifikasi email wajib menyelesaikan OTP,
+    // termasuk ketika masuk lewat Google. Akun Google baru sudah auto-verified
+    // saat dibuat di passport strategy.
+    if (user.email && !user.emailVerifiedAt) {
+      try {
+        const challenge = await AuthService.createEmailVerificationChallenge(user);
+        return res.redirect(emailVerificationRedirectUrl(user.email, challenge));
+      } catch {
+        return res.redirect(`${ENV.FRONTEND_URL}/login?error=email_verification_failed`);
+      }
+    }
+
     const token = generateToken({
       sub: user.id,
       role: user.role,
@@ -232,6 +268,18 @@ router.get('/instagram/callback', async (req: Request, res: Response) => {
         },
       });
 
+      // Akun lama dengan email belum terverifikasi tidak boleh mendapat sesi
+      // penuh hanya karena masuk lewat Instagram. Akun IG-only (tanpa email)
+      // tetap dikecualikan.
+      if (user.email && !user.emailVerifiedAt) {
+        try {
+          const challenge = await AuthService.createEmailVerificationChallenge(user);
+          return res.redirect(emailVerificationRedirectUrl(user.email, challenge));
+        } catch {
+          return res.redirect(`${ENV.FRONTEND_URL}/login?error=email_verification_failed`);
+        }
+      }
+
       const authToken = generateToken({
         sub: user.id,
         role: user.role,
@@ -270,6 +318,16 @@ router.get('/instagram/callback', async (req: Request, res: Response) => {
     });
 
     const activeUser = await prisma.user.findUnique({ where: { id: targetUserId } });
+
+    if (activeUser?.email && !activeUser.emailVerifiedAt) {
+      try {
+        const challenge = await AuthService.createEmailVerificationChallenge(activeUser);
+        return res.redirect(emailVerificationRedirectUrl(activeUser.email, challenge));
+      } catch {
+        return res.redirect(`${ENV.FRONTEND_URL}/login?error=email_verification_failed`);
+      }
+    }
+
     const freshToken = activeUser
       ? generateToken({
           sub: activeUser.id,

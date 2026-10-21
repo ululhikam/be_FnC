@@ -18,7 +18,7 @@ export const ENV = {
 
   // JWT
   JWT_SECRET: process.env.JWT_SECRET || 'fess_secret_jwt_key_2026',
-  JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '7d',
+  JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '1d',
 
   // Supabase
   DATABASE_URL: process.env.DATABASE_URL || '',

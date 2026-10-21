@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AvatarSchema } from './avatar.validator.js';
 
 export const GetBasesQuerySchema = z.object({
   search: z.string().optional(),
@@ -24,7 +25,7 @@ export const CreateBaseSchema = z.object({
     .optional(),
   keyword: z.string().max(30).optional().nullable(),
   bio: z.string().max(300).optional().nullable(),
-  avatar: z.string().url().optional().nullable(),
+  avatar: AvatarSchema,
   ig_account: z.string().max(50).optional().nullable(),
   rules: z.array(z.string().max(160)).max(10).optional(),
 });
@@ -34,7 +35,7 @@ export const UpdateBaseSettingsSchema = z.object({
   handle: z.string().regex(/^@?[a-zA-Z0-9_.]{3,20}$/).optional(),
   keywords: z.string().optional().nullable(),
   bio: z.string().max(300).optional().nullable(),
-  avatar: z.string().url().optional().nullable(),
+  avatar: AvatarSchema,
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   rules: z.array(z.string()).optional(),
   postMode: z.enum(['auto', 'moderated']).optional(),

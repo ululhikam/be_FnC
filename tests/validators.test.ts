@@ -64,6 +64,31 @@ describe('Auth Validators', () => {
     expect(res.success).toBe(false);
   });
 
+  it('should accept local SVG data-URI avatars', () => {
+    const valid = {
+      email: 'user@gmail.com',
+      password: 'password123',
+      username: 'Alex Pratama',
+      handle: '@alex_reader',
+      avatar:
+        'data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3C%2Fsvg%3E',
+    };
+    const res = RegisterUserSchema.safeParse(valid);
+    expect(res.success).toBe(true);
+  });
+
+  it('should reject non-image data-URI avatars', () => {
+    const invalid = {
+      email: 'user@gmail.com',
+      password: 'password123',
+      username: 'Alex',
+      handle: '@alex_reader',
+      avatar: 'data:text/html;base64,PHNjcmlwdD4=',
+    };
+    const res = RegisterUserSchema.safeParse(invalid);
+    expect(res.success).toBe(false);
+  });
+
   it('should validate RegisterBase payload', () => {
     const valid = {
       email: 'admin@codememfess.id',

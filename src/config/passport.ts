@@ -105,6 +105,7 @@ if (ENV.GOOGLE_CLIENT_ID && ENV.GOOGLE_CLIENT_SECRET) {
                 handle: cleanHandle,
                 avatar,
                 role,
+                emailVerifiedAt: new Date(),
                 bio: 'Joined via Google Sign-In',
               },
             });

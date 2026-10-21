@@ -4,6 +4,9 @@ import { AuthService } from '../src/services/auth.service.js';
 import { EmailService } from '../src/services/email.service.js';
 import { prisma } from '../src/config/prisma.js';
 import * as passwordUtil from '../src/utils/password.util.js';
+import { generateEmailVerificationTicket } from '../src/utils/jwt.util.js';
+
+const testSha256 = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
 
 vi.mock('../src/config/prisma.js', () => ({
   prisma: {
@@ -22,6 +25,13 @@ vi.mock('../src/config/prisma.js', () => ({
       upsert: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
+    },
+    emailVerification: {
+      findUnique: vi.fn(),
+      upsert: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+      deleteMany: vi.fn(),
     },
     $transaction: vi.fn(),
   },
@@ -82,6 +92,7 @@ describe('AuthService Unit Tests', () => {
         level: 14,
         badges: ['MEMBER'],
         managedBases: [],
+        emailVerifiedAt: new Date(),
         createdAt: new Date(),
       } as any);
 
@@ -125,8 +136,11 @@ describe('AuthService Unit Tests', () => {
       ).rejects.toThrow();
     });
 
-    it('should successfully register new user', async () => {
+    it('should successfully register new user and start email verification', async () => {
       vi.mocked(prisma.user.findFirst).mockResolvedValueOnce(null);
+      vi.mocked(prisma.emailVerification.findUnique).mockResolvedValueOnce(null);
+      vi.mocked(prisma.emailVerification.upsert).mockResolvedValueOnce({} as any);
+      vi.spyOn(EmailService, 'sendEmailVerificationOtp').mockResolvedValueOnce(undefined);
       vi.mocked(prisma.user.create).mockResolvedValueOnce({
         id: 'usr_new',
         username: 'New User',
@@ -146,7 +160,107 @@ describe('AuthService Unit Tests', () => {
       });
 
       expect(result.user.id).toBe('usr_new');
+      expect(result.requires_email_verification).toBe(true);
+      expect(result.token).toBeUndefined();
+      expect(typeof result.verification_ticket).toBe('string');
+    });
+
+    it('should block password login until the email is verified', async () => {
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({
+        id: 'usr_unverified',
+        username: 'Unverified',
+        handle: '@unverified',
+        email: 'unverified@mail.com',
+        password: 'hashed_password',
+        isBanned: false,
+        role: 'User',
+        level: 1,
+        badges: ['MEMBER'],
+        managedBases: [],
+        emailVerifiedAt: null,
+        createdAt: new Date(),
+      } as any);
+      vi.mocked(prisma.emailVerification.findUnique).mockResolvedValueOnce(null);
+      vi.mocked(prisma.emailVerification.upsert).mockResolvedValueOnce({} as any);
+      vi.spyOn(EmailService, 'sendEmailVerificationOtp').mockResolvedValueOnce(undefined);
+      vi.spyOn(passwordUtil, 'comparePassword').mockResolvedValueOnce(true);
+
+      const result = await AuthService.login('unverified@mail.com', 'password123', 'User');
+
+      expect(result.requires_email_verification).toBe(true);
+      expect(result.token).toBeUndefined();
+      expect(result.user).toBeUndefined();
+      expect(typeof result.verification_ticket).toBe('string');
+    });
+  });
+
+  describe('email verification', () => {
+    it('verifies the correct OTP and issues a session token', async () => {
+      const user = {
+        id: 'usr_verify',
+        username: 'Verify Me',
+        handle: '@verifyme',
+        email: 'verify@mail.com',
+        password: 'hashed_password',
+        role: 'User',
+        badges: ['MEMBER'],
+        managedBases: [],
+        emailVerifiedAt: null,
+        createdAt: new Date(),
+      };
+
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(user as any);
+      vi.mocked(prisma.emailVerification.findUnique).mockResolvedValueOnce({
+        userId: user.id,
+        otpHash: testSha256('123456'),
+        otpExpiresAt: new Date(Date.now() + 60_000),
+        attempts: 0,
+      } as any);
+      vi.mocked(prisma.$transaction).mockResolvedValueOnce([{}, {}] as any);
+
+      const ticket = generateEmailVerificationTicket({
+        sub: user.id,
+        role: user.role,
+        email: user.email,
+      });
+
+      const result = await AuthService.verifyEmail(ticket, '123456');
+
       expect(result.token).toBeDefined();
+      expect(result.user.email_verified).toBe(true);
+      expect(prisma.emailVerification.deleteMany).toHaveBeenCalled();
+    });
+
+    it('increments attempts and rejects a wrong OTP', async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
+        id: 'usr_verify',
+        username: 'Verify Me',
+        handle: '@verifyme',
+        email: 'verify@mail.com',
+        role: 'User',
+        badges: ['MEMBER'],
+        managedBases: [],
+        emailVerifiedAt: null,
+        createdAt: new Date(),
+      } as any);
+      vi.mocked(prisma.emailVerification.findUnique).mockResolvedValueOnce({
+        userId: 'usr_verify',
+        otpHash: testSha256('123456'),
+        otpExpiresAt: new Date(Date.now() + 60_000),
+        attempts: 0,
+      } as any);
+      vi.mocked(prisma.emailVerification.update).mockResolvedValueOnce({} as any);
+
+      const ticket = generateEmailVerificationTicket({
+        sub: 'usr_verify',
+        role: 'User',
+        email: 'verify@mail.com',
+      });
+
+      await expect(AuthService.verifyEmail(ticket, '000000')).rejects.toThrow('Kode OTP salah');
+      expect(prisma.emailVerification.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { attempts: { increment: 1 } } })
+      );
     });
   });
 

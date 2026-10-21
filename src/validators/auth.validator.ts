@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AvatarSchema } from './avatar.validator.js';
 
 export const LoginSchema = z.object({
   identifier: z.string().min(1, 'Email atau username wajib diisi'),
@@ -13,7 +14,7 @@ export const RegisterUserSchema = z.object({
   handle: z
     .string()
     .regex(/^@?[a-zA-Z0-9_.]{3,20}$/, 'Handle harus 3-20 karakter (huruf, angka, underscore, atau titik)'),
-  avatar: z.string().url('URL avatar tidak valid').optional().nullable(),
+  avatar: AvatarSchema,
   bio: z.string().max(160, 'Bio maksimal 160 karakter').optional().nullable(),
 });
 
@@ -24,7 +25,7 @@ export const RegisterBaseSchema = z.object({
   handle: z
     .string()
     .regex(/^@?[a-zA-Z0-9_.]{3,20}$/, 'Handle harus 3-20 karakter (huruf, angka, underscore, atau titik)'),
-  avatar: z.string().url('URL avatar tidak valid').optional().nullable(),
+  avatar: AvatarSchema,
   bio: z.string().max(300, 'Bio maksimal 300 karakter').optional().nullable(),
   igAccount: z.string().optional().nullable(),
   category: z.enum(['Kampus', 'Kota', 'Hobi', 'Umum']).optional(),
@@ -57,6 +58,22 @@ export const ResetPasswordSchema = z.object({
   email: z.string().email('Format email tidak valid'),
   reset_token: z.string().min(32, 'Token reset tidak valid'),
   password: z.string().min(8, 'Kata sandi minimal 8 karakter'),
+});
+
+// --- Verifikasi email akun (OTP via Resend) ---
+
+export const VerifyEmailSchema = z.object({
+  ticket: z.string().min(20, 'Ticket verifikasi tidak valid'),
+  otp: z.string().regex(/^\d{6}$/, 'Kode OTP harus 6 digit angka'),
+});
+
+export const ResendEmailVerificationSchema = z.object({
+  ticket: z.string().min(20, 'Ticket verifikasi tidak valid'),
+});
+
+export const ChangeVerificationEmailSchema = z.object({
+  ticket: z.string().min(20, 'Ticket verifikasi tidak valid'),
+  new_email: z.string().email('Format email baru tidak valid'),
 });
 
 export const InstagramVerifySchema = z.object({

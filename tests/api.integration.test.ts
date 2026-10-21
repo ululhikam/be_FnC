@@ -140,6 +140,30 @@ describe('API Integration Tests (Express & OpenAPI Contract Endpoints)', () => {
       expect(res.body.content).toContain('Supertest');
     });
 
+    it('GET /api/fesses/:id/instagram-status mengembalikan status tanpa detail error untuk publik', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_ig',
+        baseHandle: '@codememfess',
+        postedToIg: true,
+        igStatus: 'failed',
+        igError: 'detail internal Meta',
+        igAttempts: 2,
+        igUpdatedAt: new Date(),
+        base: { creatorId: 'usr_owner' },
+      } as any);
+
+      const res = await request(app).get('/api/fesses/fess_ig/instagram-status');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        id: 'fess_ig',
+        posted_to_ig: true,
+        ig_status: 'failed',
+        ig_attempts: 2,
+      });
+      expect(res.body.ig_error).toBeUndefined();
+    });
+
     it('POST /api/fesses/:id/instagram-post tanpa login ditolak (bukan endpoint publik)', async () => {
       const res = await request(app).post('/api/fesses/fess_101/instagram-post').send({
         template: 'default',

@@ -587,13 +587,10 @@ export class InstagramService {
           const containerReady = await InstagramService.waitForContainersFinished([postCreationId], token);
           if (!containerReady) throw new Error('Container media Meta belum siap (masih IN_PROGRESS) setelah 30 detik.');
 
-          const pubRes = await axios.post(`${API_BASE}/me/media_publish`, null, {
-            params: {
-              creation_id: postCreationId,
-              access_token: token,
-            },
-            timeout: 15000,
-          });
+          const pubRes = await InstagramService.publishContainerWithRetry(
+            postCreationId,
+            token
+          );
           if (pubRes.data?.id) {
             metaPublished = true;
           }
@@ -771,7 +768,7 @@ export class InstagramService {
   private static isRetryableIgError(err: any, detail: string): boolean {
     const code = Number(err?.response?.data?.error?.code);
     if (code === 190) return false; // token kedaluwarsa/dicabut — perlu OAuth ulang
-    if ([1, 2, 4, 17, 32, 613, 9004].includes(code)) return true;
+    if ([1, 2, 4, 17, 32, 613, 9004, 9007].includes(code)) return true;
 
     // Error permanen harus dicek SEBELUM "tanpa response", karena error
     // normalisasi/format lokal juga tidak memiliki response HTTP.
@@ -784,7 +781,7 @@ export class InstagramService {
     }
     if (!err?.response || err?.code === 'ECONNABORTED' || err?.code === 'ETIMEDOUT') return true;
     if (
-      /timeout|network|fetch|temporar|rate limit|try again|not available|belum siap|unduh|upload|unggah|storage/i.test(
+      /timeout|network|fetch|temporar|rate limit|try again|not available|not ready|media is not ready|belum siap|unduh|upload|unggah|storage/i.test(
         detail
       )
     ) {
@@ -952,6 +949,51 @@ export class InstagramService {
       detail += ` (kode Meta ${metaError.code})`;
     }
     return detail;
+  }
+
+  /** Meta 9007 = container sudah FINISHED tetapi belum siap dipublikasikan. */
+  private static isMediaNotReadyError(err: any, detail: string): boolean {
+    const code = Number(err?.response?.data?.error?.code);
+    return code === 9007 || /media is not ready|not ready for publishing|belum siap/i.test(detail);
+  }
+
+  /**
+   * Publish container dengan satu percobaan tambahan untuk Meta 9007.
+   * Meta kadang butuh beberapa detik ekstra meski status container FINISHED.
+   */
+  private static async publishContainerWithRetry(
+    containerId: string,
+    accessToken: string,
+    deadlineTs = Date.now() + 20_000
+  ): Promise<any> {
+    const maxAttempts = 2;
+    let lastErr: any;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (attempt > 0) {
+        const waitMs = Math.min(2500, Math.max(0, deadlineTs - Date.now()));
+        if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+      }
+
+      try {
+        return await axios.post(`${API_BASE}/me/media_publish`, null, {
+          params: { creation_id: containerId, access_token: accessToken },
+          timeout: 15000,
+        });
+      } catch (err: any) {
+        lastErr = err;
+        const detail = InstagramService.metaErrorDetail(err);
+        if (!InstagramService.isMediaNotReadyError(err, detail) || attempt === maxAttempts - 1) {
+          throw err;
+        }
+        console.warn(
+          `[Instagram Publish] container ${containerId} belum siap, mencoba sekali lagi:`,
+          detail
+        );
+      }
+    }
+
+    throw lastErr;
   }
 
   static truncateIgError(value: string): string {
@@ -1306,6 +1348,8 @@ export class InstagramService {
     payload: FinalizePayload,
     deadlineTs = Date.now() + 50_000
   ): Promise<void> {
+    let containerId = payload.containerId;
+
     try {
       const fess = prisma.fess?.findUnique
         ? await prisma.fess.findUnique({
@@ -1320,8 +1364,6 @@ export class InstagramService {
         await InstagramService.auditFinalize(payload, baseIg, false, 'Koneksi Instagram tidak aktif.');
         return;
       }
-
-      let containerId = payload.containerId;
 
       // Fase 1 — item container selesai? Lalu rakit carousel.
       if (!containerId) {
@@ -1353,17 +1395,14 @@ export class InstagramService {
         return;
       }
 
-      const pubRes = await axios.post(`${API_BASE}/me/media_publish`, null, {
-        params: { creation_id: containerId, access_token: token },
-        timeout: 15000,
-      });
+      const pubRes = await InstagramService.publishContainerWithRetry(
+        containerId,
+        token,
+        deadlineTs
+      );
       const published = Boolean(pubRes.data?.id);
-      if (published) {
-        await prisma.fess.update({
-          where: { id: payload.fessId },
-          data: { postedToIg: true },
-        });
-      }
+      // auditFinalize sekaligus menulis postedToIg=true. Jangan ada operasi DB
+      // yang bisa melempar setelah publish sukses — reschedule akan menduplikasi.
       await InstagramService.auditFinalize(
         payload,
         baseIg,
@@ -1378,6 +1417,18 @@ export class InstagramService {
         detail += ' — token Instagram kedaluwarsa/dicabut, hubungkan ulang akun via Meta OAuth';
       }
       console.warn('[Instagram Finalize] gagal:', detail);
+
+      // 9007/network/timeout masih bisa pulih: lanjutkan container yang sama
+      // (atau fase 1 bila carousel belum dirakit) daripada langsung menyerah.
+      if (InstagramService.isRetryableIgError(err, detail)) {
+        await InstagramService.updateFessIgState(payload.fessId, {
+          igStatus: 'pending',
+          igError: null,
+        });
+        await InstagramService.rescheduleFinalize({ ...payload, containerId });
+        return;
+      }
+
       await InstagramService.auditFinalize(payload, payload.baseHandle, false, detail).catch(() => {});
     }
   }
@@ -1396,7 +1447,14 @@ export class InstagramService {
     try {
       await InstagramService.scheduleFinalize({ ...payload, attempts: payload.attempts + 1 });
     } catch (err: any) {
-      console.warn('[Instagram Finalize] gagal menjadwalkan ulang:', err?.message);
+      const detail = `Gagal menjadwalkan kelanjutan otomatis: ${err?.message || err}`;
+      console.warn('[Instagram Finalize]', detail);
+      await InstagramService.auditFinalize(
+        payload,
+        payload.baseHandle,
+        false,
+        detail
+      ).catch(() => {});
     }
   }
 

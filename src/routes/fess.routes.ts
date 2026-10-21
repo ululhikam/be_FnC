@@ -23,6 +23,7 @@ router.post(
   validateBody(CanvasPreviewSchema),
   FessController.previewCanvas
 );
+router.get('/:id/instagram-status', optionalAuth, FessController.getInstagramStatus);
 router.get('/:id', optionalAuth, FessController.getFess);
 router.post('/:id/vote', requireAuth, validateBody(VoteSchema), FessController.voteFess);
 router.post(

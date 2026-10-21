@@ -373,6 +373,45 @@ export class FessService {
     });
   }
 
+  /**
+   * Status Instagram ringan untuk polling UI. Sengaja tidak memuat komentar
+   * agar aman dipanggil berkala saat badge masih processing/pending.
+   */
+  static async getInstagramStatus(
+    id: string,
+    viewer?: { id?: string; role?: string; managedBases?: string[] }
+  ) {
+    const fess = await prisma.fess.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        baseHandle: true,
+        postedToIg: true,
+        igStatus: true,
+        igError: true,
+        igAttempts: true,
+        igUpdatedAt: true,
+        base: { select: { creatorId: true } },
+      },
+    });
+
+    if (!fess) {
+      const err: any = new Error('Fess tidak ditemukan');
+      err.status = 404;
+      err.code = 'NOT_FOUND';
+      throw err;
+    }
+
+    return {
+      id: fess.id,
+      posted_to_ig: fess.postedToIg,
+      ig_status: fess.igStatus,
+      ig_attempts: fess.igAttempts,
+      ig_updated_at: fess.igUpdatedAt,
+      ...(this.canViewIgError(fess, viewer) ? { ig_error: fess.igError } : {}),
+    };
+  }
+
   /** Detail error IG hanya untuk admin yang benar-benar mengelola base fess. */
   private static canViewIgError(
     fess: { baseHandle?: string | null; base?: { creatorId?: string | null } | null },

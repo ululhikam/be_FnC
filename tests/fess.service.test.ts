@@ -908,4 +908,35 @@ describe('Serialisasi status Instagram', () => {
     });
     expect(otherView).not.toHaveProperty('ig_error');
   });
+
+  it('getInstagramStatus: polling publik hanya status, admin pengelola dapat detail', async () => {
+    const row = {
+      id: 'fess_ig_1',
+      baseHandle: '@codemine',
+      postedToIg: false,
+      igStatus: 'failed',
+      igError: 'Container media Meta ERROR: rasio tidak sama',
+      igAttempts: 3,
+      igUpdatedAt: new Date(),
+      base: { creatorId: 'usr_owner' },
+    };
+
+    vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce(row as any);
+    const publicView = await FessService.getInstagramStatus('fess_ig_1');
+    expect(publicView).toMatchObject({
+      id: 'fess_ig_1',
+      posted_to_ig: false,
+      ig_status: 'failed',
+      ig_attempts: 3,
+    });
+    expect(publicView).not.toHaveProperty('ig_error');
+
+    vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce(row as any);
+    const ownerView = await FessService.getInstagramStatus('fess_ig_1', {
+      id: 'usr_owner',
+      role: 'Base Admin',
+      managedBases: [],
+    });
+    expect(ownerView.ig_error).toContain('rasio tidak sama');
+  });
 });

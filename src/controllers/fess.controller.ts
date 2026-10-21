@@ -67,6 +67,16 @@ export class FessController {
     }
   }
 
+  static async getInstagramStatus(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = String(req.params.id);
+      const status = await FessService.getInstagramStatus(id, req.user);
+      return successResponse(res, status, 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
   static async voteFess(req: Request, res: Response, next: NextFunction) {
     try {
       const id = String(req.params.id);

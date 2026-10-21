@@ -102,6 +102,50 @@ describe('InstagramService carousel dengan media user (gambar + video)', () => {
     ]);
   });
 
+  it('Meta 9007 saat publish → dicoba ulang lalu dijadwalkan retry otomatis', async () => {
+    const postSpy = vi.mocked(axios.post);
+    const notReady = {
+      message: 'Request failed with status code 400',
+      response: {
+        data: {
+          error: {
+            code: 9007,
+            message: 'The media is not ready for publishing, please wait for a moment',
+          },
+        },
+      },
+    };
+    postSpy
+      .mockResolvedValueOnce({ data: { id: 'item_1' } } as any)
+      .mockResolvedValueOnce({ data: { id: 'item_2' } } as any)
+      .mockResolvedValueOnce({ data: { id: 'car_1' } } as any)
+      .mockRejectedValueOnce(notReady)
+      .mockRejectedValueOnce(notReady);
+
+    const result: any = await InstagramService.autoPostFess(
+      '@acc',
+      'fess_9007',
+      [
+        { type: 'image', url: 'https://cdn.example.com/card.jpg' },
+        { type: 'image', url: 'https://cdn.example.com/foto.jpg' },
+      ],
+      'Media belum siap'
+    );
+
+    expect(result.meta_published).toBe(false);
+    expect(result.retry_scheduled).toBe(true);
+    expect(postSpy).toHaveBeenCalledTimes(6);
+
+    const retryCall = postSpy.mock.calls.find((call) =>
+      String(call[0]).includes('/internal/instagram/retry')
+    );
+    expect(retryCall).toBeTruthy();
+    expect(InstagramService.verifyRetryPayload((retryCall![1] as any).token)).toMatchObject({
+      fessId: 'fess_9007',
+      attempt: 1,
+    });
+  });
+
   it('carousel dengan video → item dibuat (video lebih dulu), publish diserahkan ke worker', async () => {
     const postSpy = vi.mocked(axios.post);
     postSpy
@@ -216,16 +260,117 @@ describe('InstagramService carousel dengan media user (gambar + video)', () => {
 
     const publishParams = (vi.mocked(axios.post).mock.calls[0][2] as any).params;
     expect(publishParams).toMatchObject({ creation_id: 'car_9' });
-    expect(prisma.fess.update).toHaveBeenCalledWith({
-      where: { id: 'fess_9' },
-      data: { postedToIg: true },
-    });
+    expect(prisma.fess.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'fess_9' },
+        data: expect.objectContaining({ postedToIg: true, igStatus: 'published' }),
+      })
+    );
     expect(prisma.systemLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           tone: 'ok',
           message: expect.stringContaining('berhasil dipublikasikan'),
         }),
+      })
+    );
+  });
+
+  it('worker 9007: menunggu lalu publish ulang container yang sama', async () => {
+    vi.mocked(prisma.fess.findUnique).mockResolvedValue({
+      id: 'fess_9007w',
+      content: 'Isi fess',
+      postedToIg: false,
+    } as any);
+    vi.mocked(axios.get).mockResolvedValue({ data: { status_code: 'FINISHED' } } as any);
+    vi.mocked(axios.post)
+      .mockRejectedValueOnce({
+        message: 'Request failed with status code 400',
+        response: {
+          data: {
+            error: {
+              code: 9007,
+              message: 'The media is not ready for publishing, please wait for a moment',
+            },
+          },
+        },
+      })
+      .mockResolvedValueOnce({ data: { id: 'media_9007w' } } as any);
+
+    await InstagramService.finalizeInstagramPost({
+      fessId: 'fess_9007w',
+      baseHandle: '@acc',
+      kind: 'carousel',
+      itemIds: null,
+      containerId: 'car_9007w',
+      attempts: 0,
+      exp: Date.now() + 60_000,
+    });
+
+    const publishCalls = vi.mocked(axios.post).mock.calls;
+    expect(publishCalls).toHaveLength(2);
+    for (const call of publishCalls) {
+      expect((call[2] as any).params).toMatchObject({ creation_id: 'car_9007w' });
+    }
+    expect(prisma.fess.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'fess_9007w' },
+        data: expect.objectContaining({ postedToIg: true, igStatus: 'published' }),
+      })
+    );
+  });
+
+  it('worker 9007 habis: menjadwalkan ulang container yang sama, bukan gagal permanen', async () => {
+    vi.mocked(prisma.fess.findUnique).mockResolvedValue({
+      id: 'fess_9007x',
+      content: 'Isi fess',
+      postedToIg: false,
+    } as any);
+    vi.mocked(axios.get).mockResolvedValue({ data: { status_code: 'FINISHED' } } as any);
+    const notReady = {
+      message: 'Request failed with status code 400',
+      response: {
+        data: {
+          error: {
+            code: 9007,
+            message: 'The media is not ready for publishing, please wait for a moment',
+          },
+        },
+      },
+    };
+    vi.mocked(axios.post)
+      .mockRejectedValueOnce(notReady)
+      .mockRejectedValueOnce(notReady)
+      .mockResolvedValueOnce({ data: { ok: true } } as any);
+
+    await InstagramService.finalizeInstagramPost({
+      fessId: 'fess_9007x',
+      baseHandle: '@acc',
+      kind: 'carousel',
+      itemIds: null,
+      containerId: 'car_9007x',
+      attempts: 0,
+      exp: Date.now() + 60_000,
+    });
+
+    const calls = vi.mocked(axios.post).mock.calls;
+    expect(calls).toHaveLength(3);
+    expect(calls[0][2] as any).toMatchObject({ params: { creation_id: 'car_9007x' } });
+    expect(calls[1][2] as any).toMatchObject({ params: { creation_id: 'car_9007x' } });
+
+    const scheduleCall = calls.find((call) =>
+      String(call[0]).includes('/internal/instagram/finalize')
+    );
+    expect(scheduleCall).toBeTruthy();
+    expect(InstagramService.verifyFinalizePayload((scheduleCall![1] as any).token)).toMatchObject({
+      fessId: 'fess_9007x',
+      containerId: 'car_9007x',
+      attempts: 1,
+    });
+    expect(prisma.fess.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'fess_9007x' },
+        data: expect.objectContaining({ igStatus: 'pending', igError: null }),
       })
     );
   });
@@ -296,10 +441,12 @@ describe('InstagramService carousel dengan media user (gambar + video)', () => {
     expect(carouselParams).toMatchObject({ media_type: 'CAROUSEL', children: 'i1,i2' });
     expect(carouselParams.caption).toContain('Isi fess untuk carousel');
     expect(carouselParams.caption).toContain('(@acc)');
-    expect(prisma.fess.update).toHaveBeenCalledWith({
-      where: { id: 'fess_5' },
-      data: { postedToIg: true },
-    });
+    expect(prisma.fess.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'fess_5' },
+        data: expect.objectContaining({ postedToIg: true, igStatus: 'published' }),
+      })
+    );
   });
 
   it('worker menjadwalkan ulang (reschedule) jika container belum siap', async () => {

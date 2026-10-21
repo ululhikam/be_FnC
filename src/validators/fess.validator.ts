@@ -59,6 +59,7 @@ export const CanvasPreviewSchema = z.object({
     .max(2000, 'Konten maksimal 2000 karakter'),
   template: z.string().max(40).optional().default('default'),
   tag: z.enum(['Cerita', 'Tanya']).optional().nullable(),
+  topic: z.string().trim().max(40).optional().nullable(),
   quoted_fess: z
     .object({
       id: z.union([z.string(), z.number()]).optional().nullable(),

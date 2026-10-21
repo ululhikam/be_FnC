@@ -33,19 +33,26 @@ export class FessController {
    */
   static async previewCanvas(req: Request, res: Response, next: NextFunction) {
     try {
-      const { base_handle, content, template, tag, quoted_fess } = req.body;
+      const { base_handle, content, template, tag, topic, quoted_fess } = req.body;
       const handle = normalizeHandle(String(base_handle || ''));
       const base = await prisma.base.findUnique({ where: { handle } });
 
-      const images = CanvasService.renderPreviewImages(
+      const images = await CanvasService.renderPreviewImages(
         {
           content,
           baseHandle: handle,
           template,
           tag: tag || null,
+          topic: topic || null,
           quotedFess: quoted_fess || null,
           base: base
-            ? { name: base.name, initial: base.initial, igAccount: base.igAccount }
+            ? {
+                name: base.name,
+                initial: base.initial,
+                igAccount: base.igAccount,
+                avatar: base.avatar,
+                color: base.color,
+              }
             : null,
         },
         template

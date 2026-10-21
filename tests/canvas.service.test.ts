@@ -226,6 +226,51 @@ describe('CanvasService Unit Tests', () => {
     }
   });
 
+  it('merender foto profil base dan chip topik di kartu', () => {
+    const avatar =
+      'data:image/svg+xml;charset=utf-8,' +
+      encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="#ff0066"/></svg>'
+      );
+
+    const [svg] = CanvasService.buildSvgPages(
+      {
+        baseHandle: '@cintafess',
+        content: 'Kartu dengan foto profil base dan topik.',
+        topic: 'cinta',
+        template: 'default',
+        base: {
+          name: 'Cinta Base',
+          initial: 'CB',
+          avatar,
+          avatarDataUri: avatar,
+        },
+      } as any,
+      'default'
+    );
+
+    expect(svg).toContain('<clipPath id="avatarClip">');
+    expect(svg).toContain('href="' + avatar + '"');
+    expect(svg).toContain('>Cinta</text>');
+    expect(svg).not.toContain('>CB</text>');
+    expect(CanvasService.renderSvgToPng(svg).length).toBeGreaterThan(100);
+  });
+
+  it('tetap memakai inisial bila base tidak punya foto profil', () => {
+    const [svg] = CanvasService.buildSvgPages(
+      {
+        baseHandle: '@cintafess',
+        content: 'Kartu tanpa foto profil.',
+        template: 'default',
+        base: { name: 'Cinta Base', initial: 'CB', avatar: 'CB' },
+      } as any,
+      'default'
+    );
+
+    expect(svg).not.toContain('<clipPath id="avatarClip">');
+    expect(svg).toContain('>CB</text>');
+  });
+
   it('should render the 20 new templates full-bleed with scaled textures', () => {
     const fullBleed = TEMPLATES.filter((t) => t.panel && t.pattern).map((t) => t.key);
     expect(fullBleed.length).toBe(20);

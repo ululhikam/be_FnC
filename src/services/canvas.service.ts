@@ -20,8 +20,13 @@ import {
   type FontFamilyKey,
 } from '../config/fonts.js';
 import { getEmojiSvgMarkup } from '../config/emoji.js';
+import { ENV } from '../config/env.js';
+import { TOPICS } from '../constants/topics.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/** topic id → label yang tampil di kartu (sama dengan chip topik composer). */
+const TOPIC_LABELS = new Map(TOPICS.map((topic) => [topic.id, topic.label]));
 
 /**
  * Template generasi lama (solid, tanpa gradient). Dipertahankan agar fess lama
@@ -96,6 +101,7 @@ export interface FessLike {
   content: string;
   baseHandle: string;
   tag?: string | null;
+  topic?: string | null;
   template?: string | null;
   quotedFess?: any;
   carouselOrder?: string[] | null;
@@ -103,6 +109,10 @@ export interface FessLike {
     name?: string | null;
     initial?: string | null;
     igAccount?: string | null;
+    avatar?: string | null;
+    /** Avatar yang sudah diubah menjadi data URI agar bisa ditanam ke SVG. */
+    avatarDataUri?: string | null;
+    color?: string | null;
   } | null;
 }
 
@@ -212,7 +222,10 @@ export class CanvasService {
     const publishToIg =
       aspect.key === 'portrait' && options.autoPost !== false && !(fess as any).postedToIg;
 
-    const svgs = CanvasService.buildSvgPages(fess as unknown as FessLike, templateKey, aspectKey);
+    const preparedFess = await CanvasService.withResolvedBaseAvatar(
+      fess as unknown as FessLike
+    );
+    const svgs = CanvasService.buildSvgPages(preparedFess, templateKey, aspectKey);
 
     // ── SVG → JPEG (resvg + sharp, font bundled) → upload per halaman ──────
     // Instagram Content Publishing hanya menerima gambar JPEG.
@@ -359,6 +372,24 @@ export class CanvasService {
   }
 
   /**
+   * Siapkan foto profil base untuk renderer SVG.
+   *
+   * resvg tidak mengambil gambar dari URL eksternal, jadi avatar diubah dulu
+   * menjadi data URI. Kegagalan mengambil foto tidak boleh menggagalkan render —
+   * kartu tetap memakai inisial seperti sebelumnya.
+   */
+  private static async withResolvedBaseAvatar(fess: FessLike): Promise<FessLike> {
+    if (!fess.base) return fess;
+    const avatarDataUri =
+      fess.base.avatarDataUri ||
+      (await resolveBaseAvatarDataUri(fess.base.avatar || fess.base.initial));
+    return {
+      ...fess,
+      base: { ...fess.base, avatarDataUri },
+    };
+  }
+
+  /**
    * Bangun SVG card (1..10 halaman) untuk sebuah fess — murni tanpa DB,
    * dipakai exportFessCanvas() dan skrip verifikasi lokal.
    */
@@ -379,6 +410,11 @@ export class CanvasService {
         ? fess.base.igAccount
         : `@${fess.base.igAccount}`
       : fess.baseHandle;
+    const baseAvatarDataUri = isInlineAvatar(
+      fess.base?.avatarDataUri || fess.base?.avatar
+    )
+      ? fess.base?.avatarDataUri || fess.base?.avatar || null
+      : null;
 
     const isDark = template.ink === 'dark';
     const isNeo = template.key === 'neobrutalism';
@@ -531,9 +567,34 @@ export class CanvasService {
     const contentX = PAD + 58;
     const contentWidth = cardW - 116;
     const footerTop = PAD + cardH - 72;
-    const restContentY = PAD + 195;
+    let restContentY = PAD + 195;
 
     const measureFont = getMeasureFont(typo.family, typo.weight);
+
+    // ── Chip topik (baris meta di bawah header, sama seperti composer) ──────
+    const rawTopic = String(fess.topic || '').trim();
+    const topicLabel = rawTopic ? TOPIC_LABELS.get(rawTopic) || rawTopic : '';
+    const topicFont = getMeasureFont('sans', 700);
+    const topicText = topicLabel
+      ? fitTextToWidth(topicLabel, topicFont, 15, contentWidth - 32)
+      : '';
+    const topicPillWidth = topicText
+      ? Math.min(contentWidth, Math.ceil(measureTextWidth(topicText, topicFont, 15, 0)) + 32)
+      : 0;
+    const topicPillY = PAD + 146;
+    const topicPillHeight = 32;
+    const topicSvg = topicText
+      ? `<!-- Topic chip -->
+  <rect x="${contentX}" y="${topicPillY}" width="${topicPillWidth}" height="${topicPillHeight}" rx="${isNeo ? 6 : 16}"
+        fill="${isNeo ? accentInk : pill.fill}" opacity="${isNeo ? 1 : pill.opacity}"/>
+  <text x="${contentX + 16}" y="${topicPillY + 21}" font-family="Poppins, Arial, sans-serif" font-size="15"
+        font-weight="800" fill="${isNeo ? '#ffe600' : pill.text}">${escapeXml(topicText)}</text>
+`
+      : '';
+    // Chip topik memakai ruang di atas isi; geser baris pertama agar glyph
+    // (ascender) tidak menimpa chip.
+    if (topicText) restContentY += 44;
+
     const bodyText = typo.uppercase
       ? String(fess.content || '').toUpperCase()
       : String(fess.content || '');
@@ -605,10 +666,19 @@ export class CanvasService {
       }
     }
 
+    const avatarCx = PAD + 74;
     const avatarCy = PAD + 74;
     const headerNameY = PAD + 63;
     const headerHandleY = PAD + 93;
     const tagPillY = PAD + 50;
+    const avatarClipDef = baseAvatarDataUri
+      ? `<clipPath id="avatarClip"><circle cx="${avatarCx}" cy="${avatarCy}" r="32"/></clipPath>`
+      : '';
+    const avatarSvg = baseAvatarDataUri
+      ? `<image href="${escapeXml(baseAvatarDataUri)}" x="${avatarCx - 32}" y="${avatarCy - 32}"
+        width="64" height="64" preserveAspectRatio="xMidYMid slice" clip-path="url(#avatarClip)"/>`
+      : `<text x="${avatarCx}" y="${avatarCy + 9}" font-family="Poppins, Arial, sans-serif" font-size="22"
+        font-weight="900" fill="${avatarInk}" text-anchor="middle">${escapeXml(baseInitial)}</text>`;
 
     const totalPages = pages.length;
 
@@ -642,7 +712,7 @@ export class CanvasService {
             ) + '\n\n  '
           : '';
       const decoQuote =
-        idx === 0 && !quoteBlock && typo.align === 'left'
+        idx === 0 && !quoteBlock && !topicText && typo.align === 'left'
           ? `<!-- Opening quote -->
   <text x="${PAD + 52}" y="${PAD + 172}" font-family="Poppins, Noto Sans, serif" font-size="72"
         font-weight="bold" fill="${accentInk}" opacity="0.28">&#8220;</text>
@@ -656,6 +726,7 @@ export class CanvasService {
     <filter id="cardShadow" x="-10%" y="-10%" width="120%" height="120%">
       ${shadowDef}
     </filter>
+    ${avatarClipDef}
   </defs>
 
   <!-- Background -->
@@ -669,10 +740,9 @@ export class CanvasService {
         fill="${cardBg}" stroke="${cardBorder}" stroke-width="${cardBorderWidth}"${panelDashAttr}${cardFilter}/>`}
 
   <!-- Avatar -->
-  <circle cx="${PAD + 74}" cy="${avatarCy}" r="38" fill="${accentColor}" opacity="0.25"/>
-  <circle cx="${PAD + 74}" cy="${avatarCy}" r="32" fill="${accentColor}"/>
-  <text x="${PAD + 74}" y="${avatarCy + 9}" font-family="Poppins, Arial, sans-serif" font-size="22"
-        font-weight="900" fill="${avatarInk}" text-anchor="middle">${escapeXml(baseInitial)}</text>
+  <circle cx="${avatarCx}" cy="${avatarCy}" r="38" fill="${accentColor}" opacity="0.25"/>
+  <circle cx="${avatarCx}" cy="${avatarCy}" r="32" fill="${accentColor}"/>
+  ${avatarSvg}
 
   <!-- Base name & handle -->
   <text x="${PAD + 126}" y="${headerNameY}" font-family="Poppins, Arial, sans-serif" font-size="26"
@@ -686,7 +756,7 @@ export class CanvasService {
   <text x="${PAD + cardW - 77}" y="${tagPillY + 23}" font-family="Poppins, Arial, sans-serif" font-size="14"
         font-weight="800" fill="${isNeo ? '#ffe600' : pill.text}" text-anchor="middle">${escapeXml(fess.tag || 'Confession')}</text>
 
-  ${decoQuote}${pageQuoteSvg}<!-- Confession text -->
+  ${topicSvg}${decoQuote}${pageQuoteSvg}<!-- Confession text -->
   ${textSvg}
 
   <!-- Footer divider -->
@@ -727,8 +797,12 @@ export class CanvasService {
    * Memakai builder & renderer yang sama dengan auto-post Instagram, jadi
    * bentuk teks, warna, dan paginasi identik dengan hasil yang diposting.
    */
-  static renderPreviewImages(fess: FessLike, templateKey = 'default'): string[] {
-    return CanvasService.buildSvgPages(fess, templateKey).map(
+  static async renderPreviewImages(
+    fess: FessLike,
+    templateKey = 'default'
+  ): Promise<string[]> {
+    const preparedFess = await CanvasService.withResolvedBaseAvatar(fess);
+    return CanvasService.buildSvgPages(preparedFess, templateKey).map(
       (svg) => `data:image/png;base64,${CanvasService.renderSvgToPng(svg).toString('base64')}`
     );
   }
@@ -744,6 +818,127 @@ function escapeXml(unsafe: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
+}
+
+const AVATAR_DATA_URI_RE =
+  /^data:image\/(?:png|jpe?g|webp|gif|svg\+xml)(?:;charset=[^;,]+)?(?:;base64)?,/i;
+const AVATAR_REMOTE_RE = /^https?:\/\//i;
+const AVATAR_LOCAL_PATH_RE = /^\/(?!\/)\S+$/;
+const AVATAR_MAX_BYTES = 1_200_000;
+
+/** Hanya data URI gambar yang boleh ditanam langsung ke SVG. */
+function isInlineAvatar(value: unknown): boolean {
+  return (
+    typeof value === 'string' &&
+    value.length <= AVATAR_MAX_BYTES &&
+    AVATAR_DATA_URI_RE.test(value)
+  );
+}
+
+/** Ambil avatar base dari URL/data URI dan ubah menjadi data URI yang aman untuk resvg. */
+async function resolveBaseAvatarDataUri(value: unknown): Promise<string | null> {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return null;
+  if (isInlineAvatar(raw)) return raw;
+
+  let target = raw;
+  if (AVATAR_LOCAL_PATH_RE.test(raw)) {
+    try {
+      target = new URL(raw, ENV.FRONTEND_URL).toString();
+    } catch {
+      return null;
+    }
+  }
+  if (!AVATAR_REMOTE_RE.test(target) || !isPublicAvatarUrl(target)) return null;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch(target, {
+      headers: { accept: 'image/*' },
+      redirect: 'follow',
+      signal: controller.signal,
+    });
+    if (!response.ok || !isPublicAvatarUrl(response.url)) return null;
+
+    const contentType = String(response.headers.get('content-type') || '')
+      .split(';')[0]
+      .trim()
+      .toLowerCase();
+    if (!contentType.startsWith('image/')) return null;
+
+    const contentLength = Number(response.headers.get('content-length') || 0);
+    if (Number.isFinite(contentLength) && contentLength > AVATAR_MAX_BYTES) return null;
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (!buffer.length || buffer.length > AVATAR_MAX_BYTES) return null;
+    return `data:${contentType};base64,${buffer.toString('base64')}`;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Cegah fetch avatar ke alamat internal/private (SSRF dasar). */
+function isPublicAvatarUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+
+    const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    if (
+      !host ||
+      host === 'localhost' ||
+      host.endsWith('.localhost') ||
+      host.endsWith('.local') ||
+      host.endsWith('.internal')
+    ) {
+      return false;
+    }
+
+    const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+    if (ipv4) {
+      const [a, b] = ipv4.slice(1).map(Number);
+      if (
+        a === 0 ||
+        a === 10 ||
+        a === 127 ||
+        (a === 169 && b === 254) ||
+        (a === 172 && b >= 16 && b <= 31) ||
+        (a === 192 && b === 168)
+      ) {
+        return false;
+      }
+    }
+
+    if (
+      host.includes(':') &&
+      (host === '::1' || host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80'))
+    ) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Pangkas label agar chip topik tidak pernah melewati lebar kartu. */
+function fitTextToWidth(
+  text: string,
+  font: opentype.Font | null,
+  fontSize: number,
+  maxWidth: number
+): string {
+  if (!text || maxWidth <= 0) return '';
+  if (measureTextWidth(text, font, fontSize, 0) <= maxWidth) return text;
+
+  let cut = text;
+  while (cut.length > 1 && measureTextWidth(`${cut}…`, font, fontSize, 0) > maxWidth) {
+    cut = cut.slice(0, -1);
+  }
+  return `${cut.trimEnd()}…`;
 }
 
 /** Urutan emoji (pictograph, modifier, ZWJ, variation selector, keycap, regional indicator). */

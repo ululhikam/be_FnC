@@ -13,6 +13,11 @@ vi.mock('../src/config/prisma.js', () => ({
         handle: '@concern_fess',
         initial: 'CF',
         igAccount: '@concern_fess',
+        avatar:
+          'data:image/svg+xml;charset=utf-8,' +
+          encodeURIComponent(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="#0055ff"/></svg>'
+          ),
       }),
     },
   },
@@ -29,6 +34,7 @@ describe('POST /api/fesses/canvas/preview — pratinjau kartu composer', () => {
       content: 'Halo, ini pratinjau kartu fess yang harus sama dengan hasil render.',
       template: 'default',
       tag: 'Cerita',
+      topic: 'cinta',
     });
 
     expect(res.status).toBe(200);

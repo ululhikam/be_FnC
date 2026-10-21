@@ -211,6 +211,43 @@ describe('FessService Unit Tests', () => {
       expect(prisma.notification.create).toHaveBeenCalled();
     });
 
+    it('should persist carouselOrder so scheduled/approved posts keep the slide order', async () => {
+      vi.mocked(prisma.base.findUnique).mockResolvedValueOnce({
+        id: 'base_1',
+        handle: '@codememfess',
+        creatorId: 'mod_1',
+      } as any);
+
+      vi.mocked(prisma.fess.create).mockResolvedValueOnce({
+        id: 'fess_order',
+        baseHandle: '@codememfess',
+        content: 'Urutan carousel',
+        status: 'pending',
+        upvotes: 0,
+        downvotes: 0,
+        createdAt: new Date(),
+        comments: [],
+        carouselOrder: ['media:media_1', 'card:0'],
+      } as any);
+
+      await FessService.createFess(
+        {
+          base_handle: '@codememfess',
+          content: 'Urutan carousel',
+          carousel_order: ['media:media_1', 'card:0'],
+        },
+        'usr_1'
+      );
+
+      expect(prisma.fess.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            carouselOrder: ['media:media_1', 'card:0'],
+          }),
+        })
+      );
+    });
+
     it('should auto-follow the base when the sender does not follow it yet', async () => {
       vi.mocked(prisma.base.findUnique).mockResolvedValueOnce({
         id: 'base_1',

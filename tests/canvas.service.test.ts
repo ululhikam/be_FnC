@@ -145,6 +145,31 @@ describe('CanvasService Unit Tests', () => {
     expect(result.media_count).toBe(2);
   });
 
+  it('mengikuti carouselOrder: media bisa menjadi slide pertama', async () => {
+    vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+      id: 'fess_order',
+      baseHandle: '@codememfess',
+      content: 'Urutan carousel bebas',
+      template: 'default',
+      carouselOrder: ['media:media_b', 'card:0', 'media:media_a'],
+      media: [
+        { id: 'media_a', type: 'image', url: 'https://cdn.example.com/a.png' },
+        { id: 'media_b', type: 'image', url: 'https://cdn.example.com/b.png' },
+      ],
+      base: { name: 'Base', initial: 'MB' },
+    } as any);
+
+    await CanvasService.exportFessCanvas('fess_order', 'default', 'portrait');
+
+    const autoPostMock = vi.mocked(InstagramService.autoPostFess);
+    const itemsArg = autoPostMock.mock.calls[0][2] as any[];
+    expect(itemsArg.map((item) => ({ type: item.type, url: item.url }))).toEqual([
+      { type: 'image', url: 'https://cdn.example.com/b.png' },
+      { type: 'image', url: 'https://storage.supabase.co/confess-media/canvas_export.svg' },
+      { type: 'image', url: 'https://cdn.example.com/a.png' },
+    ]);
+  });
+
   it('should send the full fess content as caption (truncation handled by InstagramService)', async () => {
     vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
       id: 'fess_caption',

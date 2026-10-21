@@ -181,6 +181,7 @@ export class FessService {
       base_handle: string;
       content: string;
       media?: any[];
+      carousel_order?: string[];
       topic?: string | null;
       scheduled_at?: string | null;
       song?: any;
@@ -231,6 +232,10 @@ export class FessService {
         userId: userId || null,
         content: payload.content.trim(),
         media: payload.media && payload.media.length > 0 ? payload.media : undefined,
+        carouselOrder:
+          payload.carousel_order && payload.carousel_order.length > 0
+            ? payload.carousel_order
+            : undefined,
         topic: payload.topic || null,
         scheduledAt: scheduledDate,
         song: payload.song || undefined,

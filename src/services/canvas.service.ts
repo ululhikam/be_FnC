@@ -98,6 +98,7 @@ export interface FessLike {
   tag?: string | null;
   template?: string | null;
   quotedFess?: any;
+  carouselOrder?: string[] | null;
   base?: {
     name?: string | null;
     initial?: string | null;
@@ -250,7 +251,11 @@ export class CanvasService {
         height: aspect.height,
         normalized: true,
       }));
-    const postItems = [...cardItems, ...mediaItems].slice(0, 10);
+    const postItems = arrangeCarouselItems(
+      cardItems,
+      mediaItems,
+      (fess as any).carouselOrder
+    ).slice(0, 10);
 
     // Caption = isi fess penuh (pemotongan batas 2200 char ditangani InstagramService).
     const caption = String(fess.content || '');
@@ -850,6 +855,7 @@ function clipIgError(value: string, max = 1200): string {
 
 /** Media user (gambar/video) yang layak ikut diposting ke Instagram. */
 interface CollectedMediaItem {
+  id?: string;
   type: 'image' | 'video';
   url: string;
   width?: number;
@@ -869,10 +875,12 @@ function collectMediaItems(media: unknown): CollectedMediaItem[] {
       console.warn('[Canvas] Media video dilewati (bukan MP4/MOV/M4V):', url);
       continue;
     }
+    const id = String((entry as any)?.id || '').trim();
     const width = Number((entry as any)?.width);
     const height = Number((entry as any)?.height);
     const duration = Number((entry as any)?.duration);
     items.push({
+      ...(id ? { id } : {}),
       type: isVideo ? 'video' : 'image',
       url,
       ...(Number.isFinite(width) && width > 0 ? { width } : {}),
@@ -881,6 +889,65 @@ function collectMediaItems(media: unknown): CollectedMediaItem[] {
     });
   }
   return items;
+}
+
+/**
+ * Susun item carousel sesuai `carouselOrder` dari komposer. Token yang tidak
+ * dikenal (mis. media sudah dihapus) dilewati; sisa item ditempelkan di akhir
+ * agar tidak ada konten yang hilang.
+ */
+function arrangeCarouselItems(
+  cardItems: Array<{
+    type: 'image';
+    url: string;
+    width?: number;
+    height?: number;
+    normalized?: boolean;
+  }>,
+  mediaItems: CollectedMediaItem[],
+  order: unknown
+): Array<{
+  type: 'image' | 'video';
+  url: string;
+  width?: number;
+  height?: number;
+  duration?: number | null;
+  normalized?: boolean;
+}> {
+  const candidates = [
+    ...cardItems.map((item, index) => ({ token: `card:${index}`, item })),
+    ...mediaItems.map((item, index) => ({
+      token: item.id ? `media:${item.id}` : `media:${index}`,
+      item: item as {
+        type: 'image' | 'video';
+        url: string;
+        width?: number;
+        height?: number;
+        duration?: number | null;
+      },
+    })),
+  ];
+  const byToken = new Map(candidates.map((candidate) => [candidate.token, candidate]));
+  const seen = new Set<string>();
+  const arranged: Array<(typeof candidates)[number]['item']> = [];
+
+  if (Array.isArray(order)) {
+    for (const rawToken of order) {
+      const token = String(rawToken || '').trim();
+      const candidate = byToken.get(token);
+      if (!candidate || seen.has(token)) continue;
+      seen.add(token);
+      arranged.push(candidate.item);
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (seen.has(candidate.token)) continue;
+    seen.add(candidate.token);
+    arranged.push(candidate.item);
+  }
+
+  return arranged;
 }
 
 // ── Pengukuran teks (opentype.js) ──────────────────────────────────────────

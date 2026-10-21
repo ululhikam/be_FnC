@@ -163,6 +163,32 @@ describe('Fess Validators', () => {
     expect(CreateFessSchema.safeParse({ ...valid, template: 'tidak-ada' }).success).toBe(false);
   });
 
+  it('should validate carousel_order tokens', () => {
+    const base = {
+      base_handle: '@codememfess',
+      content: 'Urutan carousel bebas',
+    };
+
+    expect(
+      CreateFessSchema.safeParse({
+        ...base,
+        carousel_order: ['media:media_123', 'card:0', 'card:1'],
+      }).success
+    ).toBe(true);
+    expect(
+      CreateFessSchema.safeParse({
+        ...base,
+        carousel_order: ['card:0', 'bukan-token'],
+      }).success
+    ).toBe(false);
+    expect(
+      CreateFessSchema.safeParse({
+        ...base,
+        carousel_order: Array.from({ length: 11 }, (_, i) => `card:${i}`),
+      }).success
+    ).toBe(false);
+  });
+
   it('should reject empty fess content', () => {
     const invalid = { base_handle: '@codememfess', content: '' };
     const res = CreateFessSchema.safeParse(invalid);

@@ -5,6 +5,8 @@ import { TEMPLATES } from '../constants/templates.js';
 const TEMPLATE_KEYS = TEMPLATES.map((t) => t.key) as [string, ...string[]];
 
 export const MediaItemSchema = z.object({
+  // ID stabil dari composer; dipakai token carousel_order "media:<id>".
+  id: z.string().min(1).max(80).optional().nullable(),
   type: z.enum(['image', 'video']),
   url: z
     .string()
@@ -77,6 +79,18 @@ export const CreateFessSchema = z.object({
   base_handle: z.string().min(1, 'Base tujuan wajib dipilih'),
   content: z.string().min(1, 'Konten confession minimal 1 karakter').max(2000, 'Konten maksimal 2000 karakter'),
   media: z.array(MediaItemSchema).max(4, 'Maksimal 4 file media').optional().default([]),
+  // Urutan slide carousel IG. Contoh: ["media:media_123", "card:0", "card:1"].
+  // Kosong = perilaku lama (semua kartu dulu, lalu media).
+  carousel_order: z
+    .array(
+      z
+        .string()
+        .max(120)
+        .regex(/^(card:\d{1,2}|media:.+)$/, 'Token urutan carousel tidak valid')
+    )
+    .max(10, 'Maksimal 10 slide carousel')
+    .optional()
+    .default([]),
   topic: z.string().optional().nullable(),
   scheduled_at: z.string().datetime().optional().nullable(),
   song: SongAttachmentSchema.optional().nullable(),

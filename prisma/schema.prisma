@@ -125,7 +125,8 @@ model Fess {
   autoFlagged   Boolean   @default(false) // terindikasi konten negatif oleh filter NLP saat auto post
   flagReason    String?   // alasan flag dari filter NLP (mis. "ujaran kebencian, ancaman")
   scheduledAt   DateTime?
-  media         Json?     // [{ type, url, thumbnail, duration, caption }]
+  media         Json?     // [{ id, type, url, thumbnail, duration, caption }]
+  carouselOrder String[]  @default([]) // urutan slide IG: "card:0", "media:<id>"
   song          Json?     // { id, title, artist, cover, preview_url }
   quotedFess    Json?     // { id, handle, content, time, avatar_bg, avatar_text }
   createdAt     DateTime  @default(now())

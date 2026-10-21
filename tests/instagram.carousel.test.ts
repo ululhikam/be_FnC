@@ -19,6 +19,14 @@ vi.mock('../src/config/prisma.js', () => ({
   },
 }));
 
+// Normalisasi gambar diuji terpisah di instagram.media.util.test.ts; di sini
+// fokus pada alur carousel Meta.
+vi.mock('../src/utils/instagram-media.util.js', () => ({
+  IG_CAROUSEL_TARGET: { width: 1080, height: 1350 },
+  ensureIgImageUrl: vi.fn(async (url: string) => ({ url, width: 1080, height: 1350 })),
+  assertCarouselGeometry: vi.fn(),
+}));
+
 function mockConnection() {
   vi.mocked(prisma.base.findUnique).mockResolvedValue({
     igAccount: '@acc',
@@ -80,6 +88,18 @@ describe('InstagramService carousel dengan media user (gambar + video)', () => {
 
     const publishParams = (postSpy.mock.calls[3][2] as any).params;
     expect(publishParams).toMatchObject({ creation_id: 'car_1' });
+
+    // Payload final untuk retry/admin: setiap item carousel wajib 1080×1350.
+    const payloadCall = vi
+      .mocked(prisma.fess.update)
+      .mock.calls.map((call) => call[0] as any)
+      .find((arg) => Array.isArray(arg?.data?.igPayload?.items));
+    const payloadItems = payloadCall?.data?.igPayload?.items || [];
+    expect(payloadItems).toHaveLength(2);
+    expect(payloadItems.map((item: any) => `${item.width}×${item.height}`)).toEqual([
+      '1080×1350',
+      '1080×1350',
+    ]);
   });
 
   it('carousel dengan video → item dibuat (video lebih dulu), publish diserahkan ke worker', async () => {
@@ -94,7 +114,13 @@ describe('InstagramService carousel dengan media user (gambar + video)', () => {
       'fess_2',
       [
         { type: 'image', url: 'https://cdn.example.com/card.jpg' },
-        { type: 'video', url: 'https://cdn.example.com/klip.mp4' },
+        {
+          type: 'video',
+          url: 'https://cdn.example.com/klip.mp4',
+          width: 1080,
+          height: 1350,
+          duration: 20,
+        },
       ],
       'Isi fess video'
     );
@@ -142,7 +168,15 @@ describe('InstagramService carousel dengan media user (gambar + video)', () => {
     const result = await InstagramService.autoPostFess(
       '@acc',
       'fess_3',
-      [{ type: 'video', url: 'https://cdn.example.com/klip.mp4' }],
+      [
+        {
+          type: 'video',
+          url: 'https://cdn.example.com/klip.mp4',
+          width: 1080,
+          height: 1350,
+          duration: 20,
+        },
+      ],
       'Video doang'
     );
 
@@ -218,7 +252,15 @@ describe('InstagramService carousel dengan media user (gambar + video)', () => {
       exp: Date.now() + 60_000,
     });
 
-    expect(prisma.fess.update).not.toHaveBeenCalled();
+    expect(prisma.fess.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'fess_190w' },
+        data: expect.objectContaining({
+          igStatus: 'failed',
+          igError: expect.stringContaining('kedaluwarsa'),
+        }),
+      })
+    );
     expect(prisma.systemLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -287,7 +329,12 @@ describe('InstagramService carousel dengan media user (gambar + video)', () => {
     const token = (finalizeCall[1] as any).token as string;
     const payload = InstagramService.verifyFinalizePayload(token);
     expect(payload).toMatchObject({ containerId: 'car_6', attempts: 1 });
-    expect(prisma.fess.update).not.toHaveBeenCalled();
+    expect(prisma.fess.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'fess_6' },
+        data: expect.objectContaining({ igStatus: 'pending' }),
+      })
+    );
     expect(prisma.systemLog.create).not.toHaveBeenCalled();
   });
 
@@ -382,6 +429,118 @@ describe('InstagramService carousel dengan media user (gambar + video)', () => {
 
     expect(result.meta_published).toBe(true);
     expect(postSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('gagal unduh gambar sementara → auto-post gambar di-retry otomatis', async () => {
+    const { ensureIgImageUrl } = await import('../src/utils/instagram-media.util.js');
+    vi.mocked(ensureIgImageUrl).mockRejectedValueOnce(
+      Object.assign(new Error('Gagal mengunduh gambar untuk normalisasi Instagram: timeout'), {
+        code: 'ETIMEDOUT',
+      })
+    );
+
+    const result: any = await InstagramService.autoPostFess(
+      '@acc',
+      'fess_img_retry',
+      [
+        { type: 'image', url: 'https://cdn.example.com/card.jpg' },
+        { type: 'image', url: 'https://cdn.example.com/foto.jpg' },
+      ],
+      'Retry gambar'
+    );
+
+    expect(result.meta_published).toBe(false);
+    expect(result.retry_scheduled).toBe(true);
+    expect(prisma.fess.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'fess_img_retry' },
+        data: expect.objectContaining({ igStatus: 'processing' }),
+      })
+    );
+
+    const retryCall = vi
+      .mocked(axios.post)
+      .mock.calls.find((call) => String(call[0]).includes('/internal/instagram/retry'));
+    expect(retryCall).toBeTruthy();
+    expect(InstagramService.verifyRetryPayload((retryCall![1] as any).token)).toMatchObject({
+      fessId: 'fess_img_retry',
+      attempt: 1,
+    });
+  });
+
+  it('error sementara 9004 → retry otomatis dijadwalkan (HMAC, percobaan ke-2)', async () => {
+    const postSpy = vi.mocked(axios.post);
+    postSpy.mockRejectedValueOnce({
+      message: 'Request failed with status code 400',
+      response: { data: { error: { code: 9004, message: 'The media could not be fetched' } } },
+    });
+
+    const result: any = await InstagramService.autoPostFess(
+      '@acc',
+      'fess_retry',
+      [{ type: 'image', url: 'https://cdn.example.com/kartu.jpg' }],
+      'Retry media'
+    );
+
+    expect(result.meta_published).toBe(false);
+    expect(result.retry_scheduled).toBe(true);
+    expect(prisma.fess.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'fess_retry' },
+        data: expect.objectContaining({
+          igStatus: 'processing',
+          igError: expect.stringContaining('Retry otomatis'),
+        }),
+      })
+    );
+
+    const retryCall = postSpy.mock.calls.find((call) =>
+      String(call[0]).includes('/internal/instagram/retry')
+    );
+    expect(retryCall).toBeTruthy();
+    const payload = InstagramService.verifyRetryPayload((retryCall![1] as any).token);
+    expect(payload).toMatchObject({
+      fessId: 'fess_retry',
+      baseHandle: '@acc',
+      attempt: 1,
+      delayMs: 5000,
+    });
+  });
+
+  it('video tanpa metadata 4:5 ditolak sebelum container Meta dibuat', async () => {
+    const result: any = await InstagramService.autoPostFess(
+      '@acc',
+      'fess_video_mentah',
+      [{ type: 'video', url: 'https://cdn.example.com/mentah.mp4' }],
+      'Video mentah'
+    );
+
+    expect(result.meta_published).toBe(false);
+    expect(String(result.error)).toContain('metadata dimensi');
+    expect(vi.mocked(axios.post)).not.toHaveBeenCalled();
+    expect(prisma.fess.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'fess_video_mentah' },
+        data: expect.objectContaining({ igStatus: 'failed' }),
+      })
+    );
+  });
+
+  it('payload retry ditandatangani & tervalidasi (anti tamper)', () => {
+    const payload = {
+      fessId: 'fess_r',
+      baseHandle: '@acc',
+      attempt: 1,
+      exp: Date.now() + 60_000,
+    };
+
+    const token = InstagramService.signRetryPayload(payload);
+    expect(InstagramService.verifyRetryPayload(token)).toMatchObject(payload);
+    expect(InstagramService.verifyRetryPayload(`${token.slice(0, -3)}abc`)).toBeNull();
+    expect(InstagramService.verifyRetryPayload('bukan-token')).toBeNull();
+
+    const expired = InstagramService.signRetryPayload({ ...payload, exp: Date.now() - 1000 });
+    expect(InstagramService.verifyRetryPayload(expired)).toBeNull();
   });
 
   it('payload finalize ditandatangani & tervalidasi (anti tamper)', () => {

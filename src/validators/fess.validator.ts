@@ -21,7 +21,13 @@ export const MediaItemSchema = z.object({
       (val) => !val || /^https?:\/\//i.test(val) || val.startsWith('data:') || val.startsWith('/'),
       'URL thumbnail tidak valid'
     ),
-  duration: z.string().optional().nullable(),
+  // Tetap terima string lama (mis. metadata dari klien versi sebelumnya),
+  // tetapi utamakan angka agar backend bisa memvalidasi batas 60 detik.
+  duration: z.union([z.number().nonnegative(), z.string()]).optional().nullable(),
+  // Dimensi hasil normalisasi komposer (video 4:5). Dipakai backend untuk
+  // memastikan semua item carousel Instagram punya rasio yang sama.
+  width: z.coerce.number().int().positive().optional().nullable(),
+  height: z.coerce.number().int().positive().optional().nullable(),
   caption: z.string().optional().nullable(),
 });
 

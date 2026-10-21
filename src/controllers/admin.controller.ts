@@ -35,7 +35,10 @@ export class AdminController {
   static async exportCanvas(req: Request, res: Response, next: NextFunction) {
     try {
       const { fess_id, template, aspect } = req.body;
-      const result = await CanvasService.exportFessCanvas(fess_id, template, aspect);
+      // Export admin hanya merender/mengunduh card — bukan trigger posting IG.
+      const result = await CanvasService.exportFessCanvas(fess_id, template, aspect, {
+        autoPost: false,
+      });
       return successResponse(res, result, 200);
     } catch (error) {
       next(error);

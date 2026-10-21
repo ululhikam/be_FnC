@@ -139,6 +139,15 @@ describe('API Integration Tests (Express & OpenAPI Contract Endpoints)', () => {
       expect(res.body.id).toBe('fess_101');
       expect(res.body.content).toContain('Supertest');
     });
+
+    it('POST /api/fesses/:id/instagram-post tanpa login ditolak (bukan endpoint publik)', async () => {
+      const res = await request(app).post('/api/fesses/fess_101/instagram-post').send({
+        template: 'default',
+      });
+
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe('UNAUTHORIZED');
+    });
   });
 
   describe('Auth Validation & Error Handling', () => {

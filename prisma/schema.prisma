@@ -115,6 +115,13 @@ model Fess {
   template      String?   @default("default")
   tag           String?   // "Cerita", "Tanya"
   postedToIg    Boolean   @default(false)
+  // Status publikasi Instagram yang bisa dipantau admin:
+  // idle → processing → pending (video) → published | failed
+  igStatus      String    @default("idle")
+  igError       String?
+  igAttempts    Int       @default(0)
+  igUpdatedAt   DateTime?
+  igPayload     Json?     // item carousel + caption yang sudah dinormalisasi
   autoFlagged   Boolean   @default(false) // terindikasi konten negatif oleh filter NLP saat auto post
   flagReason    String?   // alasan flag dari filter NLP (mis. "ujaran kebencian, ancaman")
   scheduledAt   DateTime?
@@ -134,6 +141,7 @@ model Fess {
   @@index([baseId, status, createdAt])
   @@index([status, createdAt])
   @@index([userId])
+  @@index([igStatus])
   @@index([upvotes(sort: Desc)])
 }
 

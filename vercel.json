@@ -5,7 +5,8 @@
       "src": "api/index.ts",
       "use": "@vercel/node",
       "config": {
-        "includeFiles": ["src/**", "prisma/**", "fonts/**", "assets/**", "public/**"]
+        "includeFiles": ["src/**", "prisma/**", "fonts/**", "assets/**", "public/**"],
+        "maxDuration": 60
       }
     }
   ],

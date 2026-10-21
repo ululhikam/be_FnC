@@ -2,7 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import axios from 'axios';
 import sharp from 'sharp';
 import { StorageService } from '../src/services/storage.service.js';
-import { ensureJpegUrl } from '../src/utils/instagram-media.util.js';
+import {
+  assertCarouselGeometry,
+  ensureJpegUrl,
+  normalizeImageBuffer,
+} from '../src/utils/instagram-media.util.js';
 
 vi.mock('axios', () => ({
   default: { head: vi.fn(), get: vi.fn(), post: vi.fn() },
@@ -91,5 +95,53 @@ describe('ensureJpegUrl — Instagram hanya menerima gambar JPEG', () => {
     );
     await expect(ensureJpegUrl('https://cdn.example.com/rusak.png')).rejects.toThrow();
     expect(vi.mocked(axios.get).mock.calls.length).toBe(2);
+  });
+});
+
+describe('normalisasi geometri carousel Instagram 4:5', () => {
+  it('foto persegi dipad ke 1080×1350 tanpa crop (konten tetap utuh)', async () => {
+    const square = await sharp({
+      create: { width: 800, height: 800, channels: 3, background: '#ff0000' },
+    })
+      .png()
+      .toBuffer();
+
+    const jpeg = await normalizeImageBuffer(square);
+    const meta = await sharp(jpeg).metadata();
+    expect(meta.format).toBe('jpeg');
+    expect(meta.width).toBe(1080);
+    expect(meta.height).toBe(1350);
+
+    // Area pad atas harus putih; bagian tengah tetap merah (tidak ter-crop).
+    const { data, info } = await sharp(jpeg).raw().toBuffer({ resolveWithObject: true });
+    const pixel = (x: number, y: number) => {
+      const offset = (y * info.width + x) * info.channels;
+      return [data[offset], data[offset + 1], data[offset + 2]];
+    };
+    expect(pixel(10, 10)).toEqual([255, 255, 255]);
+    const [r, g, b] = pixel(540, 675);
+    expect(r).toBeGreaterThan(200);
+    expect(g).toBeLessThan(60);
+    expect(b).toBeLessThan(60);
+  });
+
+  it('semua item dengan 1080×1350 lolos; ukuran campuran ditolak', () => {
+    expect(() =>
+      assertCarouselGeometry([
+        { type: 'image', width: 1080, height: 1350 },
+        { type: 'video', width: 1080, height: 1350, duration: 20 },
+      ])
+    ).not.toThrow();
+
+    expect(() =>
+      assertCarouselGeometry([
+        { type: 'image', width: 1080, height: 1350 },
+        { type: 'image', width: 1080, height: 1080 },
+      ])
+    ).toThrow(/semua item Instagram harus 1080×1350/);
+
+    expect(() =>
+      assertCarouselGeometry([{ type: 'video', url: 'https://cdn.example.com/a.mp4' }])
+    ).toThrow(/metadata dimensi/);
   });
 });

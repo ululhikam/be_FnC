@@ -719,6 +719,44 @@ describe('FessService Unit Tests', () => {
       expect(prisma.base.updateMany).not.toHaveBeenCalled();
       expect(prisma.user.updateMany).not.toHaveBeenCalled();
     });
+
+    it('tidak menyetel processing saat approve ulang fess yang sudah pernah terbit ke IG', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_ig',
+        baseHandle: '@codememfess',
+        baseId: 'base_1',
+        userId: 'usr_author',
+        status: 'rejected',
+        postedToIg: true,
+        template: 'default',
+        content: 'Sudah pernah terbit ke IG',
+        base: { creatorId: 'mod_owner' },
+      } as any);
+
+      vi.mocked(prisma.fess.update).mockResolvedValueOnce({
+        id: 'fess_ig',
+        baseHandle: '@codememfess',
+        content: 'Sudah pernah terbit ke IG',
+        status: 'published',
+        postedToIg: true,
+        upvotes: 0,
+        downvotes: 0,
+        createdAt: new Date(),
+        comments: [],
+      } as any);
+
+      await FessService.approveFess('fess_ig', {
+        id: 'mod_owner',
+        role: 'Base Admin',
+        managedBases: ['@codememfess'],
+      });
+
+      expect(prisma.fess.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: 'published', igStatus: 'published' }),
+        })
+      );
+    });
   });
 
   describe('reportFess', () => {
@@ -787,5 +825,87 @@ describe('FessService Unit Tests', () => {
       expect(prisma.notification.create).not.toHaveBeenCalled();
       expect(prisma.systemLog.create).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('Serialisasi status Instagram', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const fess = {
+    id: 'fess_ig_1',
+    baseHandle: '@codemine',
+    content: 'Fess dengan status IG',
+    createdAt: new Date(),
+    status: 'published',
+    igStatus: 'failed',
+    igError: 'Container media Meta ERROR: rasio tidak sama',
+    igAttempts: 2,
+    postedToIg: false,
+  };
+
+  it('publik hanya melihat status, detail error disembunyikan', () => {
+    const data = FessService.serializeFess(fess);
+    expect(data.ig_status).toBe('failed');
+    expect(data.ig_attempts).toBe(2);
+    expect(data).not.toHaveProperty('ig_error');
+  });
+
+  it('admin pengelola base melihat detail error untuk ditindaklanjuti', () => {
+    const data = FessService.serializeFess(fess, null, { includeIgError: true });
+    expect(data.ig_status).toBe('failed');
+    expect(data.ig_error).toContain('rasio tidak sama');
+  });
+
+  it('assertCanManageFess menolak admin base lain & fess duplikat', async () => {
+    const row = {
+      baseHandle: '@codemine',
+      status: 'published',
+      postedToIg: false,
+      base: { creatorId: 'usr_owner' },
+    };
+
+    vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce(row as any);
+    await expect(
+      FessService.assertCanManageFess('fess_ig_1', {
+        id: 'usr_other',
+        role: 'Base Admin',
+        managedBases: ['@base_lain'],
+      })
+    ).rejects.toMatchObject({ status: 403, code: 'FORBIDDEN' });
+
+    vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({ ...row, postedToIg: true } as any);
+    await expect(
+      FessService.assertCanManageFess('fess_ig_1', {
+        id: 'usr_owner',
+        role: 'Base Admin',
+        managedBases: ['@codemine'],
+      })
+    ).rejects.toMatchObject({ status: 409, code: 'FESS_ALREADY_POSTED' });
+  });
+
+  it('getFessById: pemilik base melihat detail, admin base lain tidak', async () => {
+    const row = {
+      ...fess,
+      comments: [],
+      base: { avatar: null, color: '#123', initial: 'CM', creatorId: 'usr_owner' },
+    };
+
+    vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce(row as any);
+    const ownerView = await FessService.getFessById('fess_ig_1', undefined, {
+      id: 'usr_owner',
+      role: 'Base Admin',
+      managedBases: [],
+    });
+    expect(ownerView.ig_error).toContain('rasio tidak sama');
+
+    vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce(row as any);
+    const otherView = await FessService.getFessById('fess_ig_1', undefined, {
+      id: 'usr_other',
+      role: 'Base Admin',
+      managedBases: ['@base_lain'],
+    });
+    expect(otherView).not.toHaveProperty('ig_error');
   });
 });

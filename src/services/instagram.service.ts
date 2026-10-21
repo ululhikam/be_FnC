@@ -2,11 +2,18 @@ import crypto from 'crypto';
 import axios from 'axios';
 import { ENV } from '../config/env.js';
 import { prisma } from '../config/prisma.js';
-import { ensureJpegUrl } from '../utils/instagram-media.util.js';
+import {
+  assertCarouselGeometry,
+  ensureIgImageUrl,
+  IG_CAROUSEL_TARGET,
+} from '../utils/instagram-media.util.js';
 
 const API_VERSION = ENV.INSTAGRAM_API_VERSION || 'v25.0';
 const API_BASE = `https://graph.instagram.com/${API_VERSION}`;
 const FINALIZE_MAX_ATTEMPTS = 6;
+/** Total percobaan auto-post (termasuk percobaan pertama) untuk error sementara. */
+const AUTO_RETRY_MAX_ATTEMPTS = 3;
+const IG_STATUS_MAX_ERROR_LENGTH = 1200;
 /** Masa berlaku long-lived token Meta (60 hari) — dipakai bila Meta tidak mengirim expires_in. */
 const LONG_LIVED_TTL_SECONDS = 60 * 24 * 60 * 60;
 
@@ -22,6 +29,31 @@ export interface InstagramProfileData {
 export interface PostMediaItem {
   type: 'image' | 'video';
   url: string;
+  /** Dimensi hasil normalisasi 4:5 (wajib untuk carousel). */
+  width?: number;
+  height?: number;
+  /** Durasi video (detik) — batas carousel Instagram 60 detik. */
+  duration?: number | null;
+  /** true jika item sudah dinormalisasi backend (mis. card canvas). */
+  normalized?: boolean;
+}
+
+export interface AutoPostOptions {
+  /** Jumlah retry yang sudah dilakukan (0 = percobaan pertama). */
+  attempt?: number;
+  /** false = jangan jadwalkan retry otomatis (mis. dari retry worker). */
+  allowRetry?: boolean;
+}
+
+/** Payload retry auto-post gambar (ditandatangani HMAC). */
+export interface RetryPayload {
+  fessId: string;
+  baseHandle: string;
+  /** Percobaan berikutnya (1..AUTO_RETRY_MAX_ATTEMPTS-1). */
+  attempt: number;
+  /** Jeda sebelum retry agar error sementara Meta/network punya waktu pulih. */
+  delayMs?: number;
+  exp: number;
 }
 
 /**
@@ -327,207 +359,606 @@ export class InstagramService {
     baseHandle: string,
     fessId: string,
     media: PostMediaItem | PostMediaItem[] | string | string[],
-    caption: string
+    caption: string,
+    options: AutoPostOptions = {}
   ) {
+    const attempt = Math.max(0, Math.floor(Number(options.attempt) || 0));
+    const allowRetry = options.allowRetry !== false;
+
+    // Normalisasi daftar media: buang data-URI (Meta butuh URL publik) &
+    // batasi 10 item (maksimum carousel Instagram).
+    let items: PostMediaItem[] = (Array.isArray(media) ? media : [media])
+      .map((m) => (typeof m === 'string' ? { type: 'image' as const, url: m } : m))
+      .filter(
+        (m): m is PostMediaItem =>
+          !!m && typeof m.url === 'string' && m.url.length > 0 && !m.url.startsWith('data:')
+      )
+      .slice(0, 10);
+
+    let isCarousel = items.length > 1;
+    let baseIg = baseHandle;
+    let mediaLabel = isCarousel
+      ? `carousel ${items.length} media`
+      : items[0]?.type === 'video'
+        ? 'video Reels'
+        : 'visual Feed card';
+
     try {
-      // Normalisasi daftar media: buang data-URI (Meta butuh URL publik) &
-      // batasi 10 item (maksimum carousel Instagram).
-      const items: PostMediaItem[] = (Array.isArray(media) ? media : [media])
-        .map((m) => (typeof m === 'string' ? { type: 'image' as const, url: m } : m))
-        .filter(
-          (m): m is PostMediaItem =>
-            !!m && typeof m.url === 'string' && m.url.length > 0 && !m.url.startsWith('data:')
-        )
-        .slice(0, 10);
-      const isCarousel = items.length > 1;
+      await InstagramService.updateFessIgState(fessId, {
+        igStatus: 'processing',
+        igError: null,
+        igAttempts: attempt + 1,
+      });
 
       // Resolve koneksi Instagram kreator base (token nyata saja)
-      const { baseIg, token } = await InstagramService.resolveInstagramConnection(baseHandle);
+      const connection = await InstagramService.resolveInstagramConnection(baseHandle);
+      baseIg = connection.baseIg;
+      const token = connection.token;
+
+      if (!token) {
+        const detail = `Akun Instagram ${baseIg} belum terhubung ke Meta. Hubungkan akun melalui menu Koneksi Platform.`;
+        await InstagramService.updateFessIgState(fessId, {
+          igStatus: 'failed',
+          igError: InstagramService.truncateIgError(detail),
+        });
+        await InstagramService.writeAudit(
+          `Fess #${fessId} tidak dipublikasikan ke ${baseIg} (${mediaLabel}): ${detail}`,
+          'error'
+        );
+        return {
+          success: true,
+          platform: 'instagram',
+          meta_published: false,
+          ig_pending: false,
+          imageUrl: items[0]?.url || null,
+          imageUrls: items.map((item) => item.url),
+          items,
+          is_carousel: isCarousel,
+          fessId,
+          base_ig: baseIg,
+          error: detail,
+          message: `Card fess #${fessId} berhasil di-render, tetapi Instagram ${baseIg} belum terhubung.`,
+        };
+      }
+
+      if (!items.length) {
+        const detail = 'Tidak ada media publik yang bisa diposting ke Instagram.';
+        await InstagramService.updateFessIgState(fessId, {
+          igStatus: 'failed',
+          igError: detail,
+        });
+        await InstagramService.writeAudit(
+          `Auto-post fess #${fessId} gagal: ${detail}`,
+          'error'
+        );
+        return {
+          success: false,
+          platform: 'instagram',
+          meta_published: false,
+          ig_pending: false,
+          fessId,
+          base_ig: baseIg,
+          error: detail,
+        };
+      }
+
+      // Guard kuota Meta: maksimum 100 publikasi per 24 jam per akun.
+      // Best-effort — kegagalan cek kuota tidak menghalangi publikasi.
+      const quota = await InstagramService.getPublishingQuota(token);
+      if (quota && quota.usage >= quota.total) {
+        const detail = `Kuota publikasi Instagram ${baseIg} penuh (${quota.usage}/${quota.total} per 24 jam). Coba lagi setelah kuota direset Meta.`;
+        await InstagramService.updateFessIgState(fessId, {
+          igStatus: 'failed',
+          igError: InstagramService.truncateIgError(detail),
+        });
+        await InstagramService.writeAudit(
+          `Fess #${fessId} tidak dipublikasikan — ${detail}`,
+          'error'
+        );
+        return {
+          success: false,
+          platform: 'instagram',
+          meta_published: false,
+          ig_pending: false,
+          fessId,
+          base_ig: baseIg,
+          error: detail,
+        };
+      }
+
+      // Semua item carousel wajib 1080×1350 (4:5). Gambar dinormalisasi di
+      // sini; video harus sudah dinormalisasi oleh klien/komposer.
+      try {
+        items = await InstagramService.prepareCarouselItems(items);
+      } catch (prepareErr: any) {
+        const detail = prepareErr?.message || 'Media carousel tidak valid.';
+        // Error unduhan/upload sementara tetap layak retry; error format,
+        // dimensi, atau durasi akan langsung ditandai gagal oleh classifier.
+        return await InstagramService.completeAutoPostFailure({
+          fessId,
+          baseHandle,
+          baseIg,
+          mediaLabel,
+          detail,
+          err: prepareErr,
+          attempt,
+          allowRetry,
+          items,
+          caption,
+          isCarousel,
+        });
+      }
+
+      isCarousel = items.length > 1;
+      mediaLabel = isCarousel
+        ? `carousel ${items.length} media`
+        : items[0]?.type === 'video'
+          ? 'video Reels'
+          : 'visual Feed card';
+      const captionText = InstagramService.buildCaption(caption, baseHandle);
+
+      // Simpan payload final agar retry tidak perlu mengunduh/menormalkan
+      // ulang dari data mentah dan agar admin bisa melihat apa yang dikirim.
+      await InstagramService.updateFessIgState(fessId, {
+        igPayload: {
+          baseHandle,
+          caption,
+          aspect: 'portrait',
+          width: IG_CAROUSEL_TARGET.width,
+          height: IG_CAROUSEL_TARGET.height,
+          items: items.map((item) => ({
+            type: item.type,
+            url: item.url,
+            width: item.width,
+            height: item.height,
+            duration: item.duration ?? null,
+            normalized: true,
+          })),
+          updatedAt: new Date().toISOString(),
+        },
+      });
 
       let metaPublished = false;
       let igPending = false;
       let postCreationId: string | null = null;
       let failureDetail = '';
-      const mediaLabel = isCarousel
-        ? `carousel ${items.length} media`
-        : items[0]?.type === 'video'
-          ? 'video Reels'
-          : 'visual Feed card';
+      let failureErr: any = null;
 
-      // Jika token Instagram aktif ada, jalankan Meta Content Publishing API
-      if (token && items.length) {
-        // Guard kuota Meta: maksimum 100 publikasi per 24 jam per akun.
-        // Best-effort — kegagalan cek kuota tidak menghalangi publikasi.
-        const quota = await InstagramService.getPublishingQuota(token);
-        if (quota && quota.usage >= quota.total) {
-          await prisma.systemLog
-            .create({
-              data: {
-                source: 'CANVAS_WORKER',
-                message: `Fess #${fessId} tidak dipublikasikan — kuota Instagram ${baseIg} penuh (${quota.usage}/${quota.total} per 24 jam).`,
-                tone: 'error',
-              },
-            })
-            .catch(() => {});
-          return {
-            success: false,
-            platform: 'instagram',
-            error: `Kuota publikasi Instagram ${baseIg} penuh (${quota.usage}/${quota.total} per 24 jam). Coba lagi setelah kuota direset Meta.`,
-          };
-        }
+      try {
+        const hasVideo = items.some((item) => item.type === 'video');
 
-        try {
-          // Instagram hanya menerima JPEG — konversi gambar non-JPEG
-          // (PNG/WebP/GIF) ke JPEG publik sebelum container dibuat.
-          for (const item of items) {
-            if (item.type === 'image') {
-              item.url = await ensureJpegUrl(item.url);
+        if (hasVideo) {
+          // Video butuh ~25 dtk diproses Meta + ~25 dtk lagi untuk container
+          // carousel — tidak muat dalam batas 60 dtk Vercel. Container dibuat
+          // di sini, tunggu + publish diserahkan ke worker finalize internal.
+          if (isCarousel) {
+            // Item video dibuat lebih dulu agar Meta mulai memprosesnya lebih
+            // awal; urutan id tetap mengikuti urutan tampil media.
+            const createdIds = new Map<number, string>();
+            const creationOrder = items
+              .map((item, idx) => ({ item, idx }))
+              .sort((a, b) => (a.item.type === 'video' ? 0 : 1) - (b.item.type === 'video' ? 0 : 1));
+            for (const { item, idx } of creationOrder) {
+              createdIds.set(idx, await InstagramService.createItemContainer(item, token));
             }
-          }
+            const itemIds = items.map((_, idx) => createdIds.get(idx)!);
 
-          const captionText = InstagramService.buildCaption(caption, baseHandle);
-          const hasVideo = items.some((item) => item.type === 'video');
-
-          if (hasVideo) {
-            // Video butuh ~25 dtk diproses Meta + ~25 dtk lagi untuk container
-            // carousel — tidak muat dalam batas 60 dtk Vercel. Container dibuat
-            // di sini, tunggu + publish diserahkan ke worker finalize internal.
-            if (isCarousel) {
-              // Item video dibuat lebih dulu agar Meta mulai memprosesnya lebih
-              // awal; urutan id tetap mengikuti urutan tampil media.
-              const createdIds = new Map<number, string>();
-              const creationOrder = items
-                .map((item, idx) => ({ item, idx }))
-                .sort((a, b) => (a.item.type === 'video' ? 0 : 1) - (b.item.type === 'video' ? 0 : 1));
-              for (const { item, idx } of creationOrder) {
-                createdIds.set(idx, await InstagramService.createItemContainer(item, token));
-              }
-              const itemIds = items.map((_, idx) => createdIds.get(idx)!);
-
-              await InstagramService.scheduleFinalize({
-                fessId,
-                baseHandle,
-                kind: 'carousel',
-                itemIds,
-                containerId: null,
-                attempts: 0,
-                exp: Date.now() + 30 * 60_000,
-              });
-            } else {
-              // Video tunggal → Reels (caption menempel di container).
-              const containerId = await InstagramService.createVideoContainer(items[0].url, captionText, token);
-              await InstagramService.scheduleFinalize({
-                fessId,
-                baseHandle,
-                kind: 'reels',
-                itemIds: null,
-                containerId,
-                attempts: 0,
-                exp: Date.now() + 30 * 60_000,
-              });
-            }
-            igPending = true;
-          } else if (isCarousel) {
-            // Semua gambar → alur sinkron (cepat): item → tunggu → carousel → tunggu → publish.
-            const itemIds: string[] = [];
-            for (const item of items) {
-              itemIds.push(await InstagramService.createItemContainer(item, token));
-            }
-            const itemsReady = await InstagramService.waitForContainersFinished(itemIds, token);
-            if (!itemsReady) throw new Error('Container item Meta belum siap (masih IN_PROGRESS) setelah 30 detik.');
-
-            postCreationId = await InstagramService.createCarouselContainer(captionText, itemIds, token);
-          } else {
-            // Gambar tunggal → Feed card biasa.
-            postCreationId = await InstagramService.createImageContainer(items[0].url, captionText, token);
-          }
-
-          if (!igPending && postCreationId) {
-            // Tunggu Meta selesai memproses container (status FINISHED) sebelum publish.
-            // Publish saat container masih IN_PROGRESS selalu gagal: "Media ID is not available".
-            const containerReady = await InstagramService.waitForContainersFinished([postCreationId], token);
-            if (!containerReady) throw new Error('Container media Meta belum siap (masih IN_PROGRESS) setelah 30 detik.');
-
-            const pubRes = await axios.post(`${API_BASE}/me/media_publish`, null, {
-              params: {
-                creation_id: postCreationId,
-                access_token: token,
-              },
-              timeout: 15000,
+            await InstagramService.scheduleFinalize({
+              fessId,
+              baseHandle,
+              kind: 'carousel',
+              itemIds,
+              containerId: null,
+              attempts: 0,
+              exp: Date.now() + 30 * 60_000,
             });
-            if (pubRes.data?.id) {
-              metaPublished = true;
-            }
+          } else {
+            // Video tunggal → Reels (caption menempel di container).
+            const containerId = await InstagramService.createVideoContainer(items[0].url, captionText, token);
+            await InstagramService.scheduleFinalize({
+              fessId,
+              baseHandle,
+              kind: 'reels',
+              itemIds: null,
+              containerId,
+              attempts: 0,
+              exp: Date.now() + 30 * 60_000,
+            });
           }
-        } catch (apiErr: any) {
-          // Simpan penyebab agar tercatat di audit log — termasuk petunjuk
-          // khusus saat token kedaluwarsa/dicabut (error 190).
-          const metaError = apiErr?.response?.data?.error;
-          failureDetail =
-            metaError?.error_user_msg ||
-            metaError?.message ||
-            apiErr.message ||
-            'Kesalahan tidak diketahui';
-          if (metaError?.code === 190) {
-            failureDetail +=
-              ' — token Instagram kedaluwarsa/dicabut, hubungkan ulang akun via Meta OAuth';
+          igPending = true;
+        } else if (isCarousel) {
+          // Semua gambar → alur sinkron (cepat): item → tunggu → carousel → tunggu → publish.
+          const itemIds: string[] = [];
+          for (const item of items) {
+            itemIds.push(await InstagramService.createItemContainer(item, token));
           }
-          console.warn('[Instagram AutoPost] Meta API warning:', failureDetail);
+          const itemsReady = await InstagramService.waitForContainersFinished(itemIds, token);
+          if (!itemsReady) throw new Error('Container item Meta belum siap (masih IN_PROGRESS) setelah 30 detik.');
+
+          postCreationId = await InstagramService.createCarouselContainer(captionText, itemIds, token);
+        } else {
+          // Gambar tunggal → Feed card biasa.
+          postCreationId = await InstagramService.createImageContainer(items[0].url, captionText, token);
         }
+
+        if (!igPending && postCreationId) {
+          // Tunggu Meta selesai memproses container (status FINISHED) sebelum publish.
+          // Publish saat container masih IN_PROGRESS selalu gagal: "Media ID is not available".
+          const containerReady = await InstagramService.waitForContainersFinished([postCreationId], token);
+          if (!containerReady) throw new Error('Container media Meta belum siap (masih IN_PROGRESS) setelah 30 detik.');
+
+          const pubRes = await axios.post(`${API_BASE}/me/media_publish`, null, {
+            params: {
+              creation_id: postCreationId,
+              access_token: token,
+            },
+            timeout: 15000,
+          });
+          if (pubRes.data?.id) {
+            metaPublished = true;
+          }
+        }
+      } catch (apiErr: any) {
+        failureErr = apiErr;
+        failureDetail = InstagramService.metaErrorDetail(apiErr);
+        console.warn('[Instagram AutoPost] Meta API warning:', failureDetail);
       }
 
-      // Record audit log
-      await prisma.systemLog.create({
-        data: {
-          source: 'CANVAS_WORKER',
-          message: metaPublished
-            ? `Fess #${fessId} berhasil dipublikasikan ke Instagram Feed ${baseIg} (${mediaLabel}).`
-            : igPending
-              ? `Fess #${fessId}: video sedang diproses Meta — publikasi otomatis ke ${baseIg} sedang berjalan (${mediaLabel}).`
-              : `Fess #${fessId} dirender ke ${mediaLabel} (${baseIg}), tetapi publikasi ke Instagram belum berhasil.${failureDetail ? ` Penyebab: ${failureDetail}.` : ''}`,
-          tone: metaPublished || igPending ? 'ok' : 'error',
-        },
-      });
+      if (failureDetail && !igPending) {
+        return await InstagramService.completeAutoPostFailure({
+          fessId,
+          baseHandle,
+          baseIg,
+          mediaLabel,
+          detail: failureDetail,
+          err: failureErr,
+          attempt,
+          allowRetry,
+          items,
+          caption,
+          isCarousel,
+        });
+      }
 
-      return {
-        success: true,
-        platform: 'instagram',
-        meta_published: metaPublished,
-        ig_pending: igPending,
-        creation_id: postCreationId,
-        imageUrl: items[0]?.url || null,
-        imageUrls: items.map((item) => item.url),
-        items,
-        is_carousel: isCarousel,
+      if (igPending) {
+        await InstagramService.updateFessIgState(fessId, {
+          igStatus: 'pending',
+          igError: null,
+        });
+        await InstagramService.writeAudit(
+          `Fess #${fessId}: video sedang diproses Meta — publikasi otomatis ke ${baseIg} sedang berjalan (${mediaLabel}).`,
+          'ok'
+        );
+        return {
+          success: true,
+          platform: 'instagram',
+          meta_published: false,
+          ig_pending: true,
+          creation_id: postCreationId,
+          imageUrl: items[0]?.url || null,
+          imageUrls: items.map((item) => item.url),
+          items,
+          is_carousel: isCarousel,
+          fessId,
+          base_ig: baseIg,
+          message: `Video sedang diproses Instagram — fess #${fessId} akan terbit otomatis ke ${baseIg} dalam ±1 menit.`,
+        };
+      }
+
+      if (metaPublished) {
+        await InstagramService.updateFessIgState(fessId, {
+          igStatus: 'published',
+          igError: null,
+          postedToIg: true,
+        });
+        await InstagramService.writeAudit(
+          `Fess #${fessId} berhasil dipublikasikan ke Instagram Feed ${baseIg} (${mediaLabel}, percobaan ${attempt + 1}/${AUTO_RETRY_MAX_ATTEMPTS}).`,
+          'ok'
+        );
+        return {
+          success: true,
+          platform: 'instagram',
+          meta_published: true,
+          ig_pending: false,
+          creation_id: postCreationId,
+          imageUrl: items[0]?.url || null,
+          imageUrls: items.map((item) => item.url),
+          items,
+          is_carousel: isCarousel,
+          fessId,
+          base_ig: baseIg,
+          message: `Card fess #${fessId} berhasil diposting otomatis ke Instagram Feed ${baseIg}${isCarousel ? ` (carousel ${items.length} media)` : ''}!`,
+        };
+      }
+
+      return await InstagramService.completeAutoPostFailure({
         fessId,
-        base_ig: baseIg,
-        message: metaPublished
-          ? `Card fess #${fessId} berhasil diposting otomatis ke Instagram Feed ${baseIg}${isCarousel ? ` (carousel ${items.length} media)` : ''}!`
-          : igPending
-            ? `Video sedang diproses Instagram — fess #${fessId} akan terbit otomatis ke ${baseIg} dalam ±1 menit.`
-            : `Card fess #${fessId} berhasil di-render dan siap diposting ke Instagram Feed ${baseIg}.`,
-      };
+        baseHandle,
+        baseIg,
+        mediaLabel,
+        detail: 'Meta tidak mengembalikan id media setelah proses publikasi.',
+        err: null,
+        attempt,
+        allowRetry,
+        items,
+        caption,
+        isCarousel,
+      });
     } catch (err: any) {
       console.error('[Instagram AutoPost Error]', err.message);
 
-      // Catat kegagalan tak terduga (di luar alur Meta API) ke SystemLog agar
-      // terlihat oleh admin. Error Meta API ditangani di catch dalam.
-      await prisma.systemLog
-        .create({
-          data: {
-            source: 'CANVAS_WORKER',
-            message: `Auto-post fess #${fessId} gagal ke ${baseHandle}: ${err.message || 'Kesalahan tidak diketahui'}`,
-            tone: 'error',
-          },
-        })
-        .catch(() => {});
+      await InstagramService.updateFessIgState(fessId, {
+        igStatus: 'failed',
+        igError: InstagramService.truncateIgError(
+          err?.message || 'Kesalahan auto-post Instagram tidak diketahui'
+        ),
+      });
+      await InstagramService.writeAudit(
+        `Auto-post fess #${fessId} gagal ke ${baseHandle}: ${err.message || 'Kesalahan tidak diketahui'}`,
+        'error'
+      );
 
       return {
         success: false,
         platform: 'instagram',
         error: err.message,
+        items,
+        imageUrls: items.map((item) => item.url),
+        is_carousel: isCarousel,
+        fessId,
+        base_ig: baseIg,
       };
     }
+  }
+
+  /** Normalisasi gambar & validasi geometri semua item carousel. */
+  private static async prepareCarouselItems(items: PostMediaItem[]): Promise<PostMediaItem[]> {
+    const prepared: PostMediaItem[] = [];
+
+    for (let index = 0; index < items.length; index++) {
+      const item = items[index];
+      if (item.type === 'video') {
+        const duration = Number(item.duration);
+        if (Number.isFinite(duration) && duration > 60.5) {
+          throw new Error(
+            `Video carousel #${index + 1} berdurasi ${Math.round(duration)} detik; ` +
+              'Instagram carousel membatasi video maksimal 60 detik. Kompres/potong video terlebih dahulu.'
+          );
+        }
+        if (!item.width || !item.height) {
+          throw new Error(
+            `Video carousel #${index + 1} belum memiliki metadata dimensi. ` +
+              'Video harus dinormalisasi ke 1080×1350 (4:5) di komposer sebelum diposting.'
+          );
+        }
+        prepared.push({
+          ...item,
+          width: Number(item.width),
+          height: Number(item.height),
+          normalized: true,
+        });
+        continue;
+      }
+
+      if (
+        item.normalized &&
+        Number(item.width) === IG_CAROUSEL_TARGET.width &&
+        Number(item.height) === IG_CAROUSEL_TARGET.height
+      ) {
+        prepared.push({
+          ...item,
+          width: IG_CAROUSEL_TARGET.width,
+          height: IG_CAROUSEL_TARGET.height,
+        });
+        continue;
+      }
+
+      const normalized = await ensureIgImageUrl(item.url, IG_CAROUSEL_TARGET);
+      prepared.push({
+        ...item,
+        url: normalized.url,
+        width: normalized.width,
+        height: normalized.height,
+        normalized: true,
+      });
+    }
+
+    assertCarouselGeometry(prepared, IG_CAROUSEL_TARGET);
+    return prepared;
+  }
+
+  /** Klasifikasi error Meta: hanya error sementara yang layak di-retry. */
+  private static isRetryableIgError(err: any, detail: string): boolean {
+    const code = Number(err?.response?.data?.error?.code);
+    if (code === 190) return false; // token kedaluwarsa/dicabut — perlu OAuth ulang
+    if ([1, 2, 4, 17, 32, 613, 9004].includes(code)) return true;
+
+    // Error permanen harus dicek SEBELUM "tanpa response", karena error
+    // normalisasi/format lokal juga tidak memiliki response HTTP.
+    if (
+      /rasio|ratio|format|dimension|dimensi|metadata|ukuran|durasi|duration|unsupported|invalid|tidak valid|harus berupa http/i.test(
+        detail
+      )
+    ) {
+      return false;
+    }
+    if (!err?.response || err?.code === 'ECONNABORTED' || err?.code === 'ETIMEDOUT') return true;
+    if (
+      /timeout|network|fetch|temporar|rate limit|try again|not available|belum siap|unduh|upload|unggah|storage/i.test(
+        detail
+      )
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  /** Akhiri auto-post: jadwalkan retry bila memungkinkan, atau tandai gagal. */
+  private static async completeAutoPostFailure(args: {
+    fessId: string;
+    baseHandle: string;
+    baseIg: string;
+    mediaLabel: string;
+    detail: string;
+    err: any;
+    attempt: number;
+    allowRetry: boolean;
+    items: PostMediaItem[];
+    caption: string;
+    isCarousel: boolean;
+  }) {
+    const {
+      fessId,
+      baseHandle,
+      baseIg,
+      mediaLabel,
+      detail,
+      err,
+      attempt,
+      allowRetry,
+      items,
+      caption,
+      isCarousel,
+    } = args;
+
+    const retryable = InstagramService.isRetryableIgError(err, detail);
+    const canRetry = retryable && allowRetry && attempt + 1 < AUTO_RETRY_MAX_ATTEMPTS;
+
+    if (canRetry) {
+      const retryNote = `Percobaan ${attempt + 1}/${AUTO_RETRY_MAX_ATTEMPTS} gagal: ${detail}. Retry otomatis dijadwalkan.`;
+      // Simpan status SEBELUM memanggil worker retry. Worker bisa selesai lebih
+      // dulu; kalau status ditulis setelahnya, hasil "published" akan tertimpa.
+      await InstagramService.updateFessIgState(fessId, {
+        igStatus: 'processing',
+        igError: InstagramService.truncateIgError(retryNote),
+      });
+
+      try {
+        await InstagramService.scheduleRetry({
+          fessId,
+          baseHandle,
+          attempt: attempt + 1,
+          delayMs: attempt === 0 ? 5_000 : 10_000,
+          exp: Date.now() + 30 * 60_000,
+        });
+        await InstagramService.writeAudit(
+          `Fess #${fessId} gagal dipublikasikan ke ${baseIg} (${mediaLabel}) — ${retryNote}`,
+          'error'
+        );
+        return {
+          success: false,
+          platform: 'instagram',
+          meta_published: false,
+          ig_pending: false,
+          retry_scheduled: true,
+          imageUrl: items[0]?.url || null,
+          imageUrls: items.map((item) => item.url),
+          items,
+          is_carousel: isCarousel,
+          fessId,
+          base_ig: baseIg,
+          error: detail,
+          message: `Publikasi Instagram gagal sementara. Sistem mencoba lagi otomatis (${attempt + 2}/${AUTO_RETRY_MAX_ATTEMPTS}).`,
+        };
+      } catch (scheduleErr: any) {
+        const scheduleDetail = `${detail}. Gagal menjadwalkan retry: ${scheduleErr?.message || scheduleErr}`;
+        await InstagramService.updateFessIgState(fessId, {
+          igStatus: 'failed',
+          igError: InstagramService.truncateIgError(scheduleDetail),
+        });
+        await InstagramService.writeAudit(
+          `Fess #${fessId} GAGAL dipublikasikan ke ${baseIg} (${mediaLabel}): ${scheduleDetail}`,
+          'error'
+        );
+        return {
+          success: false,
+          platform: 'instagram',
+          meta_published: false,
+          ig_pending: false,
+          imageUrl: items[0]?.url || null,
+          imageUrls: items.map((item) => item.url),
+          items,
+          is_carousel: isCarousel,
+          fessId,
+          base_ig: baseIg,
+          error: scheduleDetail,
+          message: `Publikasi Instagram gagal: ${scheduleDetail}`,
+        };
+      }
+    }
+
+    const finalDetail = `${detail}${
+      retryable && !allowRetry ? ' (retry otomatis dinonaktifkan)' : ''
+    }`;
+    await InstagramService.updateFessIgState(fessId, {
+      igStatus: 'failed',
+      igError: InstagramService.truncateIgError(finalDetail),
+    });
+    await InstagramService.writeAudit(
+      `Fess #${fessId} GAGAL dipublikasikan ke Instagram Feed ${baseIg} (${mediaLabel}) ` +
+        `pada percobaan ${attempt + 1}/${AUTO_RETRY_MAX_ATTEMPTS}: ${finalDetail}`,
+      'error'
+    );
+    return {
+      success: false,
+      platform: 'instagram',
+      meta_published: false,
+      ig_pending: false,
+      imageUrl: items[0]?.url || null,
+      imageUrls: items.map((item) => item.url),
+      items,
+      is_carousel: isCarousel,
+      fessId,
+      base_ig: baseIg,
+      error: finalDetail,
+      message: `Publikasi Instagram gagal: ${finalDetail}`,
+    };
+  }
+
+  /** Update status IG fess dengan aman (prisma.fess bisa tidak ada di unit test). */
+  static async updateFessIgState(fessId: string, data: Record<string, any>): Promise<void> {
+    try {
+      const model: any = (prisma as any).fess;
+      if (!model?.update) return;
+      await model.update({
+        where: { id: fessId },
+        data: { ...data, igUpdatedAt: new Date() },
+      });
+    } catch (err: any) {
+      console.warn('[Instagram AutoPost] Gagal memperbarui status IG:', err?.message || err);
+    }
+  }
+
+  /** Catat audit log tanpa menggagalkan alur utama. */
+  private static async writeAudit(message: string, tone: 'ok' | 'error' | 'info'): Promise<void> {
+    try {
+      await prisma.systemLog.create({ data: { source: 'CANVAS_WORKER', message, tone } });
+    } catch {
+      // Audit log bersifat best-effort.
+    }
+  }
+
+  /** Detail error Meta yang ramah dibaca admin. */
+  static metaErrorDetail(apiErr: any): string {
+    const metaError = apiErr?.response?.data?.error;
+    let detail =
+      metaError?.error_user_msg ||
+      metaError?.message ||
+      apiErr?.message ||
+      'Kesalahan tidak diketahui';
+    if (metaError?.code === 190) {
+      detail += ' — token Instagram kedaluwarsa/dicabut, hubungkan ulang akun via Meta OAuth';
+    } else if (metaError?.code) {
+      detail += ` (kode Meta ${metaError.code})`;
+    }
+    return detail;
+  }
+
+  static truncateIgError(value: string): string {
+    const text = String(value || '').trim();
+    return text.length > IG_STATUS_MAX_ERROR_LENGTH
+      ? `${text.slice(0, IG_STATUS_MAX_ERROR_LENGTH - 1)}…`
+      : text;
   }
 
   /**
@@ -721,6 +1152,16 @@ export class InstagramService {
       if (!payload?.fessId || !payload?.baseHandle || !payload.exp || Date.now() > payload.exp) {
         return null;
       }
+      if (
+        !['carousel', 'reels'].includes(payload.kind) ||
+        !Number.isInteger(Number(payload.attempts)) ||
+        (payload.kind === 'carousel' &&
+          !Array.isArray(payload.itemIds) &&
+          typeof payload.containerId !== 'string') ||
+        (payload.kind === 'reels' && typeof payload.containerId !== 'string')
+      ) {
+        return null;
+      }
       return payload;
     } catch {
       return null;
@@ -732,6 +1173,129 @@ export class InstagramService {
     const token = InstagramService.signFinalizePayload(payload);
     const baseUrl = ENV.BACKEND_PUBLIC_URL.replace(/\/+$/, '');
     await axios.post(`${baseUrl}/internal/instagram/finalize`, { token }, { timeout: 10000 });
+  }
+
+  // ── Retry auto-post (error sementara Meta/network) ────────────────────────
+
+  /** Tanda tangani payload retry dengan HMAC yang sama seperti worker finalize. */
+  static signRetryPayload(payload: RetryPayload): string {
+    const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+    const sig = crypto
+      .createHmac('sha256', InstagramService.internalSecret())
+      .update(body)
+      .digest('base64url');
+    return `${body}.${sig}`;
+  }
+
+  /** Verifikasi payload retry; null jika tanda tangan/expired tidak valid. */
+  static verifyRetryPayload(token: string): RetryPayload | null {
+    const [body, sig] = String(token || '').split('.');
+    if (!body || !sig) return null;
+
+    const expected = crypto
+      .createHmac('sha256', InstagramService.internalSecret())
+      .update(body)
+      .digest('base64url');
+    const a = Buffer.from(sig);
+    const b = Buffer.from(expected);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+
+    try {
+      const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as RetryPayload;
+      const attempt = Number(payload?.attempt);
+      const delayMs = payload?.delayMs == null ? 0 : Number(payload.delayMs);
+      if (
+        !payload?.fessId ||
+        !payload?.baseHandle ||
+        !Number.isInteger(attempt) ||
+        attempt < 1 ||
+        attempt >= AUTO_RETRY_MAX_ATTEMPTS ||
+        !Number.isInteger(delayMs) ||
+        delayMs < 0 ||
+        delayMs > 15_000 ||
+        !payload.exp ||
+        Date.now() > payload.exp
+      ) {
+        return null;
+      }
+      return payload;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Kirim tugas retry ke endpoint internal (invocation baru). */
+  private static async scheduleRetry(payload: RetryPayload): Promise<void> {
+    const token = InstagramService.signRetryPayload(payload);
+    const baseUrl = ENV.BACKEND_PUBLIC_URL.replace(/\/+$/, '');
+    await axios.post(`${baseUrl}/internal/instagram/retry`, { token }, { timeout: 10000 });
+  }
+
+  /**
+   * Worker retry: baca payload carousel yang tersimpan, lalu jalankan ulang
+   * autoPostFess dengan nomor percobaan berikutnya.
+   */
+  static async retryInstagramPost(payload: RetryPayload): Promise<void> {
+    try {
+      // Beri jeda singkat agar rate limit / media fetch Meta sempat pulih.
+      const delayMs = Math.max(0, Math.min(15_000, Number(payload.delayMs) || 0));
+      if (delayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+
+      const model: any = (prisma as any).fess;
+      if (!model?.findUnique) return;
+
+      const fess = await model.findUnique({
+        where: { id: payload.fessId },
+        select: {
+          id: true,
+          content: true,
+          postedToIg: true,
+          igStatus: true,
+          igPayload: true,
+        },
+      });
+
+      if (!fess || fess.postedToIg || fess.igStatus === 'published') return;
+
+      const stored = (fess.igPayload || {}) as any;
+      const items: PostMediaItem[] = Array.isArray(stored.items)
+        ? stored.items.filter((item: any) => item && typeof item.url === 'string')
+        : [];
+
+      if (!items.length) {
+        const detail = 'Payload carousel tidak ditemukan; retry tidak dapat dijalankan.';
+        await InstagramService.updateFessIgState(payload.fessId, {
+          igStatus: 'failed',
+          igError: detail,
+        });
+        await InstagramService.writeAudit(
+          `Retry fess #${payload.fessId} gagal: ${detail}`,
+          'error'
+        );
+        return;
+      }
+
+      await InstagramService.autoPostFess(
+        payload.baseHandle,
+        payload.fessId,
+        items,
+        String(stored.caption || fess.content || ''),
+        { attempt: payload.attempt, allowRetry: true }
+      );
+    } catch (err: any) {
+      await InstagramService.updateFessIgState(payload.fessId, {
+        igStatus: 'failed',
+        igError: InstagramService.truncateIgError(
+          `Retry gagal: ${err?.message || 'kesalahan tidak diketahui'}`
+        ),
+      });
+      await InstagramService.writeAudit(
+        `Retry auto-post fess #${payload.fessId} gagal: ${err?.message || 'kesalahan tidak diketahui'}`,
+        'error'
+      );
+    }
   }
 
   /**
@@ -767,6 +1331,10 @@ export class InstagramService {
           deadlineTs - 3000
         );
         if (!itemsReady) {
+          await InstagramService.updateFessIgState(payload.fessId, {
+            igStatus: 'pending',
+            igError: null,
+          });
           await InstagramService.rescheduleFinalize(payload);
           return;
         }
@@ -777,6 +1345,10 @@ export class InstagramService {
       // Fase 2 — container siap? Lalu publish.
       const containerReady = await InstagramService.waitForContainersFinished([containerId], token, deadlineTs);
       if (!containerReady) {
+        await InstagramService.updateFessIgState(payload.fessId, {
+          igStatus: 'pending',
+          igError: null,
+        });
         await InstagramService.rescheduleFinalize({ ...payload, containerId });
         return;
       }
@@ -836,15 +1408,35 @@ export class InstagramService {
     detail: string | null
   ): Promise<void> {
     const label = payload.kind === 'carousel' ? 'carousel' : 'video Reels';
-    await prisma.systemLog.create({
-      data: {
-        source: 'CANVAS_WORKER',
-        message: published
-          ? `Fess #${payload.fessId} berhasil dipublikasikan ke Instagram Feed ${baseIg} (${label}).`
-          : `Fess #${payload.fessId} GAGAL dipublikasikan ke Instagram Feed ${baseIg} (${label})${detail ? `: ${detail}` : '.'}`,
-        tone: published ? 'ok' : 'error',
-      },
-    });
+
+    if (published) {
+      await InstagramService.updateFessIgState(payload.fessId, {
+        igStatus: 'published',
+        igError: null,
+        postedToIg: true,
+      });
+    } else {
+      await InstagramService.updateFessIgState(payload.fessId, {
+        igStatus: 'failed',
+        igError: InstagramService.truncateIgError(
+          detail || 'Publikasi Instagram gagal tanpa detail.'
+        ),
+      });
+    }
+
+    try {
+      await prisma.systemLog.create({
+        data: {
+          source: 'CANVAS_WORKER',
+          message: published
+            ? `Fess #${payload.fessId} berhasil dipublikasikan ke Instagram Feed ${baseIg} (${label}).`
+            : `Fess #${payload.fessId} GAGAL dipublikasikan ke Instagram Feed ${baseIg} (${label})${detail ? `: ${detail}` : '.'}`,
+          tone: published ? 'ok' : 'error',
+        },
+      });
+    } catch {
+      // Audit log best-effort — jangan mengubah status publikasi yang sudah final.
+    }
   }
 
   /**

@@ -39,7 +39,12 @@ router.post(
 );
 router.post('/:id/report', optionalAuth, validateBody(ReportSchema), FessController.reportFess);
 router.delete('/:id/delete', requireAuth, FessController.deleteFess);
-router.post('/:id/instagram-post', optionalAuth, FessController.postToInstagram);
+router.post(
+  '/:id/instagram-post',
+  requireAuth,
+  requireRole('Base Admin', 'Super Admin'),
+  FessController.postToInstagram
+);
 
 // Nested Comments Endpoints
 router.get('/:id/comments', optionalAuth, validateQuery(GetCommentsQuerySchema), CommentController.getComments);

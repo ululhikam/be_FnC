@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
+import sharp from 'sharp';
 import { app } from '../src/app.js';
 import { prisma } from '../src/config/prisma.js';
 
@@ -34,6 +35,13 @@ describe('POST /api/fesses/canvas/preview — pratinjau kartu composer', () => {
     expect(res.body.page_count).toBe(res.body.images.length);
     expect(res.body.images.length).toBeGreaterThanOrEqual(1);
     expect(res.body.images[0]).toMatch(/^data:image\/png;base64,/);
+
+    // Pratinjau komposer harus 1080×1350 (4:5), sama dengan hasil auto-post.
+    const png = Buffer.from(res.body.images[0].split(',')[1], 'base64');
+    const meta = await sharp(png).metadata();
+    expect(meta.width).toBe(1080);
+    expect(meta.height).toBe(1350);
+
     expect(prisma.base.findUnique).toHaveBeenCalledWith({
       where: { handle: '@concern_fess' },
     });

@@ -3,17 +3,22 @@ import sharp from 'sharp';
 import { StorageService } from '../services/storage.service.js';
 
 /**
- * Instagram Content Publishing hanya menerima gambar **JPEG**. Util ini
- * memastikan setiap URL gambar yang dipakai container Meta berformat JPEG:
+ * Instagram Content Publishing memiliki dua batasan yang saling terkait:
  *
- *  - URL berekstensi .jpg/.jpeg → langsung dipakai (tanpa request jaringan).
- *  - URL lain (PNG/WebP/GIF/…, atau tanpa ekstensi) → cek content-type;
- *    bila bukan JPEG, unduh → konversi (sharp) → unggah ulang ke storage
- *    (folder `ig-jpeg/`) → kembalikan URL publik yang baru.
+ *  1. Setiap gambar harus JPEG.
+ *  2. Semua item dalam satu carousel harus memiliki rasio aspek yang sama.
  *
- * Hasil per URL di-cache di memori (termasuk promise in-flight) supaya satu
- * gambar tidak dikonversi berulang kali; kegagalan TIDAK di-cache.
+ * Util ini menormalkan gambar user ke kanvas 4:5 (1080×1350) dengan mode
+ * `contain` (pad putih), sehingga foto apa pun bisa dicampur dengan card fess
+ * tanpa membuat container Meta berstatus ERROR.
  */
+
+export interface IgTargetDimensions {
+  width: number;
+  height: number;
+}
+
+export const IG_CAROUSEL_TARGET: IgTargetDimensions = { width: 1080, height: 1350 };
 
 const JPEG_URL_RE = /\.(jpe?g)($|[?#])/i;
 const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024; // batas aman unduhan media
@@ -21,10 +26,20 @@ const IG_MAX_JPEG_BYTES = 8 * 1024 * 1024; // batas ukuran gambar Instagram
 const CACHE_LIMIT = 200;
 
 const jpegUrlCache = new Map<string, Promise<string>>();
+const normalizedImageCache = new Map<string, Promise<{ url: string; width: number; height: number }>>();
+
+export interface IgImageResult {
+  url: string;
+  width: number;
+  height: number;
+}
 
 /**
  * Kembalikan URL publik berformat JPEG untuk sebuah gambar Instagram.
  * URL yang sudah JPEG dikembalikan apa adanya (cepat, tanpa jaringan).
+ *
+ * Catatan: fungsi ini hanya menjamin format. Untuk carousel gunakan
+ * `ensureIgImageUrl()` yang juga menjamin dimensi 4:5.
  */
 export async function ensureJpegUrl(url: string): Promise<string> {
   if (!/^https?:\/\//i.test(url)) return url; // pemanggil yang memfilter data-URI
@@ -46,6 +61,169 @@ export async function ensureJpegUrl(url: string): Promise<string> {
     jpegUrlCache.delete(url); // kegagalan tidak di-cache agar bisa dicoba lagi
     throw err;
   }
+}
+
+/**
+ * Normalkan gambar ke JPEG dengan dimensi persis target (default 1080×1350).
+ * Jika gambar sudah JPEG dan sudah berukuran tepat, URL asli dipakai kembali.
+ */
+export async function ensureIgImageUrl(
+  url: string,
+  target: IgTargetDimensions = IG_CAROUSEL_TARGET
+): Promise<IgImageResult> {
+  if (!/^https?:\/\//i.test(url)) {
+    throw new Error('URL gambar Instagram harus berupa HTTP(S) publik.');
+  }
+
+  const cacheKey = `${target.width}x${target.height}:${url}`;
+  const cached = normalizedImageCache.get(cacheKey);
+  if (cached) return cached;
+
+  const task = normalizeImageUrl(url, target);
+  normalizedImageCache.set(cacheKey, task);
+  if (normalizedImageCache.size > CACHE_LIMIT) {
+    const oldest = normalizedImageCache.keys().next().value;
+    if (oldest && oldest !== cacheKey) normalizedImageCache.delete(oldest);
+  }
+
+  try {
+    return await task;
+  } catch (err) {
+    normalizedImageCache.delete(cacheKey);
+    throw err;
+  }
+}
+
+/** Unduh gambar lalu konversi/pad ke JPEG dengan dimensi persis target. */
+async function normalizeImageUrl(
+  url: string,
+  target: IgTargetDimensions
+): Promise<IgImageResult> {
+  let buffer: Buffer;
+  try {
+    const res = await axios.get(url, {
+      responseType: 'arraybuffer',
+      timeout: 20000,
+      maxContentLength: MAX_DOWNLOAD_BYTES,
+      maxBodyLength: MAX_DOWNLOAD_BYTES,
+    });
+    const contentType = String(res.headers?.['content-type'] || '').toLowerCase();
+    if (contentType && !contentType.includes('image/')) {
+      throw new Error(`content-type ${contentType} bukan gambar`);
+    }
+    buffer = Buffer.from(res.data);
+  } catch (err: any) {
+    throw new Error(`Gagal mengunduh gambar untuk normalisasi Instagram (${url}): ${err?.message || err}`);
+  }
+
+  // Jalur cepat: sudah JPEG + dimensi tepat → tidak perlu upload ulang.
+  try {
+    const meta = await sharp(buffer).metadata();
+    if (
+      meta.format === 'jpeg' &&
+      meta.width === target.width &&
+      meta.height === target.height &&
+      (!meta.orientation || meta.orientation === 1) &&
+      buffer.length <= IG_MAX_JPEG_BYTES
+    ) {
+      return { url, width: target.width, height: target.height };
+    }
+  } catch {
+    // Biarkan sharp di bawah menghasilkan error yang lebih jelas.
+  }
+
+  const jpeg = await normalizeImageBuffer(buffer, target);
+  const mockFile: Express.Multer.File = {
+    fieldname: 'file',
+    originalname: `ig_${target.width}x${target.height}_${Date.now()}_${Math.random()
+      .toString(36)
+      .slice(2, 8)}.jpg`,
+    encoding: '7bit',
+    mimetype: 'image/jpeg',
+    size: jpeg.length,
+    buffer: jpeg,
+    destination: '',
+    filename: '',
+    path: '',
+    stream: null as any,
+  };
+
+  const upload = await StorageService.uploadMedia(mockFile, 'ig-jpeg');
+  if (!upload?.url || upload.url.startsWith('data:')) {
+    throw new Error(`Normalisasi gambar berhasil tetapi upload storage gagal (${url}).`);
+  }
+
+  return { url: upload.url, width: target.width, height: target.height };
+}
+
+/** Sharp: rotate EXIF → flatten alpha → contain/pad → JPEG ≤ 8 MB. */
+export async function normalizeImageBuffer(
+  buffer: Buffer,
+  target: IgTargetDimensions = IG_CAROUSEL_TARGET
+): Promise<Buffer> {
+  let jpeg: Buffer;
+  try {
+    const base = sharp(buffer)
+      .rotate() // hormati orientasi EXIF
+      .flatten({ background: '#ffffff' }) // hilangkan alpha (PNG/WebP transparan)
+      .resize({
+        width: target.width,
+        height: target.height,
+        fit: 'contain',
+        position: 'center',
+        background: '#ffffff',
+      });
+
+    jpeg = await base.clone().jpeg({ quality: 92, mozjpeg: true }).toBuffer();
+
+    if (jpeg.length > IG_MAX_JPEG_BYTES) {
+      jpeg = await base.clone().jpeg({ quality: 80, mozjpeg: true }).toBuffer();
+    }
+    if (jpeg.length > IG_MAX_JPEG_BYTES) {
+      jpeg = await base.clone().jpeg({ quality: 68, mozjpeg: true }).toBuffer();
+    }
+  } catch (err: any) {
+    throw new Error(`Gagal menormalkan gambar ke ${target.width}×${target.height}: ${err?.message || err}`);
+  }
+
+  return jpeg;
+}
+
+export interface CarouselGeometryItem {
+  type?: string;
+  url?: string;
+  width?: number;
+  height?: number;
+  duration?: number | null;
+}
+
+/**
+ * Validasi defensif sebelum container Meta dibuat. Semua item carousel wajib
+ * memiliki dimensi yang sama persis dengan target 4:5.
+ */
+export function assertCarouselGeometry(
+  items: CarouselGeometryItem[],
+  target: IgTargetDimensions = IG_CAROUSEL_TARGET
+): void {
+  items.forEach((item, index) => {
+    const width = Number(item.width);
+    const height = Number(item.height);
+    const label = item.type === 'video' ? 'video' : 'gambar';
+
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+      throw new Error(
+        `Item carousel #${index + 1} (${label}) belum memiliki metadata dimensi. ` +
+          `Semua media harus dinormalisasi ke ${target.width}×${target.height} (4:5) sebelum diposting.`
+      );
+    }
+
+    if (width !== target.width || height !== target.height) {
+      throw new Error(
+        `Item carousel #${index + 1} (${label}) berukuran ${width}×${height}; ` +
+          `semua item Instagram harus ${target.width}×${target.height} (4:5).`
+      );
+    }
+  });
 }
 
 /** Unduh gambar non-JPEG, konversi, lalu unggah sebagai JPEG publik. */

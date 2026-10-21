@@ -36,12 +36,50 @@ vi.mock('../src/services/instagram.service.js', () => ({
 describe('CanvasService Unit Tests', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.fess.update).mockResolvedValue({} as any);
   });
 
   it('should throw error if fess to export does not exist', async () => {
     vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce(null);
 
     await expect(CanvasService.exportFessCanvas('non_existent')).rejects.toThrow('tidak ditemukan');
+  });
+
+  it('ekspor non-portrait (story) hanya menghasilkan gambar, tanpa auto-post/ubah status IG', async () => {
+    vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+      id: 'fess_story',
+      baseHandle: '@codememfess',
+      content: 'Ekspor story admin',
+      template: 'midnight',
+      base: { name: 'Code & Memes Base', initial: 'CM' },
+    } as any);
+
+    const result = await CanvasService.exportFessCanvas('fess_story', 'midnight', 'story');
+
+    expect(result.image_url).toContain('https://storage.supabase.co');
+    expect(result.posted_to).toEqual([]);
+    expect(result.ig_result).toMatchObject({ skipped: true, meta_published: false });
+    expect(InstagramService.autoPostFess).not.toHaveBeenCalled();
+    expect(prisma.fess.update).not.toHaveBeenCalled();
+  });
+
+  it('ekspor admin (autoPost:false) merender portrait tanpa posting/ubah status IG', async () => {
+    vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+      id: 'fess_export',
+      baseHandle: '@codememfess',
+      content: 'Unduh card saja',
+      template: 'midnight',
+      base: { name: 'Code & Memes Base', initial: 'CM' },
+    } as any);
+
+    const result = await CanvasService.exportFessCanvas('fess_export', 'midnight', 'portrait', {
+      autoPost: false,
+    });
+
+    expect(result.image_url).toContain('https://storage.supabase.co');
+    expect(result.posted_to).toEqual([]);
+    expect(InstagramService.autoPostFess).not.toHaveBeenCalled();
+    expect(prisma.fess.update).not.toHaveBeenCalled();
   });
 
   it('should export canvas with chosen template and aspect ratio and trigger auto-post', async () => {
@@ -56,7 +94,7 @@ describe('CanvasService Unit Tests', () => {
       },
     } as any);
 
-    const result = await CanvasService.exportFessCanvas('fess_101', 'midnight', 'story');
+    const result = await CanvasService.exportFessCanvas('fess_101', 'midnight', 'portrait');
 
     expect(result.image_url).toContain('https://storage.supabase.co');
     expect(result.posted_to).toContain('instagram');
@@ -64,10 +102,12 @@ describe('CanvasService Unit Tests', () => {
     const uploadedFile = vi.mocked(StorageService.uploadMedia).mock.calls[0][0] as any;
     expect(uploadedFile.mimetype).toBe('image/jpeg');
     expect(uploadedFile.originalname).toMatch(/\.jpg$/);
-    expect(prisma.fess.update).toHaveBeenCalledWith({
-      where: { id: 'fess_101' },
-      data: { postedToIg: true },
-    });
+    expect(prisma.fess.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'fess_101' },
+        data: expect.objectContaining({ postedToIg: true, igStatus: 'published' }),
+      })
+    );
   });
 
   it('should append user media (image/video, MP4 only) to the Instagram post items', async () => {
@@ -91,7 +131,13 @@ describe('CanvasService Unit Tests', () => {
     expect(autoPostMock).toHaveBeenCalledTimes(1);
     const itemsArg = autoPostMock.mock.calls[0][2] as any[];
     expect(itemsArg).toEqual([
-      { type: 'image', url: 'https://storage.supabase.co/confess-media/canvas_export.svg' },
+      {
+        type: 'image',
+        url: 'https://storage.supabase.co/confess-media/canvas_export.svg',
+        width: 1080,
+        height: 1350,
+        normalized: true,
+      },
       { type: 'image', url: 'https://cdn.example.com/foto.png' },
       { type: 'video', url: 'https://cdn.example.com/klip.mp4' },
     ]);
@@ -134,6 +180,9 @@ describe('CanvasService Unit Tests', () => {
       expect(svgs[0]).toContain('<svg');
       expect(svgs[0]).toContain('bgPattern');
       expect(svgs[0]).toContain('Tech &amp; Modern Base');
+      // Semua template wajib 4:5 — tidak boleh ada card persegi/story.
+      expect(svgs[0]).toContain('width="1080" height="1350"');
+      expect(TEMPLATES.find((t) => t.key === key)?.aspect).toBe('portrait');
     }
 
     // Render satu wakil per keluarga font: sans, display, serif, mono.

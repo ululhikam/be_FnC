@@ -85,6 +85,11 @@ export interface CanvasExportResult {
   ig_result?: any;
 }
 
+export interface CanvasExportOptions {
+  /** false = hanya render/upload card, jangan auto-post ke Instagram. */
+  autoPost?: boolean;
+}
+
 /** Bentuk minimal data fess yang dibutuhkan builder SVG (mudah di-test tanpa DB). */
 export interface FessLike {
   id?: string;
@@ -137,17 +142,56 @@ const MAX_QUOTE_LINES = 4;
 
 export class CanvasService {
   /**
-   * Render confession card → PNG (satu atau beberapa halaman untuk carousel)
+   * Simpan status IG tanpa menggagalkan alur utama. Aman untuk unit test yang
+   * memakai mock Prisma sederhana (update bisa tidak mengembalikan Promise).
+   */
+  private static async persistIgState(fessId: string, data: Record<string, any>): Promise<void> {
+    try {
+      await prisma.fess.update({
+        where: { id: fessId },
+        data: { ...data, igUpdatedAt: new Date() },
+      });
+    } catch (err: any) {
+      console.warn('[Canvas] Gagal menyimpan status IG:', err?.message || err);
+    }
+  }
+
+  /**
+   * Render confession card → PNG/JPEG (satu atau beberapa halaman carousel)
    * → upload ke Supabase → auto-post ke Instagram Feed.
    *
-   * aspectKey opsional: 'square' (1:1) atau 'portrait' (4:5). Kosong / kunci
-   * tak dikenal → ikut aspek template (agar kartu IG persis seperti pratinjau
-   * composer, termasuk template persegi).
+   * Semua template sekarang 4:5. aspectKey eksplisit dipertahankan hanya untuk
+   * export admin (mis. story); posting Instagram selalu memakai portrait.
    */
   static async exportFessCanvas(
     fessId: string,
     templateKey = 'default',
-    aspectKey = ''
+    aspectKey = '',
+    options: CanvasExportOptions = {}
+  ): Promise<CanvasExportResult> {
+    try {
+      return await CanvasService.exportFessCanvasUnsafe(fessId, templateKey, aspectKey, options);
+    } catch (err: any) {
+      // Render/upload gagal sebelum sempat memanggil InstagramService — tetap
+      // simpan alasan agar admin melihat status yang jelas di UI. Ekspor khusus
+      // non-portrait (mis. story) atau ekspor tanpa auto-post tidak boleh
+      // mengubah status Instagram.
+      const wantsPortrait = (ASPECTS[aspectKey] || ASPECTS.portrait).key === 'portrait';
+      if (wantsPortrait && options.autoPost !== false) {
+        await CanvasService.persistIgState(fessId, {
+          igStatus: 'failed',
+          igError: clipIgError(`Render/publikasi Instagram gagal: ${err?.message || err}`),
+        });
+      }
+      throw err;
+    }
+  }
+
+  private static async exportFessCanvasUnsafe(
+    fessId: string,
+    templateKey = 'default',
+    aspectKey = '',
+    options: CanvasExportOptions = {}
   ): Promise<CanvasExportResult> {
     const fess = await prisma.fess.findUnique({
       where: { id: fessId },
@@ -158,9 +202,14 @@ export class CanvasService {
       throw new Error('Fess tidak ditemukan');
     }
 
-    // Resolve template/aspect sekali lagi untuk penamaan file upload.
+    // Semua template sekarang 4:5. aspectKey eksplisit hanya dipakai fitur
+    // export admin (mis. story/9:16); default selalu portrait 4:5.
     const template = getTemplateByKey(templateKey || fess.template || 'default');
-    const aspect = ASPECTS[aspectKey] || (template.aspect === 'square' ? ASPECTS.square : ASPECTS.portrait);
+    const aspect = ASPECTS[aspectKey] || ASPECTS.portrait;
+    // Hanya render 4:5 dan fess yang belum pernah terbit ke IG yang boleh
+    // auto-post. Ekspor non-portrait/ekspor admin murni untuk unduhan.
+    const publishToIg =
+      aspect.key === 'portrait' && options.autoPost !== false && !(fess as any).postedToIg;
 
     const svgs = CanvasService.buildSvgPages(fess as unknown as FessLike, templateKey, aspectKey);
 
@@ -194,35 +243,102 @@ export class CanvasService {
     const mediaItems = collectMediaItems(fess.media);
     const cardItems = imageUrls
       .slice(0, Math.max(1, 10 - mediaItems.length))
-      .map((url) => ({ type: 'image' as const, url }));
+      .map((url) => ({
+        type: 'image' as const,
+        url,
+        width: aspect.width,
+        height: aspect.height,
+        normalized: true,
+      }));
     const postItems = [...cardItems, ...mediaItems].slice(0, 10);
 
     // Caption = isi fess penuh (pemotongan batas 2200 char ditangani InstagramService).
     const caption = String(fess.content || '');
+    const baseIg = (fess as any).base?.igAccount || fess.baseHandle;
 
-    // Meta Graph API butuh URL publik HTTP(S) — lewati data-URI.
-    const hasPublicUrl = imageUrls.some((u) => !u.startsWith('data:'));
-    if (hasPublicUrl) {
-      try {
-        ig_result = await InstagramService.autoPostFess(fess.baseHandle, fess.id, postItems, caption);
-        if (ig_result?.meta_published === true) {
-          posted_to.push('instagram');
+    if (publishToIg) {
+      // Simpan payload sebelum panggilan Meta agar retry worker punya sumber
+      // data yang konsisten walau invocation pertama terputus.
+      await CanvasService.persistIgState(fessId, {
+        igPayload: {
+          baseHandle: fess.baseHandle,
+          caption,
+          aspect: 'portrait',
+          width: 1080,
+          height: 1350,
+          items: postItems.map((item) => ({
+            type: item.type,
+            url: item.url,
+            width: item.width ?? null,
+            height: item.height ?? null,
+            duration: (item as any).duration ?? null,
+            normalized: Boolean((item as any).normalized),
+          })),
+        },
+        igStatus: 'processing',
+        igError: null,
+      });
+
+      // Meta Graph API butuh URL publik HTTP(S) — lewati data-URI.
+      const hasPublicUrl = imageUrls.some((u) => !u.startsWith('data:'));
+      if (hasPublicUrl) {
+        try {
+          ig_result = await InstagramService.autoPostFess(fess.baseHandle, fess.id, postItems, caption);
+          if (ig_result?.meta_published === true) {
+            posted_to.push('instagram');
+          }
+          if (Array.isArray(ig_result?.items) && ig_result.items.length) {
+            await CanvasService.persistIgState(fessId, {
+              igPayload: {
+                baseHandle: fess.baseHandle,
+                caption,
+                aspect: 'portrait',
+                width: 1080,
+                height: 1350,
+                items: ig_result.items,
+              },
+            });
+          }
+        } catch (igErr: any) {
+          console.warn('[Canvas] Instagram auto-post failed:', igErr.message);
+          await CanvasService.persistIgState(fessId, {
+            igStatus: 'failed',
+            igError: clipIgError(igErr?.message || 'Auto-post Instagram gagal.'),
+          });
         }
-      } catch (igErr: any) {
-        console.warn('[Canvas] Instagram auto-post failed:', igErr.message);
+      } else {
+        const reason =
+          'Storage mengembalikan data-URI, bukan URL publik — Instagram tidak dapat mengambil media.';
+        console.warn('[Canvas]', reason);
+        await CanvasService.persistIgState(fessId, { igStatus: 'failed', igError: reason });
+        ig_result = {
+          success: false,
+          platform: 'instagram',
+          meta_published: false,
+          ig_pending: false,
+          fessId,
+          base_ig: baseIg,
+          error: reason,
+        };
       }
     } else {
-      console.warn(
-        '[Canvas] Storage returned a data-URI — Instagram auto-post skipped.' +
-        ' Configure SUPABASE_URL/SUPABASE_KEY for production IG posting.'
-      );
+      ig_result = {
+        success: false,
+        platform: 'instagram',
+        meta_published: false,
+        ig_pending: false,
+        skipped: true,
+        fessId,
+        base_ig: baseIg,
+        error: 'Render non-portrait tidak dipublikasikan ke Instagram.',
+      };
     }
 
     // Mark fess as posted (hanya jika benar-benar terbit ke Instagram)
     if (posted_to.includes('instagram')) {
       await prisma.fess.update({
         where: { id: fessId },
-        data: { postedToIg: true },
+        data: { postedToIg: true, igStatus: 'published', igError: null },
       });
     }
 
@@ -243,8 +359,9 @@ export class CanvasService {
    */
   static buildSvgPages(fess: FessLike, templateKey = 'default', aspectKey = ''): string[] {
     const template = getTemplateByKey(templateKey || fess.template || 'default');
-    // Resolve aspect — kosong / kunci legacy jatuh ke aspek template.
-    const aspect = ASPECTS[aspectKey] || (template.aspect === 'square' ? ASPECTS.square : ASPECTS.portrait);
+    // Semua template 4:5. Kunci kosong/tak dikenal jatuh ke portrait; kunci
+    // eksplisit (mis. story) tetap dihormati untuk export admin.
+    const aspect = ASPECTS[aspectKey] || ASPECTS.portrait;
 
     // ── Visual variables ────────────────────────────────────────────────────
     const baseName = fess.base?.name || fess.baseHandle || 'Confession Base';
@@ -725,10 +842,24 @@ function pickAvatarInk(color: string): string {
   return '#0b1220'; // accent menengah → tinta gelap
 }
 
+/** Potong pesan error agar kolom status tetap ringkas dan aman. */
+function clipIgError(value: string, max = 1200): string {
+  const text = String(value || '').trim();
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
 /** Media user (gambar/video) yang layak ikut diposting ke Instagram. */
-function collectMediaItems(media: unknown): { type: 'image' | 'video'; url: string }[] {
+interface CollectedMediaItem {
+  type: 'image' | 'video';
+  url: string;
+  width?: number;
+  height?: number;
+  duration?: number | null;
+}
+
+function collectMediaItems(media: unknown): CollectedMediaItem[] {
   if (!Array.isArray(media)) return [];
-  const items: { type: 'image' | 'video'; url: string }[] = [];
+  const items: CollectedMediaItem[] = [];
   for (const entry of media) {
     const url = String((entry as any)?.url || '');
     if (!/^https?:\/\//i.test(url)) continue;
@@ -738,7 +869,16 @@ function collectMediaItems(media: unknown): { type: 'image' | 'video'; url: stri
       console.warn('[Canvas] Media video dilewati (bukan MP4/MOV/M4V):', url);
       continue;
     }
-    items.push({ type: isVideo ? 'video' : 'image', url });
+    const width = Number((entry as any)?.width);
+    const height = Number((entry as any)?.height);
+    const duration = Number((entry as any)?.duration);
+    items.push({
+      type: isVideo ? 'video' : 'image',
+      url,
+      ...(Number.isFinite(width) && width > 0 ? { width } : {}),
+      ...(Number.isFinite(height) && height > 0 ? { height } : {}),
+      ...(Number.isFinite(duration) && duration > 0 ? { duration } : {}),
+    });
   }
   return items;
 }

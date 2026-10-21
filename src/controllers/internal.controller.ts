@@ -16,4 +16,18 @@ export class InternalController {
     trackBackground(InstagramService.finalizeInstagramPost(payload));
     return res.status(202).json({ ok: true, fessId: payload.fessId, attempts: payload.attempts });
   }
+
+  /**
+   * Retry auto-post gambar (error sementara Meta/network) — dipanggil oleh
+   * worker sendiri dengan payload HMAC. Maksimal 3 percobaan total.
+   */
+  static async retryInstagramPost(req: Request, res: Response) {
+    const payload = InstagramService.verifyRetryPayload(String(req.body?.token || ''));
+    if (!payload) {
+      return res.status(401).json({ ok: false, error: 'INVALID_TOKEN' });
+    }
+
+    trackBackground(InstagramService.retryInstagramPost(payload));
+    return res.status(202).json({ ok: true, fessId: payload.fessId, attempt: payload.attempt });
+  }
 }

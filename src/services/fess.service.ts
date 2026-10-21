@@ -22,6 +22,7 @@ const BASE_PREVIEW_SELECT = {
   avatar: true,
   color: true,
   initial: true,
+  creatorId: true,
 } as const;
 
 /** Latest comments preview attached to list / vote / moderation payloads. */
@@ -48,7 +49,8 @@ export class FessService {
       page?: number;
       limit?: number;
     },
-    currentUserId?: string
+    currentUserId?: string,
+    viewer?: { id?: string; role?: string; managedBases?: string[] }
   ) {
     const page = params.page || 1;
     const limit = params.limit || 20;
@@ -156,7 +158,11 @@ export class FessService {
 
     const voteMap = new Map(userVotes.map((v) => [v.fessId, v.type]));
 
-    const data = fesses.map((f) => this.serializeFess(f, voteMap.get(f.id) || null));
+    const data = fesses.map((f) =>
+      this.serializeFess(f, voteMap.get(f.id) || null, {
+        includeIgError: this.canViewIgError(f, viewer),
+      })
+    );
 
     return {
       data,
@@ -234,6 +240,8 @@ export class FessService {
         status: initialStatus,
         autoFlagged,
         flagReason,
+        igStatus: initialStatus === 'published' ? 'processing' : 'idle',
+        igUpdatedAt: initialStatus === 'published' ? new Date() : null,
       },
     });
 
@@ -249,7 +257,11 @@ export class FessService {
       // Non-blocking background task agar respon HTTP tidak tertahan render/upload canvas.
       // onBackground dipakai controller untuk waitUntil() di runtime Vercel supaya
       // task tidak dipotong saat response selesai.
-      const autoPostTask = CanvasService.exportFessCanvas(fess.id, fess.template || 'default').catch(
+      const autoPostTask = CanvasService.exportFessCanvas(
+        fess.id,
+        fess.template || 'default',
+        'portrait'
+      ).catch(
         (err) => {
           console.error(`[AutoPost] Gagal export canvas fess ${fess.id}:`, err);
         }
@@ -320,7 +332,11 @@ export class FessService {
   /**
    * Get single fess by ID with full comments
    */
-  static async getFessById(id: string, currentUserId?: string) {
+  static async getFessById(
+    id: string,
+    currentUserId?: string,
+    viewer?: { id?: string; role?: string; managedBases?: string[] }
+  ) {
     const fess = await prisma.fess.findUnique({
       where: { id },
       include: {
@@ -352,7 +368,77 @@ export class FessService {
       userVote = vote?.type || null;
     }
 
-    return this.serializeFess(fess, userVote);
+    return this.serializeFess(fess, userVote, {
+      includeIgError: this.canViewIgError(fess, viewer),
+    });
+  }
+
+  /** Detail error IG hanya untuk admin yang benar-benar mengelola base fess. */
+  private static canViewIgError(
+    fess: { baseHandle?: string | null; base?: { creatorId?: string | null } | null },
+    viewer?: { id?: string; role?: string; managedBases?: string[] }
+  ): boolean {
+    if (!viewer) return false;
+    if (viewer.role === 'Super Admin') return true;
+    if (!viewer.role?.includes('Admin')) return false;
+
+    const postHandle = String(fess.baseHandle || '').replace(/^@/, '').toLowerCase();
+    const managesBase = (viewer.managedBases || []).some(
+      (handle) => String(handle).replace(/^@/, '').toLowerCase() === postHandle
+    );
+    const ownsBase = Boolean(viewer.id && fess.base?.creatorId === viewer.id);
+    return managesBase || ownsBase;
+  }
+
+  /** Pastikan user berhak memposting fess ini ke Instagram. */
+  static async assertCanManageFess(
+    id: string,
+    currentUser: { id: string; role: string; managedBases?: string[] }
+  ): Promise<void> {
+    const fess = await prisma.fess.findUnique({
+      where: { id },
+      select: {
+        baseHandle: true,
+        status: true,
+        postedToIg: true,
+        base: { select: { creatorId: true } },
+      },
+    });
+
+    if (!fess) {
+      const err: any = new Error('Fess tidak ditemukan');
+      err.status = 404;
+      err.code = 'NOT_FOUND';
+      throw err;
+    }
+
+    const isSuperAdmin = currentUser.role === 'Super Admin';
+    const postHandle = String(fess.baseHandle || '').replace(/^@/, '').toLowerCase();
+    const isBaseAdmin =
+      (currentUser.managedBases || []).some(
+        (handle) => String(handle).replace(/^@/, '').toLowerCase() === postHandle
+      ) || fess.base?.creatorId === currentUser.id;
+
+    if (!isSuperAdmin && !isBaseAdmin) {
+      const err: any = new Error('Anda tidak memiliki izin memposting fess ini ke Instagram');
+      err.status = 403;
+      err.code = 'FORBIDDEN';
+      throw err;
+    }
+
+    if (!PUBLISHED_STATUSES.includes(fess.status)) {
+      const err: any = new Error('Hanya fess yang sudah terbit yang dapat diposting ke Instagram');
+      err.status = 409;
+      err.code = 'FESS_NOT_PUBLISHED';
+      throw err;
+    }
+
+    if (fess.postedToIg) {
+      const err: any = new Error('Fess ini sudah dipublikasikan ke Instagram');
+      err.status = 409;
+      err.code = 'FESS_ALREADY_POSTED';
+      throw err;
+    }
   }
 
   /**
@@ -552,7 +638,25 @@ export class FessService {
     const dbOperations: any[] = [
       prisma.fess.update({
         where: { id },
-        data: { status: 'published' },
+        data: {
+          status: 'published',
+          ...(wasPublished
+            ? {}
+            : fess.postedToIg
+              ? {
+                  // Sudah pernah terbit ke IG (mis. setelah reject lalu approve
+                  // lagi) — jangan memicu posting/status processing baru.
+                  igStatus: 'published',
+                  igError: null,
+                  igUpdatedAt: new Date(),
+                }
+              : {
+                  igStatus: 'processing',
+                  igError: null,
+                  igAttempts: 0,
+                  igUpdatedAt: new Date(),
+                }),
+        },
         include: COMMENT_PREVIEW_INCLUDE,
       }),
     ];
@@ -583,16 +687,18 @@ export class FessService {
       invalidateCache('fesses:');
     }
 
-    // Auto-post trigger to social media (Instagram Feed)
-    // Non-blocking background task: jangan gunakan await agar tidak menahan response HTTP approve.
-    // onBackground dipakai controller untuk waitUntil() di runtime Vercel supaya
-    // task tidak dipotong saat response selesai.
-    const autoPostTask = CanvasService.exportFessCanvas(id, fess.template || 'default').catch(
-      (err) => {
+    // Auto-post hanya saat transisi pending → published; approve ulang pada
+    // fess yang sudah terbit tidak boleh membuat posting Instagram duplikat.
+    if (!wasPublished && !fess.postedToIg) {
+      const autoPostTask = CanvasService.exportFessCanvas(
+        id,
+        fess.template || 'default',
+        'portrait'
+      ).catch((err) => {
         console.error(`[AutoPost] Gagal export canvas fess ${id}:`, err);
-      }
-    );
-    if (onBackground) onBackground(autoPostTask);
+      });
+      if (onBackground) onBackground(autoPostTask);
+    }
 
     return this.serializeFess(updated, null);
   }
@@ -840,7 +946,11 @@ export class FessService {
   /**
    * Serialize Fess model into exact OpenAPI Fess schema shape
    */
-  static serializeFess(fess: any, userVote: string | null = null) {
+  static serializeFess(
+    fess: any,
+    userVote: string | null = null,
+    options: { includeIgError?: boolean } = {}
+  ) {
     return {
       id: fess.id,
       base_handle: fess.baseHandle,
@@ -868,6 +978,13 @@ export class FessService {
       scheduled_at: fess.scheduledAt ? new Date(fess.scheduledAt).toISOString() : null,
       tag: fess.tag || undefined,
       posted_to_ig: fess.postedToIg ?? false,
+      // Status publikasi Instagram dapat dilihat publik; detail error hanya
+      // dikirim ke admin (Super Admin / Base Admin) untuk menghindari bocoran
+      // teknis Meta.
+      ig_status: fess.igStatus || (fess.postedToIg ? 'published' : 'idle'),
+      ig_attempts: fess.igAttempts ?? 0,
+      ig_updated_at: fess.igUpdatedAt ? new Date(fess.igUpdatedAt).getTime() : null,
+      ...(options.includeIgError ? { ig_error: fess.igError || null } : {}),
       auto_flagged: fess.autoFlagged ?? false,
       flag_reason: fess.flagReason || undefined,
       // Foto profil base untuk avatar kartu fess. `avatar` bisa berupa

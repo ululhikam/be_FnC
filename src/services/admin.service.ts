@@ -80,7 +80,9 @@ export class AdminService {
       }),
     ]);
 
-    const data = pendingFesses.map((f) => FessService.serializeFess(f, null));
+    const data = pendingFesses.map((f) =>
+      FessService.serializeFess(f, null, { includeIgError: true })
+    );
 
     return {
       data,

@@ -9,7 +9,7 @@ import { successResponse, errorResponse } from '../utils/response.util.js';
 export class FessController {
   static async getFesses(req: Request, res: Response, next: NextFunction) {
     try {
-      const result = await FessService.getFesses(req.query as any, req.user?.id);
+      const result = await FessService.getFesses(req.query as any, req.user?.id, req.user);
       return res.status(200).json(result);
     } catch (error) {
       next(error);
@@ -60,7 +60,7 @@ export class FessController {
   static async getFess(req: Request, res: Response, next: NextFunction) {
     try {
       const id = String(req.params.id);
-      const fess = await FessService.getFessById(id, req.user?.id);
+      const fess = await FessService.getFessById(id, req.user?.id, req.user);
       return successResponse(res, fess, 200);
     } catch (error) {
       next(error);
@@ -132,8 +132,14 @@ export class FessController {
   static async postToInstagram(req: Request, res: Response, next: NextFunction) {
     try {
       const id = String(req.params.id);
-      const { template, aspect } = req.body || {};
-      const result = await CanvasService.exportFessCanvas(id, template, aspect);
+      if (!req.user) {
+        return errorResponse(res, 'Autentikasi dibutuhkan', 401, 'UNAUTHORIZED');
+      }
+      await FessService.assertCanManageFess(id, req.user);
+
+      const { template } = req.body || {};
+      // Semua posting Instagram selalu 4:5; jangan percayai aspect dari klien.
+      const result = await CanvasService.exportFessCanvas(id, template, 'portrait');
 
       // Ratakan hasil auto-post agar UI (modal FessCard) bisa membaca
       // meta_published / message / image_url tanpa nesting ig_result.
@@ -150,6 +156,17 @@ export class FessController {
           ig_pending: ig.ig_pending === true,
           posted_to: result.posted_to,
           meta_published: ig.meta_published === true,
+          retry_scheduled: ig.retry_scheduled === true,
+          ig_status:
+            ig.ig_status ||
+            (ig.meta_published
+              ? 'published'
+              : ig.ig_pending
+                ? 'pending'
+                : ig.retry_scheduled
+                  ? 'processing'
+                  : 'failed'),
+          ig_error: ig.error || null,
           message: ig.message || ig.error || `Card fess ${id} berhasil dirender.`,
           base_ig: ig.base_ig,
           ig_result: ig,

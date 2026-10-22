@@ -1,6 +1,15 @@
 import { prisma } from '../config/prisma.js';
+import {
+  HANDLE_CHANGE_COOLDOWN_DAYS,
+  getHandleChangeAvailableAt,
+} from '../constants/user.js';
 import { formatMembers, getInitials, normalizeHandle } from '../utils/format.util.js';
 import { getOrSet, invalidateCache } from '../utils/cache.util.js';
+
+const handleChangeDateFormatter = new Intl.DateTimeFormat('id-ID', {
+  dateStyle: 'long',
+  timeZone: 'Asia/Jakarta',
+});
 
 export class BaseService {
   /**
@@ -129,7 +138,10 @@ export class BaseService {
   /**
    * Get detail base by handle
    */
-  static async getBaseByHandle(handle: string, currentUserId?: string) {
+  static async getBaseByHandle(
+    handle: string,
+    currentUser?: { id?: string; role?: string; managedBases?: string[] }
+  ) {
     const cleanHandle = normalizeHandle(handle);
 
     const base = await prisma.base.findUnique({
@@ -144,11 +156,11 @@ export class BaseService {
     }
 
     let isFollowing = false;
-    if (currentUserId) {
+    if (currentUser?.id) {
       const follow = await prisma.follow.findUnique({
         where: {
           userId_baseId: {
-            userId: currentUserId,
+            userId: currentUser.id,
             baseId: base.id,
           },
         },
@@ -156,7 +168,19 @@ export class BaseService {
       isFollowing = !!follow;
     }
 
-    return this.serializeBase(base, isFollowing);
+    // Cooldown metadata is only needed by the people who can edit this base.
+    const canManage = Boolean(
+      currentUser &&
+        (currentUser.role === 'Super Admin' ||
+          base.creatorId === currentUser.id ||
+          currentUser.managedBases?.some(
+            (managed) => normalizeHandle(managed) === cleanHandle
+          ))
+    );
+
+    return this.serializeBase(base, isFollowing, {
+      includeHandleCooldown: canManage,
+    });
   }
 
   /**
@@ -270,6 +294,54 @@ export class BaseService {
       throw err;
     }
 
+    // Base handle mengikuti aturan yang sama dengan handle user: satu kali
+    // perubahan per 7 hari. Mengirim handle yang sama tidak mengonsumsi jeda.
+    let nextHandle: string | undefined;
+    if (data.handle !== undefined) {
+      const normalized = normalizeHandle(data.handle);
+
+      if (normalized !== base.handle) {
+        const availableAt = getHandleChangeAvailableAt(base.handleChangedAt);
+        if (availableAt && Date.now() < availableAt.getTime()) {
+          const availableLabel = handleChangeDateFormatter.format(availableAt);
+          const err: any = new Error(
+            `Handle base hanya dapat diubah sekali setiap ${HANDLE_CHANGE_COOLDOWN_DAYS} hari. ` +
+              `Kamu bisa mengganti handle base lagi pada ${availableLabel}.`
+          );
+          err.status = 429;
+          err.code = 'HANDLE_CHANGE_COOLDOWN';
+          err.errors = { handle: `Bisa diubah lagi pada ${availableLabel}.` };
+          throw err;
+        }
+
+        // Handle base juga tidak boleh bertabrakan dengan handle user agar
+        // pencarian akun saat login tetap unambiguous.
+        const [baseConflict, userConflict] = await Promise.all([
+          prisma.base.findFirst({
+            where: {
+              id: { not: base.id },
+              handle: { equals: normalized, mode: 'insensitive' },
+            },
+            select: { id: true },
+          }),
+          prisma.user.findFirst({
+            where: { handle: { equals: normalized, mode: 'insensitive' } },
+            select: { id: true },
+          }),
+        ]);
+
+        if (baseConflict || userConflict) {
+          const err: any = new Error('Handle sudah dipakai. Pilih handle lain.');
+          err.status = 409;
+          err.code = 'CONFLICT';
+          err.errors = { handle: 'Handle sudah dipakai.' };
+          throw err;
+        }
+
+        nextHandle = normalized;
+      }
+    }
+
     // Sanitasi blacklist: trim, buang kosong, dan dedupe case-insensitive
     // supaya filter NLP tidak menyimpan kata dobel.
     const bannedWords =
@@ -284,24 +356,60 @@ export class BaseService {
           )
         : undefined;
 
-    const updated = await prisma.base.update({
-      where: { id: base.id },
-      data: {
-        ...(data.name ? { name: data.name } : {}),
-        ...(data.handle ? { handle: normalizeHandle(data.handle) } : {}),
-        ...(data.keywords !== undefined ? { keyword: data.keywords } : {}),
-        ...(data.bio !== undefined ? { bio: data.bio } : {}),
-        ...(data.avatar !== undefined ? { avatar: data.avatar } : {}),
-        ...(data.color ? { color: data.color } : {}),
-        ...(data.rules ? { rules: data.rules } : {}),
-        ...(data.postMode ? { postMode: data.postMode } : {}),
-        ...(bannedWords !== undefined ? { bannedWords } : {}),
-      },
-    });
+    const updateData: any = {
+      ...(data.name ? { name: data.name } : {}),
+      ...(nextHandle
+        ? { handle: nextHandle, handleChangedAt: new Date() }
+        : {}),
+      ...(data.keywords !== undefined ? { keyword: data.keywords } : {}),
+      ...(data.bio !== undefined ? { bio: data.bio } : {}),
+      ...(data.avatar !== undefined ? { avatar: data.avatar } : {}),
+      ...(data.color ? { color: data.color } : {}),
+      ...(data.rules ? { rules: data.rules } : {}),
+      ...(data.postMode ? { postMode: data.postMode } : {}),
+      ...(bannedWords !== undefined ? { bannedWords } : {}),
+    };
+
+    let updated;
+    try {
+      if (nextHandle) {
+        // Fess menyimpan snapshot baseHandle. Pindahkan semuanya dalam satu
+        // transaksi supaya link/feed lama tidak tertinggal di handle lama.
+        updated = await prisma.$transaction(async (tx) => {
+          const saved = await tx.base.update({
+            where: { id: base.id },
+            data: updateData,
+          });
+          await tx.fess.updateMany({
+            where: {
+              OR: [{ baseId: base.id }, { baseHandle: base.handle }],
+            },
+            data: { baseHandle: nextHandle },
+          });
+          return saved;
+        });
+      } else {
+        updated = await prisma.base.update({
+          where: { id: base.id },
+          data: updateData,
+        });
+      }
+    } catch (error: any) {
+      // Unique index Base.handle can still lose a race with another request.
+      if (error?.code === 'P2002') {
+        const err: any = new Error('Handle sudah dipakai. Pilih handle lain.');
+        err.status = 409;
+        err.code = 'CONFLICT';
+        err.errors = { handle: 'Handle sudah dipakai.' };
+        throw err;
+      }
+      throw error;
+    }
 
     invalidateCache('bases:');
+    if (nextHandle) invalidateCache('fesses:');
 
-    return this.serializeBase(updated, false);
+    return this.serializeBase(updated, false, { includeHandleCooldown: true });
   }
 
   /**
@@ -437,7 +545,12 @@ export class BaseService {
   /**
    * Serialize Base model into exact OpenAPI Base schema shape
    */
-  static serializeBase(base: any, isFollowing = false) {
+  static serializeBase(
+    base: any,
+    isFollowing = false,
+    options: { includeHandleCooldown?: boolean } = {}
+  ) {
+    const handleChangeAvailableAt = getHandleChangeAvailableAt(base.handleChangedAt);
     return {
       id: base.id,
       name: base.name,
@@ -460,6 +573,20 @@ export class BaseService {
       initial: base.initial || 'BA',
       post_mode: base.postMode || 'moderated',
       banned_words: base.bannedWords || [],
+      ...(options.includeHandleCooldown
+        ? {
+            handle_changed_at: base.handleChangedAt
+              ? new Date(base.handleChangedAt).getTime()
+              : null,
+            handle_change_available_at: handleChangeAvailableAt
+              ? handleChangeAvailableAt.getTime()
+              : null,
+            handle_change_cooldown_days: HANDLE_CHANGE_COOLDOWN_DAYS,
+            can_change_handle:
+              !handleChangeAvailableAt ||
+              Date.now() >= handleChangeAvailableAt.getTime(),
+          }
+        : {}),
     };
   }
 }

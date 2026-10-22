@@ -8,7 +8,11 @@ vi.mock('../src/config/prisma.js', () => ({
       count: vi.fn(),
       findMany: vi.fn(),
       findUnique: vi.fn(),
+      findFirst: vi.fn(),
       update: vi.fn(),
+    },
+    fess: {
+      updateMany: vi.fn(),
     },
     follow: {
       count: vi.fn(),
@@ -18,6 +22,7 @@ vi.mock('../src/config/prisma.js', () => ({
       delete: vi.fn(),
     },
     user: {
+      findFirst: vi.fn(),
       update: vi.fn(),
     },
     $transaction: vi.fn(),
@@ -74,6 +79,29 @@ describe('BaseService Unit Tests', () => {
       const base = await BaseService.getBaseByHandle('@codebase');
       expect(base.name).toBe('Code Base');
       expect(base.rules).toContain('Rule 1');
+      expect(base).not.toHaveProperty('handle_change_available_at');
+      expect(base).not.toHaveProperty('can_change_handle');
+    });
+
+    it('should expose handle cooldown metadata only to managers', async () => {
+      vi.mocked(prisma.base.findUnique).mockResolvedValueOnce({
+        id: 'base_1',
+        name: 'Code Base',
+        handle: '@codebase',
+        creatorId: 'usr_1',
+        handleChangedAt: new Date(),
+        membersCount: 100,
+      } as any);
+
+      const base = await BaseService.getBaseByHandle('@codebase', {
+        id: 'usr_1',
+        role: 'Base Admin',
+        managedBases: ['@codebase'],
+      });
+
+      expect(base.handle_change_cooldown_days).toBe(7);
+      expect(base.can_change_handle).toBe(false);
+      expect(base.handle_change_available_at).toEqual(expect.any(Number));
     });
   });
 
@@ -182,6 +210,129 @@ describe('BaseService Unit Tests', () => {
       // Duplikat case-insensitive dipangkas; varian terakhir yang menang.
       expect(updateCall.data.bannedWords).toEqual(['judi', 'slot']);
       expect(result.banned_words).toEqual(['judi', 'slot']);
+    });
+
+    it('changes base handle, records cooldown, and migrates fess snapshots', async () => {
+      vi.mocked(prisma.base.findUnique).mockResolvedValueOnce({
+        id: 'base_1',
+        handle: '@codebase',
+        creatorId: 'usr_1',
+        handleChangedAt: null,
+      } as any);
+      vi.mocked(prisma.base.findFirst).mockResolvedValueOnce(null);
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce(null);
+
+      const changedAt = new Date();
+      vi.mocked(prisma.base.update).mockResolvedValueOnce({
+        id: 'base_1',
+        handle: '@newcode',
+        handleChangedAt: changedAt,
+      } as any);
+      vi.mocked(prisma.fess.updateMany).mockResolvedValueOnce({ count: 3 } as any);
+      vi.mocked(prisma.$transaction).mockImplementationOnce(async (callback: any) =>
+        callback(prisma)
+      );
+
+      const result = await BaseService.updateSettings(
+        '@codebase',
+        { id: 'usr_1', role: 'Base Admin', managedBases: ['@codebase'] },
+        { handle: 'newcode' }
+      );
+
+      expect(prisma.base.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'base_1' },
+          data: expect.objectContaining({
+            handle: '@newcode',
+            handleChangedAt: expect.any(Date),
+          }),
+        })
+      );
+      expect(prisma.fess.updateMany).toHaveBeenCalledWith({
+        where: {
+          OR: [{ baseId: 'base_1' }, { baseHandle: '@codebase' }],
+        },
+        data: { baseHandle: '@newcode' },
+      });
+      expect(result.handle).toBe('@newcode');
+      expect(result.handle_change_cooldown_days).toBe(7);
+      expect(result.can_change_handle).toBe(false);
+    });
+
+    it('rejects a base handle change while the 7-day cooldown is active', async () => {
+      vi.mocked(prisma.base.findUnique).mockResolvedValueOnce({
+        id: 'base_1',
+        handle: '@codebase',
+        creatorId: 'usr_1',
+        handleChangedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
+      } as any);
+
+      await expect(
+        BaseService.updateSettings(
+          '@codebase',
+          { id: 'usr_1', role: 'Base Admin', managedBases: ['@codebase'] },
+          { handle: '@newcode' }
+        )
+      ).rejects.toMatchObject({
+        status: 429,
+        code: 'HANDLE_CHANGE_COOLDOWN',
+      });
+
+      expect(prisma.base.findFirst).not.toHaveBeenCalled();
+      expect(prisma.base.update).not.toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('does not consume the base cooldown for the same handle', async () => {
+      vi.mocked(prisma.base.findUnique).mockResolvedValueOnce({
+        id: 'base_1',
+        handle: '@codebase',
+        creatorId: 'usr_1',
+        handleChangedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
+      } as any);
+      vi.mocked(prisma.base.update).mockResolvedValueOnce({
+        id: 'base_1',
+        handle: '@codebase',
+        handleChangedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
+      } as any);
+
+      await BaseService.updateSettings(
+        '@codebase',
+        { id: 'usr_1', role: 'Base Admin', managedBases: ['@codebase'] },
+        { name: 'Code Base Updated', handle: '@codebase' }
+      );
+
+      expect(prisma.base.findFirst).not.toHaveBeenCalled();
+      expect(prisma.user.findFirst).not.toHaveBeenCalled();
+      expect(prisma.base.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { name: 'Code Base Updated' },
+        })
+      );
+    });
+
+    it('rejects a base handle already used by another base or user', async () => {
+      vi.mocked(prisma.base.findUnique).mockResolvedValueOnce({
+        id: 'base_1',
+        handle: '@codebase',
+        creatorId: 'usr_1',
+        handleChangedAt: null,
+      } as any);
+      vi.mocked(prisma.base.findFirst).mockResolvedValueOnce({ id: 'base_2' } as any);
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce(null);
+
+      await expect(
+        BaseService.updateSettings(
+          '@codebase',
+          { id: 'usr_1', role: 'Base Admin', managedBases: ['@codebase'] },
+          { handle: '@taken' }
+        )
+      ).rejects.toMatchObject({
+        status: 409,
+        code: 'CONFLICT',
+      });
+
+      expect(prisma.base.update).not.toHaveBeenCalled();
     });
   });
 });

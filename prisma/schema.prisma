@@ -59,6 +59,7 @@ model Base {
   id             String    @id @default(cuid())
   name           String
   handle         String    @unique
+  handleChangedAt DateTime?
   category       String    @default("Umum") // Kampus, Kota, Hobi, Umum, Komunitas
   color          String    @default("#0055FF")
   keyword        String?

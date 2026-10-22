@@ -16,7 +16,7 @@ export class BaseController {
   static async getBase(req: Request, res: Response, next: NextFunction) {
     try {
       const handle = String(req.params.handle);
-      const base = await BaseService.getBaseByHandle(handle, req.user?.id);
+      const base = await BaseService.getBaseByHandle(handle, req.user);
       return successResponse(res, base, 200);
     } catch (error) {
       next(error);

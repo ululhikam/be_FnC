@@ -39,6 +39,22 @@ export class UserController {
     }
   }
 
+  static async getMyBookmarks(req: Request, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) {
+        return errorResponse(res, 'Autentikasi dibutuhkan', 401, 'UNAUTHORIZED');
+      }
+      const result = await FessService.getBookmarkedFesses(
+        req.user.id,
+        req.query as any,
+        req.user
+      );
+      return res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+
   static async getFollowingBases(req: Request, res: Response, next: NextFunction) {
     try {
       if (!req.user) {

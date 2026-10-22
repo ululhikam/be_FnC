@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import axios from 'axios';
 import { InstagramService } from '../src/services/instagram.service.js';
 import { prisma } from '../src/config/prisma.js';
 
@@ -75,6 +76,42 @@ describe('InstagramService Unit Tests (Meta for Developers Graph API)', () => {
     expect(result.success).toBe(true);
     expect(result.platform).toBe('instagram');
     expect(prisma.systemLog.create).toHaveBeenCalled();
+  });
+
+  it('should delete published media via the documented Graph API endpoint', async () => {
+    vi.mocked(prisma.base.findUnique).mockResolvedValueOnce({
+      igAccount: '@base_ig',
+      creatorId: 'usr_creator',
+    } as any);
+    vi.mocked(prisma.platformConnection.findUnique).mockResolvedValueOnce({
+      connected: true,
+      accessToken: 'ig_token',
+    } as any);
+    const deleteRequest = vi
+      .spyOn(axios, 'delete')
+      .mockResolvedValueOnce({ data: { success: true, deleted_id: 'ig_media_1' } } as any);
+
+    const result = await InstagramService.deletePublishedPost('ig_media_1', '@base');
+
+    expect(result.ok).toBe(true);
+    expect(deleteRequest).toHaveBeenCalledWith(
+      expect.stringContaining('/ig_media_1'),
+      expect.objectContaining({ params: { access_token: 'ig_token' } })
+    );
+    deleteRequest.mockRestore();
+  });
+
+  it('should report a missing Instagram connection instead of throwing', async () => {
+    vi.mocked(prisma.base.findUnique).mockResolvedValueOnce({
+      igAccount: '@base_ig',
+      creatorId: 'usr_creator',
+    } as any);
+    vi.mocked(prisma.platformConnection.findUnique).mockResolvedValueOnce(null);
+
+    const result = await InstagramService.deletePublishedPost('ig_media_1', '@base');
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('tidak aktif');
   });
 
   it('should build an Instagram caption with branding and a 2200-char cap', () => {

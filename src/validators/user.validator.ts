@@ -22,6 +22,11 @@ export const UserFessesQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 
+export const BookmarksQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
+
 export const FollowingBasesQuerySchema = z.object({
   search: z.string().optional(),
   sort: z.enum(['newest', 'name', 'members']).default('newest'),

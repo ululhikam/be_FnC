@@ -26,6 +26,8 @@ router.post(
 router.get('/:id/instagram-status', optionalAuth, FessController.getInstagramStatus);
 router.get('/:id', optionalAuth, FessController.getFess);
 router.post('/:id/vote', requireAuth, validateBody(VoteSchema), FessController.voteFess);
+router.post('/:id/bookmark', requireAuth, FessController.bookmarkFess);
+router.delete('/:id/bookmark', requireAuth, FessController.unbookmarkFess);
 router.post(
   '/:id/approve',
   requireAuth,

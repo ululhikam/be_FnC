@@ -97,6 +97,32 @@ export class FessController {
     }
   }
 
+  static async bookmarkFess(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = String(req.params.id);
+      if (!req.user) {
+        return errorResponse(res, 'Autentikasi dibutuhkan untuk menyimpan fess', 401, 'UNAUTHORIZED');
+      }
+      const result = await FessService.bookmarkFess(id, req.user.id);
+      return successResponse(res, result, 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async unbookmarkFess(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = String(req.params.id);
+      if (!req.user) {
+        return errorResponse(res, 'Autentikasi dibutuhkan untuk menghapus simpanan', 401, 'UNAUTHORIZED');
+      }
+      const result = await FessService.unbookmarkFess(id, req.user.id);
+      return successResponse(res, result, 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
   static async approveFess(req: Request, res: Response, next: NextFunction) {
     try {
       const id = String(req.params.id);
@@ -139,8 +165,8 @@ export class FessController {
       if (!req.user) {
         return errorResponse(res, 'Autentikasi dibutuhkan', 401, 'UNAUTHORIZED');
       }
-      await FessService.deleteFess(id, req.user);
-      return res.status(204).send();
+      const result = await FessService.deleteFess(id, req.user);
+      return successResponse(res, result, 200);
     } catch (error) {
       next(error);
     }

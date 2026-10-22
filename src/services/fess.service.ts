@@ -143,26 +143,40 @@ export class FessService {
           }),
         ]);
 
-    // Optimize user vote query: fetch all votes by current user for these fesses in one query
+    // Optimize user-specific queries: fetch all votes and bookmarks for these
+    // fesses in one round-trip each, instead of per-card queries.
     const fessIds = fesses.map((f) => f.id);
-    const userVotes =
-      currentUserId && fessIds.length > 0
-        ? await prisma.vote.findMany({
-            where: {
-              userId: currentUserId,
-              fessId: { in: fessIds },
-            },
-            select: { fessId: true, type: true },
-          })
-        : [];
+    let userVotes: Array<{ fessId: string; type: string }> = [];
+    let userBookmarks: Array<{ fessId: string }> = [];
 
-    const voteMap = new Map(userVotes.map((v) => [v.fessId, v.type]));
+    if (currentUserId && fessIds.length > 0) {
+      [userVotes, userBookmarks] = await Promise.all([
+        prisma.vote.findMany({
+          where: {
+            userId: currentUserId,
+            fessId: { in: fessIds },
+          },
+          select: { fessId: true, type: true },
+        }),
+        prisma.bookmark.findMany({
+          where: {
+            userId: currentUserId,
+            fessId: { in: fessIds },
+          },
+          select: { fessId: true },
+        }),
+      ]);
+    }
+
+    const voteMap = new Map((userVotes || []).map((v) => [v.fessId, v.type]));
+    const savedSet = new Set((userBookmarks || []).map((b) => b.fessId));
 
     const data = fesses.map((f) => {
       const canManageInstagram = this.canManageBaseFess(f, viewer);
       return this.serializeFess(f, voteMap.get(f.id) || null, {
         includeIgError: canManageInstagram,
         canManageInstagram,
+        isSaved: savedSet.has(f.id),
       });
     });
 
@@ -363,22 +377,36 @@ export class FessService {
     }
 
     let userVote: string | null = null;
+    let isSaved = false;
     if (currentUserId) {
-      const vote = await prisma.vote.findUnique({
-        where: {
-          fessId_userId: {
-            fessId: id,
-            userId: currentUserId,
+      const [vote, bookmark] = await Promise.all([
+        prisma.vote.findUnique({
+          where: {
+            fessId_userId: {
+              fessId: id,
+              userId: currentUserId,
+            },
           },
-        },
-      });
+        }),
+        prisma.bookmark.findUnique({
+          where: {
+            fessId_userId: {
+              fessId: id,
+              userId: currentUserId,
+            },
+          },
+          select: { id: true },
+        }),
+      ]);
       userVote = vote?.type || null;
+      isSaved = Boolean(bookmark);
     }
 
     const canManageInstagram = this.canManageBaseFess(fess, viewer);
     return this.serializeFess(fess, userVote, {
       includeIgError: canManageInstagram,
       canManageInstagram,
+      isSaved,
     });
   }
 
@@ -844,6 +872,96 @@ export class FessService {
   }
 
   /**
+   * Simpan fess ke daftar tersimpan user (idempotent).
+   */
+  static async bookmarkFess(fessId: string, userId: string) {
+    const fess = await prisma.fess.findUnique({
+      where: { id: fessId },
+      select: { id: true },
+    });
+
+    if (!fess) {
+      const err: any = new Error('Fess tidak ditemukan');
+      err.status = 404;
+      err.code = 'NOT_FOUND';
+      throw err;
+    }
+
+    await prisma.bookmark.upsert({
+      where: { fessId_userId: { fessId, userId } },
+      create: { fessId, userId },
+      update: {},
+    });
+
+    return { saved: true };
+  }
+
+  /**
+   * Hapus fess dari daftar tersimpan user (idempotent).
+   */
+  static async unbookmarkFess(fessId: string, userId: string) {
+    await prisma.bookmark.deleteMany({ where: { fessId, userId } });
+    return { saved: false };
+  }
+
+  /**
+   * Daftar fess tersimpan milik user. Hanya fess yang masih terbit yang
+   * ditampilkan; fess yang di-take down otomatis hilang lewat cascade.
+   */
+  static async getBookmarkedFesses(
+    userId: string,
+    params: { page?: number; limit?: number },
+    viewer?: { id?: string; role?: string; managedBases?: string[] }
+  ) {
+    const page = params.page || 1;
+    const limit = params.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const where: any = {
+      userId,
+      fess: { status: { in: PUBLISHED_STATUSES } },
+    };
+
+    const [total, rows] = await Promise.all([
+      prisma.bookmark.count({ where }),
+      prisma.bookmark.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: { fess: { include: COMMENT_PREVIEW_INCLUDE } },
+      }),
+    ]);
+
+    const fessIds = rows.map((row) => row.fess.id);
+    const userVotes =
+      fessIds.length > 0
+        ? await prisma.vote.findMany({
+            where: { userId, fessId: { in: fessIds } },
+            select: { fessId: true, type: true },
+          })
+        : [];
+    const voteMap = new Map((userVotes || []).map((vote) => [vote.fessId, vote.type]));
+
+    const data = rows.map((row) => {
+      const canManageInstagram = this.canManageBaseFess(row.fess, viewer);
+      return this.serializeFess(row.fess, voteMap.get(row.fess.id) || null, {
+        includeIgError: canManageInstagram,
+        canManageInstagram,
+        isSaved: true,
+      });
+    });
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      total_pages: Math.ceil(total / limit) || 1,
+    };
+  }
+
+  /**
    * Delete fess
    */
   static async deleteFess(id: string, currentUser: { id: string; role: string; managedBases?: string[] }) {
@@ -875,6 +993,26 @@ export class FessService {
       invalidateCache('fesses:');
     }
 
+    // Take down juga harus menghapus postingan Instagram-nya agar tidak
+    // tertinggal sebagai konten yatim. Best-effort: kegagalan Meta tidak
+    // boleh membatalkan take down di FnC.
+    let instagram: { status: 'none' | 'deleted' | 'failed'; detail?: string } = {
+      status: 'none',
+    };
+
+    if (fess.postedToIg) {
+      const igResult = fess.igMediaId
+        ? await InstagramService.deletePublishedPost(fess.igMediaId, fess.baseHandle)
+        : {
+            ok: false,
+            detail:
+              'ID media Instagram tidak tersimpan (postingan lama). Hapus manual dari aplikasi Instagram.',
+          };
+      instagram = igResult.ok
+        ? { status: 'deleted' }
+        : { status: 'failed', detail: igResult.detail };
+    }
+
     // Take down oleh admin (bukan penulis): beri tahu penulis + catat audit.
     if (!isAuthor) {
       if (fess.userId) {
@@ -899,7 +1037,19 @@ export class FessService {
       });
     }
 
-    return { ok: true };
+    if (instagram.status === 'failed') {
+      await prisma.systemLog
+        .create({
+          data: {
+            source: 'MODERATION',
+            message: `Gagal menghapus postingan Instagram fess ${fess.id}: ${instagram.detail || 'unknown error'}`,
+            tone: 'error',
+          },
+        })
+        .catch(() => {});
+    }
+
+    return { ok: true, instagram };
   }
 
   /**
@@ -934,7 +1084,19 @@ export class FessService {
       }),
     ]);
 
-    const data = fesses.map((f) => this.serializeFess(f, null));
+    const fessIds = fesses.map((f) => f.id);
+    const savedRows =
+      fessIds.length > 0
+        ? await prisma.bookmark.findMany({
+            where: { userId, fessId: { in: fessIds } },
+            select: { fessId: true },
+          })
+        : [];
+    const savedSet = new Set((savedRows || []).map((row) => row.fessId));
+
+    const data = fesses.map((f) =>
+      this.serializeFess(f, null, { isSaved: savedSet.has(f.id) })
+    );
 
     return {
       data,
@@ -996,7 +1158,7 @@ export class FessService {
   static serializeFess(
     fess: any,
     userVote: string | null = null,
-    options: { includeIgError?: boolean; canManageInstagram?: boolean } = {}
+    options: { includeIgError?: boolean; canManageInstagram?: boolean; isSaved?: boolean } = {}
   ) {
     return {
       id: fess.id,
@@ -1006,6 +1168,7 @@ export class FessService {
       upvotes: fess.upvotes ?? 0,
       downvotes: fess.downvotes ?? 0,
       user_vote: userVote,
+      is_saved: Boolean(options.isSaved),
       comments_count: fess.commentsCount ?? fess.comments?.length ?? 0,
       status: fess.status,
       comments: fess.comments

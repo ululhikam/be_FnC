@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { FessService } from '../src/services/fess.service.js';
+import { InstagramService } from '../src/services/instagram.service.js';
 import { prisma } from '../src/config/prisma.js';
 
 vi.mock('../src/config/prisma.js', () => ({
@@ -32,6 +33,13 @@ vi.mock('../src/config/prisma.js', () => ({
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
+    },
+    bookmark: {
+      findMany: vi.fn(),
+      findUnique: vi.fn(),
+      count: vi.fn(),
+      upsert: vi.fn(),
+      deleteMany: vi.fn(),
     },
     notification: {
       create: vi.fn(),
@@ -78,6 +86,9 @@ describe('FessService Unit Tests', () => {
       vi.mocked(prisma.vote.findMany).mockResolvedValueOnce([
         { fessId: 'fess_1', type: 'up' } as any,
       ]);
+      vi.mocked(prisma.bookmark.findMany).mockResolvedValueOnce([
+        { fessId: 'fess_1' } as any,
+      ]);
 
       const result = await FessService.getFesses({ page: 1, limit: 10 }, 'usr_1');
 
@@ -85,6 +96,7 @@ describe('FessService Unit Tests', () => {
       expect(result.data.length).toBe(1);
       expect(result.data[0].id).toBe('fess_1');
       expect(result.data[0].user_vote).toBe('up');
+      expect(result.data[0].is_saved).toBe(true);
       expect(result.data[0].upvotes).toBe(10);
     });
 
@@ -806,7 +818,97 @@ describe('FessService Unit Tests', () => {
     });
   });
 
+  describe('bookmarkFess', () => {
+    it('should save a fess idempotently for the signed-in user', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({ id: 'fess_1' } as any);
+
+      const result = await FessService.bookmarkFess('fess_1', 'usr_1');
+
+      expect(result).toEqual({ saved: true });
+      expect(prisma.bookmark.upsert).toHaveBeenCalledWith({
+        where: { fessId_userId: { fessId: 'fess_1', userId: 'usr_1' } },
+        create: { fessId: 'fess_1', userId: 'usr_1' },
+        update: {},
+      });
+    });
+
+    it('should reject bookmarking a missing fess', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce(null);
+
+      await expect(FessService.bookmarkFess('missing', 'usr_1')).rejects.toMatchObject({
+        status: 404,
+        code: 'NOT_FOUND',
+      });
+    });
+
+    it('should remove a bookmark idempotently', async () => {
+      const result = await FessService.unbookmarkFess('fess_1', 'usr_1');
+
+      expect(result).toEqual({ saved: false });
+      expect(prisma.bookmark.deleteMany).toHaveBeenCalledWith({
+        where: { fessId: 'fess_1', userId: 'usr_1' },
+      });
+    });
+
+    it('should list saved fesses with is_saved and user_vote attached', async () => {
+      vi.mocked(prisma.bookmark.count).mockResolvedValueOnce(1);
+      vi.mocked(prisma.bookmark.findMany).mockResolvedValueOnce([
+        {
+          fess: {
+            id: 'fess_saved',
+            baseHandle: '@codememfess',
+            content: 'Fess tersimpan',
+            status: 'published',
+            upvotes: 3,
+            downvotes: 0,
+            createdAt: new Date(),
+            comments: [],
+          },
+        },
+      ] as any);
+      vi.mocked(prisma.vote.findMany).mockResolvedValueOnce([
+        { fessId: 'fess_saved', type: 'up' } as any,
+      ]);
+
+      const result = await FessService.getBookmarkedFesses('usr_1', {
+        page: 1,
+        limit: 10,
+      });
+
+      expect(result.total).toBe(1);
+      expect(result.data[0].id).toBe('fess_saved');
+      expect(result.data[0].is_saved).toBe(true);
+      expect(result.data[0].user_vote).toBe('up');
+    });
+  });
+
   describe('deleteFess (take down oleh admin)', () => {
+    it('should delete the Instagram post too when a media id is stored', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_ig',
+        baseHandle: '@codememfess',
+        baseId: 'base_1',
+        userId: 'usr_author',
+        content: 'Fess yang sudah tayang di IG',
+        status: 'published',
+        postedToIg: true,
+        igMediaId: 'ig_media_1',
+      } as any);
+      const deleteIg = vi
+        .spyOn(InstagramService, 'deletePublishedPost')
+        .mockResolvedValueOnce({ ok: true });
+
+      const result = await FessService.deleteFess('fess_ig', {
+        id: 'mod_1',
+        role: 'Base Admin',
+        managedBases: ['@codememfess'],
+      });
+
+      expect(result.instagram).toEqual({ status: 'deleted' });
+      expect(deleteIg).toHaveBeenCalledWith('ig_media_1', '@codememfess');
+      deleteIg.mockRestore();
+    });
+
     it('should remove fess, adjust counters, notify author, and log the take down', async () => {
       vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
         id: 'fess_1',
@@ -903,6 +1005,11 @@ describe('Serialisasi status Instagram', () => {
 
     const other = FessService.serializeFess(fess, null, { canManageInstagram: false });
     expect(other.can_manage_instagram).toBe(false);
+  });
+
+  it('menyertakan is_saved hanya sesuai state user yang meminta', () => {
+    expect(FessService.serializeFess(fess).is_saved).toBe(false);
+    expect(FessService.serializeFess(fess, null, { isSaved: true }).is_saved).toBe(true);
   });
 
   it('getFesses: admin base lain tidak mendapat izin maupun detail error IG', async () => {

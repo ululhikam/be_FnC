@@ -13,42 +13,43 @@ datasource db {
 }
 
 model User {
-  id             String    @id @default(cuid())
-  email          String?   @unique
+  id              String    @id @default(cuid())
+  email           String?   @unique
   emailVerifiedAt DateTime?
-  password       String?
-  username       String
-  handle         String    @unique
+  password        String?
+  username        String
+  handle          String    @unique
   handleChangedAt DateTime?
-  role           String    @default("User") // "User", "Base Admin", "Super Admin"
-  avatar         String?
-  level          Int       @default(1)
-  bio            String?
-  badges         String[]  @default(["NEW MEMBER"])
-  igAccount      String?
-  followersCount Int       @default(0)
-  followingCount Int       @default(0)
-  fessCount      Int       @default(0)
-  balance        Float     @default(0)
-  revenue        Float     @default(0)
-  isBanned       Boolean   @default(false)
-  banReason      String?
-  banExpiresAt   DateTime?
-  googleId       String?   @unique
-  instagramId    String?   @unique
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  role            String    @default("User") // "User", "Base Admin", "Super Admin"
+  avatar          String?
+  level           Int       @default(1)
+  bio             String?
+  badges          String[]  @default(["NEW MEMBER"])
+  igAccount       String?
+  followersCount  Int       @default(0)
+  followingCount  Int       @default(0)
+  fessCount       Int       @default(0)
+  balance         Float     @default(0)
+  revenue         Float     @default(0)
+  isBanned        Boolean   @default(false)
+  banReason       String?
+  banExpiresAt    DateTime?
+  googleId        String?   @unique
+  instagramId     String?   @unique
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  managedBases   Base[]               @relation("BaseCreator")
-  following      Follow[]
-  fesses         Fess[]
-  votes          Vote[]
-  comments       Comment[]
-  notifications  Notification[]
-  reports        Report[]
-  payouts        Payout[]
-  connections    PlatformConnection[]
-  passwordReset  PasswordReset?
+  managedBases      Base[]               @relation("BaseCreator")
+  following         Follow[]
+  fesses            Fess[]
+  votes             Vote[]
+  comments          Comment[]
+  bookmarks         Bookmark[]
+  notifications     Notification[]
+  reports           Report[]
+  payouts           Payout[]
+  connections       PlatformConnection[]
+  passwordReset     PasswordReset?
   emailVerification EmailVerification?
 
   @@index([role])
@@ -56,34 +57,34 @@ model User {
 }
 
 model Base {
-  id             String    @id @default(cuid())
-  name           String
-  handle         String    @unique
+  id              String    @id @default(cuid())
+  name            String
+  handle          String    @unique
   handleChangedAt DateTime?
-  category       String    @default("Umum") // Kampus, Kota, Hobi, Umum, Komunitas
-  color          String    @default("#0055FF")
-  keyword        String?
-  avatar         String?
-  initial        String?
-  bio            String?
-  rules          String[]  @default([])
-  igAccount      String?
-  postMode       String    @default("moderated") // "auto" (langsung terbit + filter NLP) | "moderated" (antrean review)
-  bannedWords    String[]  @default([]) // blacklist kata ala admin (dicek filter NLP saat auto post)
-  verified       Boolean   @default(false)
-  established    String?   @default("2024")
-  membersCount   Int       @default(0)
-  fessCount      Int       @default(0)
-  balance        Float     @default(0)
-  revenue        Float     @default(0)
-  creatorId      String?
-  creator        User?     @relation("BaseCreator", fields: [creatorId], references: [id], onDelete: SetNull)
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  category        String    @default("Umum") // Kampus, Kota, Hobi, Umum, Komunitas
+  color           String    @default("#0055FF")
+  keyword         String?
+  avatar          String?
+  initial         String?
+  bio             String?
+  rules           String[]  @default([])
+  igAccount       String?
+  postMode        String    @default("moderated") // "auto" (langsung terbit + filter NLP) | "moderated" (antrean review)
+  bannedWords     String[]  @default([]) // blacklist kata ala admin (dicek filter NLP saat auto post)
+  verified        Boolean   @default(false)
+  established     String?   @default("2024")
+  membersCount    Int       @default(0)
+  fessCount       Int       @default(0)
+  balance         Float     @default(0)
+  revenue         Float     @default(0)
+  creatorId       String?
+  creator         User?     @relation("BaseCreator", fields: [creatorId], references: [id], onDelete: SetNull)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  followers      Follow[]
-  fesses         Fess[]
-  connections    PlatformConnection[]
+  followers   Follow[]
+  fesses      Fess[]
+  connections PlatformConnection[]
 
   @@index([category])
   @@index([handle])
@@ -115,7 +116,7 @@ model Fess {
   commentsCount Int       @default(0)
   topic         String?
   template      String?   @default("default")
-  tag           String?   // "Cerita", "Tanya"
+  tag           String? // "Cerita", "Tanya"
   postedToIg    Boolean   @default(false)
   // Status publikasi Instagram yang bisa dipantau admin:
   // idle → processing → pending (video) → published | failed
@@ -123,22 +124,24 @@ model Fess {
   igError       String?
   igAttempts    Int       @default(0)
   igUpdatedAt   DateTime?
-  igPayload     Json?     // item carousel + caption yang sudah dinormalisasi
+  igMediaId     String? // ID media Instagram hasil publish, untuk take down
+  igPayload     Json? // item carousel + caption yang sudah dinormalisasi
   autoFlagged   Boolean   @default(false) // terindikasi konten negatif oleh filter NLP saat auto post
-  flagReason    String?   // alasan flag dari filter NLP (mis. "ujaran kebencian, ancaman")
+  flagReason    String? // alasan flag dari filter NLP (mis. "ujaran kebencian, ancaman")
   scheduledAt   DateTime?
-  media         Json?     // [{ id, type, url, thumbnail, duration, caption }]
+  media         Json? // [{ id, type, url, thumbnail, duration, caption }]
   carouselOrder String[]  @default([]) // urutan slide IG: "card:0", "media:<id>"
-  song          Json?     // { id, title, artist, cover, preview_url }
-  quotedFess    Json?     // { id, handle, content, time, avatar_bg, avatar_text }
+  song          Json? // { id, title, artist, cover, preview_url }
+  quotedFess    Json? // { id, handle, content, time, avatar_bg, avatar_text }
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  base          Base?     @relation(fields: [baseId], references: [id], onDelete: SetNull)
-  author        User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
-  votes         Vote[]
-  comments      Comment[]
-  reports       Report[]
+  base      Base?      @relation(fields: [baseId], references: [id], onDelete: SetNull)
+  author    User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  votes     Vote[]
+  comments  Comment[]
+  bookmarks Bookmark[]
+  reports   Report[]
 
   @@index([baseHandle, status, createdAt])
   @@index([baseId, status, createdAt])
@@ -152,15 +155,29 @@ model Vote {
   id        String   @id @default(cuid())
   fessId    String
   userId    String
-  type      String   // "up" or "down"
+  type      String // "up" or "down"
   createdAt DateTime @default(now())
 
-  fess      Fess     @relation(fields: [fessId], references: [id], onDelete: Cascade)
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fess Fess @relation(fields: [fessId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([fessId, userId])
   @@index([fessId])
   @@index([userId])
+}
+
+model Bookmark {
+  id        String   @id @default(cuid())
+  fessId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  fess Fess @relation(fields: [fessId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([fessId, userId])
+  @@index([userId, createdAt])
+  @@index([fessId])
 }
 
 model Comment {
@@ -171,8 +188,8 @@ model Comment {
   text      String
   createdAt DateTime @default(now())
 
-  fess      Fess     @relation(fields: [fessId], references: [id], onDelete: Cascade)
-  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  fess Fess  @relation(fields: [fessId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([fessId, createdAt])
 }
@@ -180,17 +197,17 @@ model Comment {
 model Notification {
   id          String   @id @default(cuid())
   userId      String
-  type        String   // comment, vote, mention, moderation, system
+  type        String // comment, vote, mention, moderation, system
   fessId      String?
   fessContent String?
   actor       String?
-  actors      Json?    // daftar username yang terlibat (agregasi notifikasi like ala Instagram)
+  actors      Json? // daftar username yang terlibat (agregasi notifikasi like ala Instagram)
   actorCount  Int      @default(1)
   text        String
   read        Boolean  @default(false)
   createdAt   DateTime @default(now())
 
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, read, createdAt])
 }
@@ -198,15 +215,15 @@ model Notification {
 model PasswordReset {
   id                  String    @id @default(cuid())
   userId              String    @unique
-  otpHash             String    // sha256 dari kode OTP 6 digit (bukan plaintext)
+  otpHash             String // sha256 dari kode OTP 6 digit (bukan plaintext)
   otpExpiresAt        DateTime
   attempts            Int       @default(0) // salah OTP berulang → tolak sementara
-  resetTokenHash      String?   // sha256 token yang dipakai di langkah reset password
+  resetTokenHash      String? // sha256 token yang dipakai di langkah reset password
   resetTokenExpiresAt DateTime?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 
-  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([otpExpiresAt])
 }
@@ -221,7 +238,7 @@ model EmailVerification {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([otpExpiresAt])
   @@index([lastSentAt])
@@ -236,8 +253,8 @@ model Report {
   status    String   @default("pending")
   createdAt DateTime @default(now())
 
-  fess      Fess     @relation(fields: [fessId], references: [id], onDelete: Cascade)
-  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  fess Fess  @relation(fields: [fessId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([fessId])
 }
@@ -266,7 +283,7 @@ model PlatformConnection {
   id            String   @id @default(cuid())
   baseId        String?
   userId        String?
-  platform      String   // "twitter", "instagram", "telegram"
+  platform      String // "twitter", "instagram", "telegram"
   name          String
   status        String   @default("idle")
   connected     Boolean  @default(false)
@@ -277,8 +294,8 @@ model PlatformConnection {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  base          Base?    @relation(fields: [baseId], references: [id], onDelete: Cascade)
-  user          User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  base Base? @relation(fields: [baseId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, platform])
   @@index([platform])
@@ -292,7 +309,7 @@ model SystemSetting {
 
 model SystemLog {
   id        String   @id @default(cuid())
-  source    String   // RATE_LIMITER, CANVAS_WORKER, AUTO_BASE, REDIS_CACHE, AI_FILTER
+  source    String // RATE_LIMITER, CANVAS_WORKER, AUTO_BASE, REDIS_CACHE, AI_FILTER
   message   String
   tone      String   @default("info") // ok, info, muted, error
   createdAt DateTime @default(now())
@@ -309,7 +326,7 @@ model Payout {
   status      String   @default("pending")
   createdAt   DateTime @default(now())
 
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
 }

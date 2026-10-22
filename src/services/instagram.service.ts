@@ -521,6 +521,7 @@ export class InstagramService {
       let metaPublished = false;
       let igPending = false;
       let postCreationId: string | null = null;
+      let publishedMediaId: string | null = null;
       let failureDetail = '';
       let failureErr: any = null;
 
@@ -593,6 +594,7 @@ export class InstagramService {
           );
           if (pubRes.data?.id) {
             metaPublished = true;
+            publishedMediaId = String(pubRes.data.id);
           }
         }
       } catch (apiErr: any) {
@@ -647,6 +649,7 @@ export class InstagramService {
           igStatus: 'published',
           igError: null,
           postedToIg: true,
+          ...(publishedMediaId ? { igMediaId: publishedMediaId } : {}),
         });
         await InstagramService.writeAudit(
           `Fess #${fessId} berhasil dipublikasikan ke Instagram Feed ${baseIg} (${mediaLabel}, percobaan ${attempt + 1}/${AUTO_RETRY_MAX_ATTEMPTS}).`,
@@ -658,6 +661,7 @@ export class InstagramService {
           meta_published: true,
           ig_pending: false,
           creation_id: postCreationId,
+          media_id: publishedMediaId,
           imageUrl: items[0]?.url || null,
           imageUrls: items.map((item) => item.url),
           items,
@@ -923,6 +927,58 @@ export class InstagramService {
       });
     } catch (err: any) {
       console.warn('[Instagram AutoPost] Gagal memperbarui status IG:', err?.message || err);
+    }
+  }
+
+  /**
+   * Hapus media Instagram yang pernah dipublikasikan aplikasi.
+   *
+   * Meta hanya mengizinkan DELETE media lewat Instagram API with Facebook
+   * Login + permission `instagram_manage_contents`. Koneksi Instagram Login
+   * yang dipakai saat ini akan ditolak Meta; hasilnya tetap dikembalikan
+   * sebagai best-effort agar take down di FnC tidak ikut gagal.
+   */
+  static async deletePublishedPost(
+    mediaId: string,
+    baseHandle: string
+  ): Promise<{ ok: boolean; detail?: string }> {
+    const cleanId = String(mediaId || '').trim();
+    if (!cleanId) {
+      return { ok: false, detail: 'ID media Instagram kosong.' };
+    }
+
+    const { baseIg, token } = await InstagramService.resolveInstagramConnection(baseHandle);
+    if (!token) {
+      return {
+        ok: false,
+        detail: `Koneksi Instagram ${baseIg} tidak aktif; postingan harus dihapus manual.`,
+      };
+    }
+
+    try {
+      const res = await axios.delete(
+        `https://graph.facebook.com/${API_VERSION}/${encodeURIComponent(cleanId)}`,
+        {
+          params: { access_token: token },
+          timeout: 15000,
+        }
+      );
+
+      const ok = res.data?.success === true || Boolean(res.data?.deleted_id);
+      await InstagramService.writeAudit(
+        `Postingan Instagram ${cleanId} untuk base ${baseIg} berhasil dihapus (take down).`,
+        'ok'
+      );
+      return ok
+        ? { ok: true }
+        : { ok: false, detail: 'Meta tidak mengonfirmasi penghapusan media.' };
+    } catch (err: any) {
+      const detail = InstagramService.metaErrorDetail(err);
+      await InstagramService.writeAudit(
+        `Gagal menghapus postingan Instagram ${cleanId} untuk base ${baseIg}: ${detail}`,
+        'error'
+      );
+      return { ok: false, detail };
     }
   }
 
@@ -1400,14 +1456,16 @@ export class InstagramService {
         token,
         deadlineTs
       );
-      const published = Boolean(pubRes.data?.id);
+      const publishedMediaId = pubRes.data?.id ? String(pubRes.data.id) : null;
+      const published = Boolean(publishedMediaId);
       // auditFinalize sekaligus menulis postedToIg=true. Jangan ada operasi DB
       // yang bisa melempar setelah publish sukses — reschedule akan menduplikasi.
       await InstagramService.auditFinalize(
         payload,
         baseIg,
         published,
-        published ? null : 'Meta tidak mengembalikan id media.'
+        published ? null : 'Meta tidak mengembalikan id media.',
+        publishedMediaId
       );
     } catch (err: any) {
       const metaError = err?.response?.data?.error;
@@ -1463,7 +1521,8 @@ export class InstagramService {
     payload: FinalizePayload,
     baseIg: string,
     published: boolean,
-    detail: string | null
+    detail: string | null,
+    mediaId?: string | null
   ): Promise<void> {
     const label = payload.kind === 'carousel' ? 'carousel' : 'video Reels';
 
@@ -1472,6 +1531,7 @@ export class InstagramService {
         igStatus: 'published',
         igError: null,
         postedToIg: true,
+        ...(mediaId ? { igMediaId: mediaId } : {}),
       });
     } else {
       await InstagramService.updateFessIgState(payload.fessId, {

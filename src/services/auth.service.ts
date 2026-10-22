@@ -888,7 +888,11 @@ export class AuthService {
   /**
    * Helper to format User model into exact OpenAPI User schema shape
    */
-  static serializeUser(user: any) {
+  static serializeUser(
+    user: any,
+    options: { includeHandleCooldown?: boolean } = {}
+  ) {
+    const includeHandleCooldown = options.includeHandleCooldown !== false;
     const handleChangeAvailableAt = getHandleChangeAvailableAt(user.handleChangedAt);
     return {
       id: user.id,
@@ -908,15 +912,20 @@ export class AuthService {
       fess_count: user.fessCount ?? 0,
       balance: user.balance ?? 0,
       revenue: user.revenue ?? 0,
-      handle_changed_at: user.handleChangedAt
-        ? new Date(user.handleChangedAt).getTime()
-        : null,
-      handle_change_available_at: handleChangeAvailableAt
-        ? handleChangeAvailableAt.getTime()
-        : null,
-      handle_change_cooldown_days: HANDLE_CHANGE_COOLDOWN_DAYS,
-      can_change_handle:
-        !handleChangeAvailableAt || Date.now() >= handleChangeAvailableAt.getTime(),
+      ...(includeHandleCooldown
+        ? {
+            handle_changed_at: user.handleChangedAt
+              ? new Date(user.handleChangedAt).getTime()
+              : null,
+            handle_change_available_at: handleChangeAvailableAt
+              ? handleChangeAvailableAt.getTime()
+              : null,
+            handle_change_cooldown_days: HANDLE_CHANGE_COOLDOWN_DAYS,
+            can_change_handle:
+              !handleChangeAvailableAt ||
+              Date.now() >= handleChangeAvailableAt.getTime(),
+          }
+        : {}),
       created_at: user.createdAt ? new Date(user.createdAt).getTime() : Date.now(),
     };
   }

@@ -30,7 +30,7 @@ export class UserService {
       throw err;
     }
 
-    return { user: AuthService.serializeUser(user) };
+    return { user: AuthService.serializeUser(user, { includeHandleCooldown: false }) };
   }
 
   /**

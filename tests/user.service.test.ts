@@ -31,9 +31,21 @@ function serializedUser(overrides: Record<string, unknown> = {}) {
   };
 }
 
-describe('UserService updateProfile — handle cooldown', () => {
+describe('UserService — profile handle cooldown', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('does not expose cooldown metadata on the public profile', async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(
+      serializedUser({ handleChangedAt: new Date() }) as any
+    );
+
+    const result = await UserService.getProfile('usr_1');
+
+    expect(result.user).not.toHaveProperty('can_change_handle');
+    expect(result.user).not.toHaveProperty('handle_change_available_at');
+    expect(result.user).not.toHaveProperty('handle_changed_at');
   });
 
   it('allows the first handle change and records the change time', async () => {

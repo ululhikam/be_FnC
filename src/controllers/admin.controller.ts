@@ -1,6 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
 import { AdminService } from '../services/admin.service.js';
-import { CanvasService } from '../services/canvas.service.js';
 import { successResponse, errorResponse } from '../utils/response.util.js';
 
 export class AdminController {
@@ -36,6 +35,7 @@ export class AdminController {
     try {
       const { fess_id, template, aspect } = req.body;
       // Export admin hanya merender/mengunduh card — bukan trigger posting IG.
+      const { CanvasService } = await import('../services/canvas.service.js');
       const result = await CanvasService.exportFessCanvas(fess_id, template, aspect, {
         autoPost: false,
       });

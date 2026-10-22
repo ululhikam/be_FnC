@@ -1,6 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
 import { FessService } from '../services/fess.service.js';
-import { CanvasService } from '../services/canvas.service.js';
 import { prisma } from '../config/prisma.js';
 import { normalizeHandle } from '../utils/format.util.js';
 import { trackBackground } from '../utils/background.js';
@@ -37,6 +36,9 @@ export class FessController {
       const handle = normalizeHandle(String(base_handle || ''));
       const base = await prisma.base.findUnique({ where: { handle } });
 
+      // Canvas memuat resvg/sharp/opentype (native & berat). Import dinamis
+      // memastikan endpoint baca biasa tidak menanggung biaya cold start-nya.
+      const { CanvasService } = await import('../services/canvas.service.js');
       const images = await CanvasService.renderPreviewImages(
         {
           content,
@@ -182,6 +184,7 @@ export class FessController {
 
       const { template } = req.body || {};
       // Semua posting Instagram selalu 4:5; jangan percayai aspect dari klien.
+      const { CanvasService } = await import('../services/canvas.service.js');
       const result = await CanvasService.exportFessCanvas(id, template, 'portrait');
 
       // Ratakan hasil auto-post agar UI (modal FessCard) bisa membaca

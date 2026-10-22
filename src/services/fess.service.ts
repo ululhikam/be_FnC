@@ -2,7 +2,6 @@ import { prisma } from '../config/prisma.js';
 import { normalizeHandle } from '../utils/format.util.js';
 import { TOPICS } from '../constants/topics.js';
 import { InstagramService } from './instagram.service.js';
-import { CanvasService } from './canvas.service.js';
 import { ModerationService } from './moderation.service.js';
 import { invalidateCache, getOrSet } from '../utils/cache.util.js';
 
@@ -33,6 +32,15 @@ const COMMENT_PREVIEW_INCLUDE = {
 
 /** topic id → human label (constants are the source of truth for topics). */
 const TOPIC_LABELS = new Map(TOPICS.map((t) => [t.id, t.label]));
+
+/**
+ * Renderer kartu memuat resvg/sharp/opentype yang berat. Import dinamis
+ * menjaga jalur baca (feed/detail) tetap ringan saat cold start.
+ */
+async function exportFessCanvasForAutoPost(fessId: string, template?: string | null) {
+  const { CanvasService } = await import('./canvas.service.js');
+  return CanvasService.exportFessCanvas(fessId, template || 'default', 'portrait');
+}
 
 export class FessService {
   /**
@@ -278,11 +286,7 @@ export class FessService {
       // Non-blocking background task agar respon HTTP tidak tertahan render/upload canvas.
       // onBackground dipakai controller untuk waitUntil() di runtime Vercel supaya
       // task tidak dipotong saat response selesai.
-      const autoPostTask = CanvasService.exportFessCanvas(
-        fess.id,
-        fess.template || 'default',
-        'portrait'
-      ).catch(
+      const autoPostTask = exportFessCanvasForAutoPost(fess.id, fess.template).catch(
         (err) => {
           console.error(`[AutoPost] Gagal export canvas fess ${fess.id}:`, err);
         }
@@ -358,16 +362,41 @@ export class FessService {
     currentUserId?: string,
     viewer?: { id?: string; role?: string; managedBases?: string[] }
   ) {
-    const fess = await prisma.fess.findUnique({
-      where: { id },
-      include: {
-        comments: {
-          orderBy: { createdAt: 'asc' },
-          select: COMMENT_PREVIEW_SELECT,
+    // Status vote/bookmark tidak bergantung pada hasil fess; ambil semuanya
+    // sekaligus agar detail tidak menunggu dua round-trip berurutan.
+    const [fess, vote, bookmark] = await Promise.all([
+      prisma.fess.findUnique({
+        where: { id },
+        include: {
+          comments: {
+            orderBy: { createdAt: 'asc' },
+            select: COMMENT_PREVIEW_SELECT,
+          },
+          base: { select: BASE_PREVIEW_SELECT },
         },
-        base: { select: BASE_PREVIEW_SELECT },
-      },
-    });
+      }),
+      currentUserId
+        ? prisma.vote.findUnique({
+            where: {
+              fessId_userId: {
+                fessId: id,
+                userId: currentUserId,
+              },
+            },
+          })
+        : Promise.resolve(null),
+      currentUserId
+        ? prisma.bookmark.findUnique({
+            where: {
+              fessId_userId: {
+                fessId: id,
+                userId: currentUserId,
+              },
+            },
+            select: { id: true },
+          })
+        : Promise.resolve(null),
+    ]);
 
     if (!fess) {
       const err: any = new Error('Fess tidak ditemukan');
@@ -376,31 +405,8 @@ export class FessService {
       throw err;
     }
 
-    let userVote: string | null = null;
-    let isSaved = false;
-    if (currentUserId) {
-      const [vote, bookmark] = await Promise.all([
-        prisma.vote.findUnique({
-          where: {
-            fessId_userId: {
-              fessId: id,
-              userId: currentUserId,
-            },
-          },
-        }),
-        prisma.bookmark.findUnique({
-          where: {
-            fessId_userId: {
-              fessId: id,
-              userId: currentUserId,
-            },
-          },
-          select: { id: true },
-        }),
-      ]);
-      userVote = vote?.type || null;
-      isSaved = Boolean(bookmark);
-    }
+    const userVote = vote?.type || null;
+    const isSaved = Boolean(bookmark);
 
     const canManageInstagram = this.canManageBaseFess(fess, viewer);
     return this.serializeFess(fess, userVote, {
@@ -765,11 +771,7 @@ export class FessService {
     // Auto-post hanya saat transisi pending → published; approve ulang pada
     // fess yang sudah terbit tidak boleh membuat posting Instagram duplikat.
     if (!wasPublished && !fess.postedToIg) {
-      const autoPostTask = CanvasService.exportFessCanvas(
-        id,
-        fess.template || 'default',
-        'portrait'
-      ).catch((err) => {
+      const autoPostTask = exportFessCanvasForAutoPost(id, fess.template).catch((err) => {
         console.error(`[AutoPost] Gagal export canvas fess ${id}:`, err);
       });
       if (onBackground) onBackground(autoPostTask);

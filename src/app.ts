@@ -23,6 +23,9 @@ app.use(
       callback(null, true);
     },
     credentials: true,
+    // Cache hasil preflight agar request GET ber-Authorization tidak
+    // melakukan OPTIONS berulang di setiap navigasi/aksi.
+    maxAge: 86_400,
   })
 );
 app.use(express.json({ limit: '15mb' }));

@@ -5,22 +5,26 @@ export class CommentService {
    * Get comments for a fess
    */
   static async getComments(fessId: string, page = 1, limit = 20) {
-    const fess = await prisma.fess.findUnique({ where: { id: fessId } });
+    const skip = (page - 1) * limit;
+
+    // Dua query ini tidak saling bergantung. Jalankan paralel agar daftar
+    // komentar tidak menunggu query validasi fess lebih dulu.
+    const [fess, comments] = await Promise.all([
+      prisma.fess.findUnique({ where: { id: fessId }, select: { id: true } }),
+      prisma.comment.findMany({
+        where: { fessId },
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
+
     if (!fess) {
       const err: any = new Error('Fess tidak ditemukan');
       err.status = 404;
       err.code = 'NOT_FOUND';
       throw err;
     }
-
-    const skip = (page - 1) * limit;
-
-    const comments = await prisma.comment.findMany({
-      where: { fessId },
-      skip,
-      take: limit,
-      orderBy: { createdAt: 'asc' },
-    });
 
     const data = comments.map((c) => ({
       id: c.id,

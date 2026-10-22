@@ -8,6 +8,7 @@ export interface AuthenticatedUser {
   username: string;
   handle: string;
   email?: string | null;
+  emailVerifiedAt?: Date | null;
   role: string;
   avatar?: string | null;
   level: number;
@@ -20,6 +21,8 @@ export interface AuthenticatedUser {
   fessCount?: number;
   balance?: number;
   revenue?: number;
+  createdAt?: Date | string | null;
+  handleChangedAt?: Date | null;
 }
 
 declare global {
@@ -27,6 +30,68 @@ declare global {
     // eslint-disable-next-line @typescript-eslint/no-empty-object-type
     interface User extends AuthenticatedUser {}
   }
+}
+
+/**
+ * Kolom yang benar-benar dipakai request handler. Tanpa `select`, Prisma
+ * mengambil seluruh kolom User (termasuk password/hash OAuth) pada setiap
+ * request terautentikasi. Relasi managedBases tetap diambil karena dipakai
+ * untuk otorisasi Base Admin.
+ */
+const AUTH_USER_SELECT = {
+  id: true,
+  username: true,
+  handle: true,
+  email: true,
+  emailVerifiedAt: true,
+  role: true,
+  avatar: true,
+  level: true,
+  bio: true,
+  badges: true,
+  igAccount: true,
+  followersCount: true,
+  followingCount: true,
+  fessCount: true,
+  balance: true,
+  revenue: true,
+  createdAt: true,
+  handleChangedAt: true,
+  isBanned: true,
+  managedBases: { select: { handle: true } },
+} as const;
+
+function findAuthUser(userId: string) {
+  return prisma.user.findUnique({
+    where: { id: userId },
+    select: AUTH_USER_SELECT,
+  });
+}
+
+type AuthUserRecord = NonNullable<Awaited<ReturnType<typeof findAuthUser>>>;
+
+function toAuthenticatedUser(user: AuthUserRecord): AuthenticatedUser {
+  return {
+    id: user.id,
+    username: user.username,
+    handle: user.handle,
+    email: user.email,
+    emailVerifiedAt: user.emailVerifiedAt,
+    role: user.role,
+    avatar: user.avatar,
+    level: user.level,
+    bio: user.bio,
+    badges: user.badges,
+    managedBases: user.managedBases.map((base) => base.handle),
+    igAccount: user.igAccount,
+    followersCount: user.followersCount,
+    followingCount: user.followingCount,
+    fessCount: user.fessCount,
+    balance: user.balance,
+    revenue: user.revenue,
+    createdAt: user.createdAt,
+    handleChangedAt: user.handleChangedAt,
+  };
 }
 
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
@@ -38,14 +103,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   const token = authHeader.split(' ')[1];
   try {
     const payload = verifyToken(token);
-    const user = await prisma.user.findUnique({
-      where: { id: payload.sub },
-      include: {
-        managedBases: {
-          select: { handle: true },
-        },
-      },
-    });
+    const user = await findAuthUser(payload.sub);
 
     if (!user || user.isBanned) {
       return errorResponse(res, 'Sesi tidak valid atau akun telah dibekukan.', 401, 'UNAUTHORIZED');
@@ -67,24 +125,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       });
     }
 
-    req.user = {
-      id: user.id,
-      username: user.username,
-      handle: user.handle,
-      email: user.email,
-      role: user.role,
-      avatar: user.avatar,
-      level: user.level,
-      bio: user.bio,
-      badges: user.badges,
-      managedBases: user.managedBases.map((b) => b.handle),
-      igAccount: user.igAccount,
-      followersCount: user.followersCount,
-      followingCount: user.followingCount,
-      fessCount: user.fessCount,
-      balance: user.balance,
-      revenue: user.revenue,
-    };
+    req.user = toAuthenticatedUser(user);
 
     next();
   } catch (error) {
@@ -101,34 +142,10 @@ export async function optionalAuth(req: Request, res: Response, next: NextFuncti
   const token = authHeader.split(' ')[1];
   try {
     const payload = verifyToken(token);
-    const user = await prisma.user.findUnique({
-      where: { id: payload.sub },
-      include: {
-        managedBases: {
-          select: { handle: true },
-        },
-      },
-    });
+    const user = await findAuthUser(payload.sub);
 
     if (user && !user.isBanned && (!user.email || user.emailVerifiedAt)) {
-      req.user = {
-        id: user.id,
-        username: user.username,
-        handle: user.handle,
-        email: user.email,
-        role: user.role,
-        avatar: user.avatar,
-        level: user.level,
-        bio: user.bio,
-        badges: user.badges,
-        managedBases: user.managedBases.map((b) => b.handle),
-        igAccount: user.igAccount,
-        followersCount: user.followersCount,
-        followingCount: user.followingCount,
-        fessCount: user.fessCount,
-        balance: user.balance,
-        revenue: user.revenue,
-      };
+      req.user = toAuthenticatedUser(user);
     }
   } catch {
     // Ignore invalid token on optional auth

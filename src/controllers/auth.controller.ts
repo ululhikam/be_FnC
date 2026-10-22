@@ -122,7 +122,12 @@ export class AuthController {
       if (!req.user) {
         return errorResponse(res, 'Unauthenticated', 401, 'UNAUTHORIZED');
       }
-      const user = await AuthService.getMe(req.user.id);
+      // requireAuth sudah memuat seluruh field profil yang dibutuhkan.
+      // Serialisasi langsung menghindari query user + managedBases kedua.
+      const user = AuthService.serializeUser({
+        ...req.user,
+        managedBases: (req.user.managedBases || []).map((handle) => ({ handle })),
+      });
       return successResponse(res, { user }, 200);
     } catch (error) {
       next(error);

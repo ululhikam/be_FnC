@@ -2,6 +2,10 @@ import { OAuth2Client } from 'google-auth-library';
 import crypto from 'crypto';
 import { prisma, type PrismaClient } from '../config/prisma.js';
 import { ENV } from '../config/env.js';
+import {
+  HANDLE_CHANGE_COOLDOWN_DAYS,
+  getHandleChangeAvailableAt,
+} from '../constants/user.js';
 import { hashPassword, comparePassword } from '../utils/password.util.js';
 import {
   generateToken,
@@ -885,6 +889,7 @@ export class AuthService {
    * Helper to format User model into exact OpenAPI User schema shape
    */
   static serializeUser(user: any) {
+    const handleChangeAvailableAt = getHandleChangeAvailableAt(user.handleChangedAt);
     return {
       id: user.id,
       username: user.username,
@@ -903,6 +908,15 @@ export class AuthService {
       fess_count: user.fessCount ?? 0,
       balance: user.balance ?? 0,
       revenue: user.revenue ?? 0,
+      handle_changed_at: user.handleChangedAt
+        ? new Date(user.handleChangedAt).getTime()
+        : null,
+      handle_change_available_at: handleChangeAvailableAt
+        ? handleChangeAvailableAt.getTime()
+        : null,
+      handle_change_cooldown_days: HANDLE_CHANGE_COOLDOWN_DAYS,
+      can_change_handle:
+        !handleChangeAvailableAt || Date.now() >= handleChangeAvailableAt.getTime(),
       created_at: user.createdAt ? new Date(user.createdAt).getTime() : Date.now(),
     };
   }

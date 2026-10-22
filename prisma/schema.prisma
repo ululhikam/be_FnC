@@ -19,6 +19,7 @@ model User {
   password       String?
   username       String
   handle         String    @unique
+  handleChangedAt DateTime?
   role           String    @default("User") // "User", "Base Admin", "Super Admin"
   avatar         String?
   level          Int       @default(1)

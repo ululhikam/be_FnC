@@ -226,7 +226,7 @@ describe('CanvasService Unit Tests', () => {
     }
   });
 
-  it('merender foto profil base dan chip topik di kartu', () => {
+  it('merender foto profil base dan label topik pada badge header', () => {
     const avatar =
       'data:image/svg+xml;charset=utf-8,' +
       encodeURIComponent(
@@ -253,7 +253,23 @@ describe('CanvasService Unit Tests', () => {
     expect(svg).toContain('href="' + avatar + '"');
     expect(svg).toContain('>Cinta</text>');
     expect(svg).not.toContain('>CB</text>');
+    expect(svg).not.toContain('Topic chip');
     expect(CanvasService.renderSvgToPng(svg).length).toBeGreaterThan(100);
+  });
+
+  it('menampilkan Confession sebagai label default bila topik kosong', () => {
+    const [svg] = CanvasService.buildSvgPages(
+      {
+        baseHandle: '@cintafess',
+        content: 'Kartu tanpa topik.',
+        template: 'default',
+        base: { name: 'Cinta Base', initial: 'CB' },
+      } as any,
+      'default'
+    );
+
+    expect(svg).toContain('>Confession</text>');
+    expect(svg).not.toContain('Topic chip');
   });
 
   it('tetap memakai inisial bila base tidak punya foto profil', () => {

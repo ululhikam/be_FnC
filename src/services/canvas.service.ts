@@ -567,33 +567,24 @@ export class CanvasService {
     const contentX = PAD + 58;
     const contentWidth = cardW - 116;
     const footerTop = PAD + cardH - 72;
-    let restContentY = PAD + 195;
+    const restContentY = PAD + 195;
 
     const measureFont = getMeasureFont(typo.family, typo.weight);
 
-    // ── Chip topik (baris meta di bawah header, sama seperti composer) ──────
+    // ── Label topik: menggantikan teks "Confession" pada badge header ──────
+    // Bila user memilih topik, badge menampilkan label topik. Bila tidak,
+    // badge tetap "Confession" seperti sebelumnya — tidak ada chip baru.
     const rawTopic = String(fess.topic || '').trim();
     const topicLabel = rawTopic ? TOPIC_LABELS.get(rawTopic) || rawTopic : '';
-    const topicFont = getMeasureFont('sans', 700);
-    const topicText = topicLabel
-      ? fitTextToWidth(topicLabel, topicFont, 15, contentWidth - 32)
-      : '';
-    const topicPillWidth = topicText
-      ? Math.min(contentWidth, Math.ceil(measureTextWidth(topicText, topicFont, 15, 0)) + 32)
-      : 0;
-    const topicPillY = PAD + 146;
-    const topicPillHeight = 32;
-    const topicSvg = topicText
-      ? `<!-- Topic chip -->
-  <rect x="${contentX}" y="${topicPillY}" width="${topicPillWidth}" height="${topicPillHeight}" rx="${isNeo ? 6 : 16}"
-        fill="${isNeo ? accentInk : pill.fill}" opacity="${isNeo ? 1 : pill.opacity}"/>
-  <text x="${contentX + 16}" y="${topicPillY + 21}" font-family="Poppins, Arial, sans-serif" font-size="15"
-        font-weight="800" fill="${isNeo ? '#ffe600' : pill.text}">${escapeXml(topicText)}</text>
-`
-      : '';
-    // Chip topik memakai ruang di atas isi; geser baris pertama agar glyph
-    // (ascender) tidak menimpa chip.
-    if (topicText) restContentY += 44;
+    const tagLabel = topicLabel || fess.tag || 'Confession';
+    const tagFont = getMeasureFont('sans', 800);
+    const tagPillMaxWidth = Math.min(180, Math.round(cardW * 0.4));
+    const tagPillText = fitTextToWidth(tagLabel, tagFont, 14, tagPillMaxWidth - 32);
+    const tagPillWidth = Math.max(
+      106,
+      Math.min(tagPillMaxWidth, Math.ceil(measureTextWidth(tagPillText, tagFont, 14, 0)) + 32)
+    );
+    const tagPillX = PAD + cardW - 24 - tagPillWidth;
 
     const bodyText = typo.uppercase
       ? String(fess.content || '').toUpperCase()
@@ -712,7 +703,7 @@ export class CanvasService {
             ) + '\n\n  '
           : '';
       const decoQuote =
-        idx === 0 && !quoteBlock && !topicText && typo.align === 'left'
+        idx === 0 && !quoteBlock && typo.align === 'left'
           ? `<!-- Opening quote -->
   <text x="${PAD + 52}" y="${PAD + 172}" font-family="Poppins, Noto Sans, serif" font-size="72"
         font-weight="bold" fill="${accentInk}" opacity="0.28">&#8220;</text>
@@ -750,13 +741,13 @@ export class CanvasService {
   <text x="${PAD + 126}" y="${headerHandleY}" font-family="Poppins, Arial, sans-serif" font-size="18"
         font-weight="600" fill="${subtextColor}">${escapeXml(fess.baseHandle)} · Fess n Curious</text>
 
-  <!-- Tag pill -->
-  <rect x="${PAD + cardW - 130}" y="${tagPillY}" width="106" height="34" rx="${isNeo ? 6 : 17}"
+  <!-- Tag / topic pill -->
+  <rect x="${tagPillX}" y="${tagPillY}" width="${tagPillWidth}" height="34" rx="${isNeo ? 6 : 17}"
         fill="${isNeo ? accentInk : pill.fill}" opacity="${isNeo ? 1 : pill.opacity}"/>
-  <text x="${PAD + cardW - 77}" y="${tagPillY + 23}" font-family="Poppins, Arial, sans-serif" font-size="14"
-        font-weight="800" fill="${isNeo ? '#ffe600' : pill.text}" text-anchor="middle">${escapeXml(fess.tag || 'Confession')}</text>
+  <text x="${tagPillX + tagPillWidth / 2}" y="${tagPillY + 23}" font-family="Poppins, Arial, sans-serif" font-size="14"
+        font-weight="800" fill="${isNeo ? '#ffe600' : pill.text}" text-anchor="middle">${escapeXml(tagPillText)}</text>
 
-  ${topicSvg}${decoQuote}${pageQuoteSvg}<!-- Confession text -->
+  ${decoQuote}${pageQuoteSvg}<!-- Confession text -->
   ${textSvg}
 
   <!-- Footer divider -->

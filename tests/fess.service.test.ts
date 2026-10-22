@@ -895,6 +895,46 @@ describe('Serialisasi status Instagram', () => {
     expect(data.ig_error).toContain('rasio tidak sama');
   });
 
+  it('flag can_manage_instagram dihitung per viewer dan tidak bocor ke publik', () => {
+    expect(FessService.serializeFess(fess)).not.toHaveProperty('can_manage_instagram');
+
+    const owner = FessService.serializeFess(fess, null, { canManageInstagram: true });
+    expect(owner.can_manage_instagram).toBe(true);
+
+    const other = FessService.serializeFess(fess, null, { canManageInstagram: false });
+    expect(other.can_manage_instagram).toBe(false);
+  });
+
+  it('getFesses: admin base lain tidak mendapat izin maupun detail error IG', async () => {
+    const row = {
+      ...fess,
+      comments: [],
+      base: { creatorId: 'usr_owner' },
+    };
+
+    vi.mocked(prisma.fess.count).mockResolvedValueOnce(1);
+    vi.mocked(prisma.fess.findMany).mockResolvedValueOnce([row] as any);
+
+    const otherView = await FessService.getFesses(
+      { page: 1, limit: 10, query: 'status' },
+      undefined,
+      { id: 'usr_other', role: 'Base Admin', managedBases: ['@base_lain'] }
+    );
+    expect(otherView.data[0].can_manage_instagram).toBe(false);
+    expect(otherView.data[0]).not.toHaveProperty('ig_error');
+
+    vi.mocked(prisma.fess.count).mockResolvedValueOnce(1);
+    vi.mocked(prisma.fess.findMany).mockResolvedValueOnce([row] as any);
+
+    const ownerView = await FessService.getFesses(
+      { page: 1, limit: 10, query: 'status' },
+      undefined,
+      { id: 'usr_owner', role: 'Base Admin', managedBases: [] }
+    );
+    expect(ownerView.data[0].can_manage_instagram).toBe(true);
+    expect(ownerView.data[0].ig_error).toContain('rasio tidak sama');
+  });
+
   it('assertCanManageFess menolak admin base lain & fess duplikat', async () => {
     const row = {
       baseHandle: '@codemine',
@@ -936,6 +976,7 @@ describe('Serialisasi status Instagram', () => {
       managedBases: [],
     });
     expect(ownerView.ig_error).toContain('rasio tidak sama');
+    expect(ownerView.can_manage_instagram).toBe(true);
 
     vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce(row as any);
     const otherView = await FessService.getFessById('fess_ig_1', undefined, {
@@ -944,6 +985,7 @@ describe('Serialisasi status Instagram', () => {
       managedBases: ['@base_lain'],
     });
     expect(otherView).not.toHaveProperty('ig_error');
+    expect(otherView.can_manage_instagram).toBe(false);
   });
 
   it('getInstagramStatus: polling publik hanya status, admin pengelola dapat detail', async () => {
@@ -967,6 +1009,7 @@ describe('Serialisasi status Instagram', () => {
       ig_attempts: 3,
     });
     expect(publicView).not.toHaveProperty('ig_error');
+    expect(publicView.can_manage_instagram).toBe(false);
 
     vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce(row as any);
     const ownerView = await FessService.getInstagramStatus('fess_ig_1', {
@@ -975,5 +1018,6 @@ describe('Serialisasi status Instagram', () => {
       managedBases: [],
     });
     expect(ownerView.ig_error).toContain('rasio tidak sama');
+    expect(ownerView.can_manage_instagram).toBe(true);
   });
 });

@@ -158,11 +158,13 @@ export class FessService {
 
     const voteMap = new Map(userVotes.map((v) => [v.fessId, v.type]));
 
-    const data = fesses.map((f) =>
-      this.serializeFess(f, voteMap.get(f.id) || null, {
-        includeIgError: this.canViewIgError(f, viewer),
-      })
-    );
+    const data = fesses.map((f) => {
+      const canManageInstagram = this.canManageBaseFess(f, viewer);
+      return this.serializeFess(f, voteMap.get(f.id) || null, {
+        includeIgError: canManageInstagram,
+        canManageInstagram,
+      });
+    });
 
     return {
       data,
@@ -373,8 +375,10 @@ export class FessService {
       userVote = vote?.type || null;
     }
 
+    const canManageInstagram = this.canManageBaseFess(fess, viewer);
     return this.serializeFess(fess, userVote, {
-      includeIgError: this.canViewIgError(fess, viewer),
+      includeIgError: canManageInstagram,
+      canManageInstagram,
     });
   }
 
@@ -407,18 +411,24 @@ export class FessService {
       throw err;
     }
 
+    const canManageInstagram = this.canManageBaseFess(fess, viewer);
+
     return {
       id: fess.id,
       posted_to_ig: fess.postedToIg,
       ig_status: fess.igStatus,
       ig_attempts: fess.igAttempts,
       ig_updated_at: fess.igUpdatedAt,
-      ...(this.canViewIgError(fess, viewer) ? { ig_error: fess.igError } : {}),
+      can_manage_instagram: canManageInstagram,
+      ...(canManageInstagram ? { ig_error: fess.igError } : {}),
     };
   }
 
-  /** Detail error IG hanya untuk admin yang benar-benar mengelola base fess. */
-  private static canViewIgError(
+  /**
+   * True bila viewer adalah Super Admin atau admin pengelola base fess.
+   * Dipakai untuk detail error IG dan flag aksi di UI.
+   */
+  private static canManageBaseFess(
     fess: { baseHandle?: string | null; base?: { creatorId?: string | null } | null },
     viewer?: { id?: string; role?: string; managedBases?: string[] }
   ): boolean {
@@ -456,14 +466,7 @@ export class FessService {
       throw err;
     }
 
-    const isSuperAdmin = currentUser.role === 'Super Admin';
-    const postHandle = String(fess.baseHandle || '').replace(/^@/, '').toLowerCase();
-    const isBaseAdmin =
-      (currentUser.managedBases || []).some(
-        (handle) => String(handle).replace(/^@/, '').toLowerCase() === postHandle
-      ) || fess.base?.creatorId === currentUser.id;
-
-    if (!isSuperAdmin && !isBaseAdmin) {
+    if (!this.canManageBaseFess(fess, currentUser)) {
       const err: any = new Error('Anda tidak memiliki izin memposting fess ini ke Instagram');
       err.status = 403;
       err.code = 'FORBIDDEN';
@@ -993,7 +996,7 @@ export class FessService {
   static serializeFess(
     fess: any,
     userVote: string | null = null,
-    options: { includeIgError?: boolean } = {}
+    options: { includeIgError?: boolean; canManageInstagram?: boolean } = {}
   ) {
     return {
       id: fess.id,
@@ -1029,6 +1032,9 @@ export class FessService {
       ig_attempts: fess.igAttempts ?? 0,
       ig_updated_at: fess.igUpdatedAt ? new Date(fess.igUpdatedAt).getTime() : null,
       ...(options.includeIgError ? { ig_error: fess.igError || null } : {}),
+      ...(options.canManageInstagram !== undefined
+        ? { can_manage_instagram: Boolean(options.canManageInstagram) }
+        : {}),
       auto_flagged: fess.autoFlagged ?? false,
       flag_reason: fess.flagReason || undefined,
       // Foto profil base untuk avatar kartu fess. `avatar` bisa berupa

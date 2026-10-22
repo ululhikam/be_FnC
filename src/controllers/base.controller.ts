@@ -76,7 +76,8 @@ export class BaseController {
           ...(req.query as any),
           base: handle,
         },
-        req.user?.id
+        req.user?.id,
+        req.user
       );
       return res.status(200).json(result);
     } catch (error) {

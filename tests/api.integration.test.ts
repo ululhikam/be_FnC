@@ -80,6 +80,32 @@ describe('API Integration Tests (Express & OpenAPI Contract Endpoints)', () => {
       expect(res.status).toBe(200);
       expect(res.body.status).toBe('ok');
     });
+
+    it('allows configured CORS origins', async () => {
+      const res = await request(app)
+        .get('/api/health')
+        .set('Origin', 'http://localhost:5173');
+      expect(res.status).toBe(200);
+      expect(res.headers['access-control-allow-origin']).toBe('http://localhost:5173');
+    });
+
+    it('rejects unknown CORS origins', async () => {
+      const res = await request(app)
+        .get('/api/health')
+        .set('Origin', 'https://evil.example');
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('CORS_FORBIDDEN');
+      expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    });
+
+    it('rejects unknown CORS preflight origins', async () => {
+      const res = await request(app)
+        .options('/api/health')
+        .set('Origin', 'https://evil.example')
+        .set('Access-Control-Request-Method', 'GET');
+      expect(res.status).toBe(403);
+      expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    });
   });
 
   describe('Topics Endpoint', () => {

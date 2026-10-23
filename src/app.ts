@@ -14,13 +14,29 @@ import { rateLimiter } from './middlewares/rateLimit.middleware.js';
 
 export const app = express();
 
+const allowedOrigins = new Set(
+  ENV.ALLOWED_ORIGINS.split(',')
+    .map((origin) => origin.trim().replace(/\/$/, ''))
+    .filter(Boolean)
+);
+
 // Security and utility middlewares
 app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps, curl, postman) or matching frontends
-      callback(null, true);
+      // Allow requests with no origin (mobile apps, curl, server-to-server).
+      if (!origin) return callback(null, true);
+
+      const normalized = origin.replace(/\/$/, '');
+      if (allowedOrigins.has(normalized)) return callback(null, true);
+
+      const error: Error & { status?: number; code?: string } = new Error(
+        'Origin tidak diizinkan oleh CORS'
+      );
+      error.status = 403;
+      error.code = 'CORS_FORBIDDEN';
+      return callback(error);
     },
     credentials: true,
     // Cache hasil preflight agar request GET ber-Authorization tidak

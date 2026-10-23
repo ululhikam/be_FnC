@@ -223,7 +223,7 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 - [ ] Test refund & revenue reversal
 - [ ] Test payout & free forever RBAC
 - [ ] E2E Midtrans sandbox
-- [ ] CORS allowlist
+- [x] CORS allowlist
 - [ ] Rate limit terdistribusi
 - [x] Preview Vercel dev
 - [ ] Sign-off
@@ -251,6 +251,7 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 2. **Midtrans sandbox** — keys sudah ada di env dev, tetapi transaksi/webhook belum diuji karena route belum dibuat.
 3. **Vercel Git deploy** — production branch project dev masih `main`. Deploy dev dilakukan manual dengan `--project`; jangan deploy tanpa `--project`.
 4. **Email dev** — pastikan domain pengirim Resend valid untuk pengiriman ke email tester.
+5. **Production CORS** — sebelum merge, isi `ALLOWED_ORIGINS` di Vercel production jika ada origin selain `FRONTEND_URL` (default fallback hanya `FRONTEND_URL`).
 
 ## 7. Log perubahan
 
@@ -258,3 +259,4 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 |---|---|
 | 2026-10-23 | Branch fitur dan progress tracker dibuat; keputusan produk dikunci. |
 | 2026-10-24 | Supabase dev (`ap-south-1`) terhubung, 10 migrasi diterapkan, bucket dev dibuat; backend/frontend dev live dan terverifikasi. |
+| 2026-10-24 | CORS allowlist diterapkan dan diuji (243 test lulus); origin asing ditolak 403. |

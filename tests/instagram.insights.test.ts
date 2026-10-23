@@ -56,14 +56,15 @@ describe('InstagramService insights', () => {
       });
 
       if (url.endsWith('/me')) {
-        return { data: { followers_count: 109, media_count: 4 } };
+        return { data: { followers_count: 1090, media_count: 4 } };
       }
 
       if (url.endsWith('/insights') && metric.includes('follower_count')) {
         return {
           data: {
             data: [
-              insight('follower_count', series([100, 101, 102, 103, 104, 105, 106, 107, 108, 109])),
+              // Meta mengirim perubahan bersih harian, bukan total pengikut.
+              insight('follower_count', series([0, 1, 0, 2, 0, 3, 0, 4, 0, 5])),
               insight('reach', series([10, 20, 30, 40, 50, 60, 70, 80, 90, 100])),
               insight('profile_views', series([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])),
               insight('website_clicks', series([0, 0, 0, 0, 0, 0, 0, 0, 0, 2])),
@@ -73,7 +74,51 @@ describe('InstagramService insights', () => {
       }
 
       if (url.endsWith('/insights') && metric === 'views') {
+        if (config?.params?.metric_type === 'total_value') {
+          return { data: { data: [{ name: 'views', period: 'day', total_value: { value: 2450 } }] } };
+        }
         return { data: { data: [insight('views', series([200, 210, 220, 230, 240, 250, 260, 270, 280, 290]))] } };
+      }
+
+      if (
+        url.endsWith('/insights') &&
+        metric === 'profile_views' &&
+        config?.params?.metric_type === 'total_value'
+      ) {
+        return { data: { data: [{ name: 'profile_views', period: 'day', total_value: { value: 678 } }] } };
+      }
+
+      if (
+        url.endsWith('/insights') &&
+        metric === 'website_clicks' &&
+        config?.params?.metric_type === 'total_value'
+      ) {
+        return { data: { data: [{ name: 'website_clicks', period: 'day', total_value: { value: 90 } }] } };
+      }
+
+      if (url.endsWith('/insights') && metric === 'follows_and_unfollows') {
+        const span = Number(config?.params?.until) - Number(config?.params?.since);
+        const isMonth = span > 10 * 86400;
+        return {
+          data: {
+            data: [
+              {
+                name: 'follows_and_unfollows',
+                total_value: {
+                  breakdowns: [
+                    {
+                      dimension_keys: ['follow_type'],
+                      results: [
+                        { dimension_values: ['FOLLOWER'], value: isMonth ? 100 : 30 },
+                        { dimension_values: ['NON_FOLLOWER'], value: 10 },
+                      ],
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        };
       }
 
       if (url.endsWith('/insights') && metric === 'follower_demographics') {
@@ -158,16 +203,27 @@ describe('InstagramService insights', () => {
 
     const result = await InstagramService.getAccountInsights('insights_token_account');
 
-    expect(result.metrics).toHaveLength(5);
+    expect(result.metrics).toHaveLength(6);
     expect(result.range.days).toBe(30);
-    expect(result.profile.followers).toBe(109);
+    expect(result.profile.followers).toBe(1090);
     expect(result.profile.mediaCount).toBe(4);
 
     const followers = result.metrics.find((m) => m.metric === 'follower_count');
     expect(followers?.aggregate).toBe('latest');
-    expect(followers?.latest).toBe(109);
-    expect(followers?.last7).toBe(102);
-    expect(followers?.change).toBe(7);
+    expect(followers?.latest).toBe(1090);
+    expect(followers?.total).toBe(1090);
+    expect(followers?.first).toBe(1000);
+    expect(followers?.last7).toBe(1070);
+    expect(followers?.change).toBe(20);
+    expect(followers?.changePct).toBeCloseTo((20 / 1070) * 100, 5);
+    expect(followers?.changeAvailable).toBe(true);
+    expect(followers?.points).toHaveLength(0);
+
+    const newFollowers = result.metrics.find((m) => m.metric === 'new_followers');
+    expect(newFollowers?.available).toBe(true);
+    expect(newFollowers?.total).toBe(15);
+    expect(newFollowers?.last7).toBe(14);
+    expect(newFollowers?.points).toHaveLength(10);
 
     const reach = result.metrics.find((m) => m.metric === 'reach');
     expect(reach?.total).toBe(550);
@@ -177,6 +233,17 @@ describe('InstagramService insights', () => {
     const views = result.metrics.find((m) => m.metric === 'views');
     expect(views?.available).toBe(true);
     expect(views?.total).toBe(2450);
+    expect(views?.points).toHaveLength(10);
+
+    const profileViews = result.metrics.find((m) => m.metric === 'profile_views');
+    expect(profileViews?.available).toBe(true);
+    expect(profileViews?.total).toBe(678);
+    expect(profileViews?.points).toHaveLength(0);
+
+    const websiteClicks = result.metrics.find((m) => m.metric === 'website_clicks');
+    expect(websiteClicks?.available).toBe(true);
+    expect(websiteClicks?.total).toBe(90);
+    expect(websiteClicks?.points).toHaveLength(0);
 
     const genderAge = result.audience.find((a) => a.metric === 'audience_gender_age');
     expect(genderAge?.available).toBe(true);
@@ -200,6 +267,74 @@ describe('InstagramService insights', () => {
     );
     expect(genderAgeCall?.metricType).toBe('total_value');
     expect(genderAgeCall?.timeframe).toBe('this_month');
+
+    expect(
+      calls.some((call) => call.metric === 'views' && call.metricType === 'total_value')
+    ).toBe(true);
+    expect(
+      calls.some((call) => call.metric === 'profile_views' && call.metricType === 'total_value')
+    ).toBe(true);
+    expect(
+      calls.some((call) => call.metric === 'website_clicks' && call.metricType === 'total_value')
+    ).toBe(true);
+    expect(
+      calls.some(
+        (call) =>
+          call.metric === 'follows_and_unfollows' &&
+          call.metricType === 'total_value' &&
+          call.breakdown === 'follow_type'
+      )
+    ).toBe(true);
+  });
+
+  it('menampilkan metrik total_value saat time series kosong', async () => {
+    vi.spyOn(axios, 'get').mockImplementation((async (url: string, config: any) => {
+      const metric = String(config?.params?.metric || '');
+
+      if (url.endsWith('/me')) {
+        return { data: { followers_count: 1257, media_count: 355 } };
+      }
+      if (metric === 'follower_count,reach,profile_views,website_clicks') {
+        return { data: { data: [insight('reach', series([100, 200]))] } };
+      }
+      if (metric === 'views' && config?.params?.metric_type === 'total_value') {
+        return { data: { data: [{ name: 'views', total_value: { value: 712591 } }] } };
+      }
+      if (metric === 'views') {
+        return { data: { data: [] } };
+      }
+      if (metric === 'profile_views' && config?.params?.metric_type === 'total_value') {
+        return { data: { data: [{ name: 'profile_views', total_value: { value: 18517 } }] } };
+      }
+      if (metric === 'website_clicks' && config?.params?.metric_type === 'total_value') {
+        return { data: { data: [{ name: 'website_clicks', total_value: { value: 1061 } }] } };
+      }
+
+      throw new Error('tidak tersedia');
+    }) as any);
+
+    const result = await InstagramService.getAccountInsights('insights_token_total');
+
+    expect(result.profile.followers).toBe(1257);
+    expect(result.profile.mediaCount).toBe(355);
+
+    const followers = result.metrics.find((m) => m.metric === 'follower_count');
+    expect(followers?.available).toBe(true);
+    expect(followers?.latest).toBe(1257);
+    expect(followers?.points).toHaveLength(0);
+
+    const views = result.metrics.find((m) => m.metric === 'views');
+    expect(views?.available).toBe(true);
+    expect(views?.total).toBe(712591);
+    expect(views?.points).toHaveLength(0);
+
+    const profileViews = result.metrics.find((m) => m.metric === 'profile_views');
+    expect(profileViews?.available).toBe(true);
+    expect(profileViews?.total).toBe(18517);
+
+    const websiteClicks = result.metrics.find((m) => m.metric === 'website_clicks');
+    expect(websiteClicks?.available).toBe(true);
+    expect(websiteClicks?.total).toBe(1061);
   });
 
   it('fallback per metrik saat request gabungan ditolak Meta', async () => {
@@ -207,6 +342,10 @@ describe('InstagramService insights', () => {
 
     vi.spyOn(axios, 'get').mockImplementation((async (_url: string, config: any) => {
       const metric = String(config?.params?.metric || '');
+
+      if (_url.endsWith('/me')) {
+        return { data: { followers_count: 100, media_count: 2 } };
+      }
 
       if (metric.includes(',')) {
         groupAttempts += 1;

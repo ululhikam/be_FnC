@@ -103,6 +103,8 @@ export interface IgInsightMetric {
   /** Perubahan: sum = 7 hari terakhir vs 7 hari sebelumnya; latest = terakhir vs pertama. */
   change: number;
   changePct: number | null;
+  /** false bila Meta tidak menyediakan data follow/unfollow untuk perubahan bersih. */
+  changeAvailable?: boolean;
   points: IgInsightPoint[];
   error?: string;
 }
@@ -149,6 +151,7 @@ const IG_ACCOUNT_METRICS: Array<{
   aliases?: string[];
 }> = [
   { metric: 'follower_count', label: 'Total Pengikut', aggregate: 'latest' },
+  { metric: 'new_followers', label: 'Pengikut Baru', aggregate: 'sum' },
   { metric: 'reach', label: 'Jangkauan (Reach)', aggregate: 'sum' },
   { metric: 'views', label: 'Tayangan (Views)', aggregate: 'sum', aliases: ['impressions'] },
   { metric: 'profile_views', label: 'Kunjungan Profil', aggregate: 'sum' },
@@ -202,6 +205,16 @@ function metaErrorMessage(error: any): string {
     error?.message ||
     'Permintaan ke Meta Graph API gagal.'
   );
+}
+
+function parseCount(value: any): number | null {
+  if (value === null || value === undefined) return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function parseTotalValue(item: any): number | null {
+  return parseCount(item?.total_value?.value);
 }
 
 function parseInsightPoints(item: any): IgInsightPoint[] {
@@ -286,30 +299,38 @@ function buildMetric(
   error?: string
 ): IgInsightMetric {
   const points = item ? parseInsightPoints(item) : [];
-  const available = points.length > 0;
-  const total = available
-    ? config.aggregate === 'sum'
-      ? sumValues(points)
-      : points[points.length - 1].value
-    : 0;
-  const latest = available ? points[points.length - 1].value : 0;
-  const first = available ? points[0].value : 0;
+  const totalValue = parseTotalValue(item);
+  const available = points.length > 0 || totalValue !== null;
+
+  const total =
+    totalValue !== null
+      ? totalValue
+      : available
+        ? config.aggregate === 'sum'
+          ? sumValues(points)
+          : points[points.length - 1].value
+        : 0;
+  const latest = points.length > 0 ? points[points.length - 1].value : totalValue ?? 0;
+  const first = points.length > 0 ? points[0].value : totalValue ?? 0;
   // Untuk metrik akumulatif: 7 hari terakhir vs 7 hari sebelumnya.
   // Untuk metrik stok (mis. total pengikut): nilai 7 hari lalu vs 14 hari lalu.
-  const last7 = available
-    ? config.aggregate === 'sum'
-      ? sumValues(points.slice(-7))
-      : points[Math.max(points.length - 8, 0)].value
-    : 0;
-  const prev7 = available
-    ? config.aggregate === 'sum'
-      ? sumValues(points.slice(-14, -7))
-      : points[Math.max(points.length - 15, 0)].value
-    : 0;
+  // Metrik total_value tidak punya rincian harian, jadi tren dikosongkan.
+  const last7 =
+    points.length > 0
+      ? config.aggregate === 'sum'
+        ? sumValues(points.slice(-7))
+        : points[Math.max(points.length - 8, 0)].value
+      : 0;
+  const prev7 =
+    points.length > 0
+      ? config.aggregate === 'sum'
+        ? sumValues(points.slice(-14, -7))
+        : points[Math.max(points.length - 15, 0)].value
+      : 0;
 
   let change = 0;
   let changePct: number | null = null;
-  if (available) {
+  if (points.length > 0) {
     if (config.aggregate === 'sum') {
       change = last7 - prev7;
       changePct = prev7 > 0 ? (change / prev7) * 100 : null;
@@ -333,6 +354,71 @@ function buildMetric(
     changePct,
     points,
     ...(error ? { error } : {}),
+  };
+}
+
+/**
+ * `follower_count` dari Meta adalah jumlah follow BARU per hari (gross),
+ * bukan total pengikut dan bukan perubahan bersih. Total terkini diambil dari
+ * profil, sedangkan perubahan bersih dihitung dari `follows_and_unfollows`.
+ * Metrik ini sengaja tidak punya `points` karena Meta tidak menyediakan seri
+ * total pengikut historis.
+ */
+function buildFollowerMetric(
+  config: (typeof IG_ACCOUNT_METRICS)[number],
+  item: any | undefined,
+  followers: number | null,
+  net7: number | null,
+  net30: number | null
+): IgInsightMetric {
+  const base = buildMetric(config, item);
+  if (followers === null) {
+    return {
+      ...base,
+      available: false,
+      total: 0,
+      latest: 0,
+      first: 0,
+      last7: 0,
+      prev7: 0,
+      change: 0,
+      changePct: null,
+      changeAvailable: false,
+      points: [],
+    };
+  }
+
+  const current = followers;
+  const previous7 = net7 !== null ? current - net7 : current;
+  const first = net30 !== null ? current - net30 : current;
+
+  return {
+    ...base,
+    available: true,
+    total: current,
+    latest: current,
+    first,
+    last7: previous7,
+    prev7: previous7,
+    change: net7 ?? 0,
+    changePct:
+      net7 !== null && previous7 > 0 ? (net7 / previous7) * 100 : null,
+    changeAvailable: net7 !== null,
+    points: [],
+  };
+}
+
+function applyTotalValue(
+  metric: IgInsightMetric,
+  item: any | undefined
+): IgInsightMetric {
+  const total = parseTotalValue(item);
+  if (total === null) return metric;
+  return {
+    ...metric,
+    available: true,
+    total,
+    latest: metric.points.length > 0 ? metric.latest : total,
   };
 }
 
@@ -402,6 +488,70 @@ export class InstagramService {
     });
 
     return Array.isArray(response.data?.data) ? response.data.data : [];
+  }
+
+  /**
+   * Sejak API v22, `views`, `profile_views`, dan `website_clicks` hanya
+   * mengembalikan data lewat `metric_type=total_value` (bukan time series).
+   */
+  private static async fetchTotalMetric(
+    accessToken: string,
+    metric: string,
+    range: { since: number; until: number }
+  ): Promise<any | null> {
+    try {
+      const data = await this.fetchInsights(accessToken, [metric], 'day', range, {
+        metric_type: 'total_value',
+      });
+      return data.find((item: any) => item.name === metric) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * `follows_and_unfollows` hanya punya total_value. Breakdown `follow_type`
+   * mengembalikan `FOLLOWER` (follow baru) dan `NON_FOLLOWER` (unfollow/keluar).
+   */
+  private static async fetchFollowsAndUnfollows(
+    accessToken: string,
+    range: { since: number; until: number }
+  ): Promise<{ follows: number; unfollows: number } | null> {
+    try {
+      const data = await this.fetchInsights(
+        accessToken,
+        ['follows_and_unfollows'],
+        'day',
+        range,
+        {
+          metric_type: 'total_value',
+          breakdown: 'follow_type',
+        }
+      );
+      const item = data.find((entry: any) => entry.name === 'follows_and_unfollows');
+      const results = item?.total_value?.breakdowns?.[0]?.results;
+      if (!Array.isArray(results)) return null;
+
+      let follows = 0;
+      let unfollows = 0;
+      let found = false;
+      for (const result of results) {
+        const dimension = String(result?.dimension_values?.[0] || '').toUpperCase();
+        const value = parseCount(result?.value);
+        if (value === null) continue;
+        if (dimension === 'FOLLOWER' || dimension === 'FOLLOW') {
+          follows += value;
+          found = true;
+        } else if (dimension === 'NON_FOLLOWER' || dimension === 'UNFOLLOW') {
+          unfollows += value;
+          found = true;
+        }
+      }
+
+      return found ? { follows, unfollows } : null;
+    } catch {
+      return null;
+    }
   }
 
   /** Media insights memakai edge /{media-id}/insights, bukan /me/insights. */
@@ -517,7 +667,7 @@ export class InstagramService {
       )
     );
 
-    const [core, audienceEntries, profile] = await Promise.all([
+    const [core, audienceEntries, profile, totals] = await Promise.all([
       this.fetchInsightsResilient(
         accessToken,
         ['follower_count', 'reach', 'profile_views', 'website_clicks'],
@@ -535,8 +685,28 @@ export class InstagramService {
         })
         .then((response) => response.data || null)
         .catch(() => null),
+      Promise.all([
+        this.fetchTotalMetric(accessToken, 'views', range),
+        this.fetchTotalMetric(accessToken, 'profile_views', range),
+        this.fetchTotalMetric(accessToken, 'website_clicks', range),
+        this.fetchFollowsAndUnfollows(accessToken, range),
+        this.fetchFollowsAndUnfollows(accessToken, {
+          since: until - 7 * 86400,
+          until,
+        }),
+      ]),
     ]);
+    const [
+      viewsTotalItem,
+      profileViewsTotalItem,
+      websiteClicksTotalItem,
+      follows30,
+      follows7,
+    ] = totals;
     const warnings = [...core.warnings];
+    const profileFollowers = parseCount(profile?.followers_count);
+    const net7 = follows7 ? follows7.follows - follows7.unfollows : null;
+    const net30 = follows30 ? follows30.follows - follows30.unfollows : null;
 
     const coreByName = new Map<string, any>(core.data.map((item: any) => [item.name, item]));
 
@@ -576,6 +746,23 @@ export class InstagramService {
       const item =
         coreByName.get(config.metric) ||
         config.aliases?.map((alias) => coreByName.get(alias)).find(Boolean);
+
+      if (config.metric === 'follower_count') {
+        return buildFollowerMetric(config, item, profileFollowers, net7, net30);
+      }
+      if (config.metric === 'new_followers') {
+        // `follower_count` harian = follow baru (gross), bukan total pengikut.
+        return buildMetric(config, coreByName.get('follower_count'));
+      }
+      if (config.metric === 'views') {
+        return applyTotalValue(buildMetric(config, item), viewsTotalItem);
+      }
+      if (config.metric === 'profile_views') {
+        return buildMetric(config, profileViewsTotalItem || item);
+      }
+      if (config.metric === 'website_clicks') {
+        return buildMetric(config, websiteClicksTotalItem || item);
+      }
       return buildMetric(config, item);
     });
 
@@ -592,14 +779,8 @@ export class InstagramService {
         days: INSIGHTS_RANGE_DAYS,
       },
       profile: {
-        followers:
-          profile && Number.isFinite(Number(profile.followers_count))
-            ? Number(profile.followers_count)
-            : null,
-        mediaCount:
-          profile && Number.isFinite(Number(profile.media_count))
-            ? Number(profile.media_count)
-            : null,
+        followers: profileFollowers,
+        mediaCount: parseCount(profile?.media_count),
       },
       metrics,
       audience,

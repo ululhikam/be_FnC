@@ -119,6 +119,10 @@ export interface IgInsightBreakdown {
 export interface IgAccountInsights {
   fetchedAt: string;
   range: { since: string; until: string; days: number };
+  profile: {
+    followers: number | null;
+    mediaCount: number | null;
+  };
   metrics: IgInsightMetric[];
   audience: IgInsightBreakdown[];
   warnings: string[];
@@ -151,11 +155,44 @@ const IG_ACCOUNT_METRICS: Array<{
   { metric: 'website_clicks', label: 'Klik Website', aggregate: 'sum' },
 ];
 
-const IG_AUDIENCE_METRICS: Array<{ metric: string; label: string }> = [
-  { metric: 'audience_gender_age', label: 'Gender & Rentang Usia' },
-  { metric: 'audience_city', label: 'Kota Asal Pengikut' },
-  { metric: 'audience_country', label: 'Negara Asal Pengikut' },
-  { metric: 'online_followers', label: 'Jam Aktif Pengikut' },
+/**
+ * Sejak API v22 metrik `audience_*` dihapus. Penggantinya
+ * `follower_demographics` (satu breakdown per request) + `online_followers`.
+ * `key` dipertahankan agar kontrak frontend tidak berubah.
+ */
+const IG_AUDIENCE_METRICS: Array<{
+  key: string;
+  apiMetric: string;
+  label: string;
+  breakdown?: string;
+  metricType?: 'total_value';
+  timeframe?: 'this_month';
+}> = [
+  {
+    key: 'audience_gender_age',
+    apiMetric: 'follower_demographics',
+    label: 'Gender & Rentang Usia',
+    breakdown: 'age,gender',
+    metricType: 'total_value',
+    timeframe: 'this_month',
+  },
+  {
+    key: 'audience_city',
+    apiMetric: 'follower_demographics',
+    label: 'Kota Asal Pengikut',
+    breakdown: 'city',
+    metricType: 'total_value',
+    timeframe: 'this_month',
+  },
+  {
+    key: 'audience_country',
+    apiMetric: 'follower_demographics',
+    label: 'Negara Asal Pengikut',
+    breakdown: 'country',
+    metricType: 'total_value',
+    timeframe: 'this_month',
+  },
+  { key: 'online_followers', apiMetric: 'online_followers', label: 'Jam Aktif Pengikut' },
 ];
 
 function metaErrorMessage(error: any): string {
@@ -184,20 +221,59 @@ function parseInsightPoints(item: any): IgInsightPoint[] {
 }
 
 function parseBreakdownItems(item: any): { label: string; value: number }[] {
-  const raw = item?.values?.[0]?.value;
-  if (!raw || typeof raw !== 'object') return [];
+  const entries: { label: string; value: number }[] = [];
 
-  const entries = Object.entries(raw as Record<string, unknown>)
-    .map(([label, value]) => ({ label, value: Number(value) || 0 }))
-    .filter((entry) => entry.value > 0);
+  // Format baru (API v22+): total_value.breakdowns[].results[].
+  const breakdowns = item?.total_value?.breakdowns;
+  if (Array.isArray(breakdowns)) {
+    for (const breakdown of breakdowns) {
+      const dimensionKeys: string[] = Array.isArray(breakdown?.dimension_keys)
+        ? breakdown.dimension_keys.map(String)
+        : [];
+      const results = Array.isArray(breakdown?.results) ? breakdown.results : [];
 
-  // `online_followers` memakai label jam (0–23) — urutkan sebagai angka.
-  const allNumeric = entries.every((entry) => /^\d+$/.test(entry.label));
+      for (const result of results) {
+        const values = Array.isArray(result?.dimension_values)
+          ? result.dimension_values.map(String)
+          : [];
+        const numeric = typeof result?.value === 'number' ? result.value : Number(result?.value);
+        if (!Number.isFinite(numeric)) continue;
+
+        const ageIndex = dimensionKeys.indexOf('age');
+        const genderIndex = dimensionKeys.indexOf('gender');
+        let label = values[0] || '';
+
+        if (values.length > 1 && ageIndex >= 0 && genderIndex >= 0) {
+          // Samakan dengan format lama `F.25-34` agar label frontend konsisten.
+          label = `${values[genderIndex]}.${values[ageIndex]}`;
+        } else if (values.length > 1) {
+          label = values.join(' · ');
+        }
+
+        if (label) entries.push({ label, value: numeric });
+      }
+    }
+  }
+
+  // Format lama: values[0].value berupa objek label → angka.
+  if (entries.length === 0) {
+    const raw = item?.values?.[0]?.value;
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      for (const [label, value] of Object.entries(raw as Record<string, unknown>)) {
+        const numeric = Number(value) || 0;
+        entries.push({ label, value: numeric });
+      }
+    }
+  }
+
+  // `online_followers` memakai label jam (0–23) — urutkan sebagai angka dan
+  // pertahankan jam bernilai 0 agar grafik 24 jam tetap utuh.
+  const allNumeric = entries.length > 0 && entries.every((entry) => /^\d+$/.test(entry.label));
   if (allNumeric) {
     return entries.sort((a, b) => Number(a.label) - Number(b.label));
   }
 
-  return entries.sort((a, b) => b.value - a.value);
+  return entries.filter((entry) => entry.value > 0).sort((a, b) => b.value - a.value);
 }
 
 function sumValues(points: IgInsightPoint[]): number {
@@ -267,7 +343,7 @@ function buildBreakdown(
 ): IgInsightBreakdown {
   const items = item ? parseBreakdownItems(item) : [];
   return {
-    metric: config.metric,
+    metric: config.key,
     label: config.label,
     available: items.length > 0,
     items,
@@ -306,11 +382,13 @@ export class InstagramService {
     accessToken: string,
     metrics: string[],
     period?: 'day' | 'lifetime',
-    range?: { since: number; until: number }
+    range?: { since: number; until: number },
+    extra?: Record<string, string | number>
   ): Promise<any[]> {
     const params: Record<string, string | number> = {
       metric: metrics.join(','),
       access_token: accessToken,
+      ...(extra || {}),
     };
     if (period) params.period = period;
     if (range) {
@@ -320,6 +398,23 @@ export class InstagramService {
 
     const response = await axios.get(`${API_BASE}/me/insights`, {
       params,
+      timeout: 8000,
+    });
+
+    return Array.isArray(response.data?.data) ? response.data.data : [];
+  }
+
+  /** Media insights memakai edge /{media-id}/insights, bukan /me/insights. */
+  private static async fetchMediaInsights(
+    accessToken: string,
+    mediaId: string,
+    metrics: string[]
+  ): Promise<any[]> {
+    const response = await axios.get(`${API_BASE}/${mediaId}/insights`, {
+      params: {
+        metric: metrics.join(','),
+        access_token: accessToken,
+      },
       timeout: 8000,
     });
 
@@ -347,8 +442,12 @@ export class InstagramService {
       const data = await this.fetchInsights(accessToken, metrics, period, range);
       return { data, warnings: [], fatal: false };
     } catch (groupError: any) {
-      if (this.isPermissionError(groupError)) {
-        return { data: [], warnings: [metaErrorMessage(groupError)], fatal: true };
+      if (this.isPermissionError(groupError) || metrics.length === 1) {
+        return {
+          data: [],
+          warnings: [metaErrorMessage(groupError)],
+          fatal: this.isPermissionError(groupError),
+        };
       }
 
       const settled = await Promise.allSettled(
@@ -386,18 +485,56 @@ export class InstagramService {
     const since = until - (INSIGHTS_RANGE_DAYS - 1) * 86400;
     const range = { since, until };
 
-    // Metrik inti dan audiens dijalankan paralel (dua endpoint insights yang
-    // independen). `fatal` menandai error izin/token agar tidak mencoba
-    // probe metrik tambahan yang pasti gagal.
-    const audienceMetrics = IG_AUDIENCE_METRICS.map((config) => config.metric);
-    const [core, audienceResult] = await Promise.all([
+    // Metrik inti dan audiens dijalankan paralel. Audiens butuh satu request
+    // per breakdown (`follower_demographics` hanya menerima satu breakdown).
+    // `fatal` menandai error izin/token agar tidak mencoba probe tambahan.
+    const audienceTask = Promise.all(
+      IG_AUDIENCE_METRICS.map(
+        async (
+          config
+        ): Promise<{
+          config: (typeof IG_AUDIENCE_METRICS)[number];
+          item?: any;
+          error?: string;
+        }> => {
+          try {
+            const data = await this.fetchInsights(
+              accessToken,
+              [config.apiMetric],
+              'lifetime',
+              undefined,
+              {
+                ...(config.metricType ? { metric_type: config.metricType } : {}),
+                ...(config.timeframe ? { timeframe: config.timeframe } : {}),
+                ...(config.breakdown ? { breakdown: config.breakdown } : {}),
+              }
+            );
+            return { config, item: data.find((entry: any) => entry.name === config.apiMetric) };
+          } catch (error: any) {
+            return { config, error: metaErrorMessage(error) };
+          }
+        }
+      )
+    );
+
+    const [core, audienceEntries, profile] = await Promise.all([
       this.fetchInsightsResilient(
         accessToken,
         ['follower_count', 'reach', 'profile_views', 'website_clicks'],
         'day',
         range
       ),
-      this.fetchInsightsResilient(accessToken, audienceMetrics, 'lifetime'),
+      audienceTask,
+      axios
+        .get(`${API_BASE}/me`, {
+          params: {
+            fields: 'followers_count,media_count,username,account_type',
+            access_token: accessToken,
+          },
+          timeout: 8000,
+        })
+        .then((response) => response.data || null)
+        .catch(() => null),
     ]);
     const warnings = [...core.warnings];
 
@@ -414,7 +551,8 @@ export class InstagramService {
       const viewsItem = viewsProbe.data.find((item: any) => item.name === 'views');
       if (viewsItem) {
         coreByName.set('views', viewsItem);
-      } else if (!viewsProbe.fatal) {
+      } else if (!viewsProbe.fatal && viewsProbe.warnings.length > 0) {
+        // `views` tidak valid untuk versi/akun ini → coba nama lama.
         const impressionsProbe = await this.fetchInsightsResilient(
           accessToken,
           ['impressions'],
@@ -441,14 +579,10 @@ export class InstagramService {
       return buildMetric(config, item);
     });
 
-    const audienceByName = new Map<string, any>(
-      audienceResult.data.map((item: any) => [item.name, item])
-    );
-    const audience = IG_AUDIENCE_METRICS.map((config) =>
-      buildBreakdown(config, audienceByName.get(config.metric))
-    );
-
-    warnings.push(...audienceResult.warnings);
+    const audience = audienceEntries.map((entry) => {
+      if (entry.error) warnings.push(`${entry.config.label}: ${entry.error}`);
+      return buildBreakdown(entry.config, entry.item, entry.error);
+    });
 
     const result: IgAccountInsights = {
       fetchedAt: new Date().toISOString(),
@@ -457,9 +591,19 @@ export class InstagramService {
         until: new Date(until * 1000).toISOString().slice(0, 10),
         days: INSIGHTS_RANGE_DAYS,
       },
+      profile: {
+        followers:
+          profile && Number.isFinite(Number(profile.followers_count))
+            ? Number(profile.followers_count)
+            : null,
+        mediaCount:
+          profile && Number.isFinite(Number(profile.media_count))
+            ? Number(profile.media_count)
+            : null,
+      },
       metrics,
       audience,
-      warnings,
+      warnings: [...new Set(warnings)],
     };
 
     this.cacheSet(cacheKey, result);
@@ -512,14 +656,31 @@ export class InstagramService {
           insights: {},
         };
 
-        const baseMetrics = ['reach', 'likes', 'comments', 'shares', 'saved'];
+        // Urutan metrik penting: `saved` harus sebelum `shares` (validasi Meta).
+        // `total_interactions` dipakai bila tersedia, dengan fallback hitung manual.
+        const baseMetrics = [
+          'reach',
+          'views',
+          'likes',
+          'comments',
+          'saved',
+          'total_interactions',
+          'shares',
+        ];
         let insightsData: any[] = [];
 
         try {
-          insightsData = await this.fetchInsights(accessToken, ['reach', 'views', ...baseMetrics]);
+          insightsData = await this.fetchMediaInsights(accessToken, normalized.id, baseMetrics);
         } catch {
           try {
-            insightsData = await this.fetchInsights(accessToken, baseMetrics);
+            insightsData = await this.fetchMediaInsights(accessToken, normalized.id, [
+              'reach',
+              'views',
+              'likes',
+              'comments',
+              'saved',
+              'total_interactions',
+            ]);
           } catch (error: any) {
             warnings.push(`Media ${normalized.id}: ${metaErrorMessage(error)}`);
           }
@@ -537,7 +698,9 @@ export class InstagramService {
         const comments = normalized.insights.comments ?? normalized.commentsCount;
         const shares = normalized.insights.shares ?? 0;
         const saved = normalized.insights.saved ?? 0;
-        normalized.insights.total_interactions = likes + comments + shares + saved;
+        if (normalized.insights.total_interactions === undefined) {
+          normalized.insights.total_interactions = likes + comments + shares + saved;
+        }
 
         return normalized;
       })

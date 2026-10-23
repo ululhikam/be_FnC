@@ -29,8 +29,9 @@ model User {
   followersCount  Int       @default(0)
   followingCount  Int       @default(0)
   fessCount       Int       @default(0)
-  balance         Float     @default(0)
-  revenue         Float     @default(0)
+  balance         Float     @default(0) // @deprecated legacy CTF; use CtfWallet.balance
+  revenue         Float     @default(0) // @deprecated legacy; use BaseRevenueWallet
+  baseTrialUsedAt DateTime? // satu trial base per kreator
   isBanned        Boolean   @default(false)
   banReason       String?
   banExpiresAt    DateTime?
@@ -39,56 +40,86 @@ model User {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  managedBases      Base[]               @relation("BaseCreator")
-  following         Follow[]
-  fesses            Fess[]
-  votes             Vote[]
-  comments          Comment[]
-  bookmarks         Bookmark[]
-  notifications     Notification[]
-  reports           Report[]
-  payouts           Payout[]
-  connections       PlatformConnection[]
-  passwordReset     PasswordReset?
-  emailVerification EmailVerification?
+  managedBases           Base[]               @relation("BaseCreator")
+  following              Follow[]
+  fesses                 Fess[]
+  votes                  Vote[]
+  comments               Comment[]
+  bookmarks              Bookmark[]
+  notifications          Notification[]
+  reports                Report[]
+  payouts                Payout[]
+  connections            PlatformConnection[]
+  passwordReset          PasswordReset?
+  emailVerification      EmailVerification?
+  ctfWallet              CtfWallet?
+  ctfLedgerEntries       CtfLedgerEntry[]
+  paymentOrders          PaymentOrder[]
+  fessCharges            FessCharge[]
+  basePayoutsRequested   BasePayout[]         @relation("BasePayoutRequestedBy")
+  basePayoutsReviewed    BasePayout[]         @relation("BasePayoutReviewedBy")
+  adminAuditLogs         AdminAuditLog[]
+  freeForeverBases       Base[]               @relation("BaseFreeForeverSetBy")
+  revenueEntriesReversed BaseRevenueEntry[]   @relation("BaseRevenueReversedBy")
 
   @@index([role])
   @@index([createdAt])
 }
 
 model Base {
-  id              String    @id @default(cuid())
-  name            String
-  handle          String    @unique
-  handleChangedAt DateTime?
-  category        String    @default("Umum") // Kampus, Kota, Hobi, Umum, Komunitas
-  color           String    @default("#0055FF")
-  keyword         String?
-  avatar          String?
-  initial         String?
-  bio             String?
-  rules           String[]  @default([])
-  igAccount       String?
-  postMode        String    @default("moderated") // "auto" (langsung terbit + filter NLP) | "moderated" (antrean review)
-  bannedWords     String[]  @default([]) // blacklist kata ala admin (dicek filter NLP saat auto post)
-  verified        Boolean   @default(false)
-  established     String?   @default("2024")
-  membersCount    Int       @default(0)
-  fessCount       Int       @default(0)
-  balance         Float     @default(0)
-  revenue         Float     @default(0)
-  creatorId       String?
-  creator         User?     @relation("BaseCreator", fields: [creatorId], references: [id], onDelete: SetNull)
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id                          String    @id @default(cuid())
+  name                        String
+  handle                      String    @unique
+  handleChangedAt             DateTime?
+  category                    String    @default("Umum") // Kampus, Kota, Hobi, Umum, Komunitas
+  color                       String    @default("#0055FF")
+  keyword                     String?
+  avatar                      String?
+  initial                     String?
+  bio                         String?
+  rules                       String[]  @default([])
+  igAccount                   String?
+  postMode                    String    @default("moderated") // "auto" (langsung terbit + filter NLP) | "moderated" (antrean review)
+  bannedWords                 String[]  @default([]) // blacklist kata ala admin (dicek filter NLP saat auto post)
+  verified                    Boolean   @default(false)
+  established                 String?   @default("2024")
+  membersCount                Int       @default(0)
+  fessCount                   Int       @default(0)
+  balance                     Float     @default(0) // @deprecated legacy
+  revenue                     Float     @default(0) // @deprecated legacy; use BaseRevenueWallet
+  trialStartedAt              DateTime?
+  trialEndsAt                 DateTime?
+  trialSource                 String? // "new" untuk trial kreator, "grace" untuk base lama
+  freeForever                 Boolean   @default(false)
+  freeForeverReason           String?
+  freeForeverSetById          String?
+  freeForeverSetAt            DateTime?
+  payoutBankName              String?
+  payoutBankAccountName       String?
+  payoutBankAccountNumber     String?
+  payoutBankUpdatedAt         DateTime?
+  payoutBankChangeEffectiveAt DateTime?
+  payoutKycStatus             String    @default("unverified")
+  payoutKycVerifiedAt         DateTime?
+  payoutKycNote               String?
+  creatorId                   String?
+  creator                     User?     @relation("BaseCreator", fields: [creatorId], references: [id], onDelete: SetNull)
+  freeForeverSetBy            User?     @relation("BaseFreeForeverSetBy", fields: [freeForeverSetById], references: [id], onDelete: SetNull)
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
 
-  followers   Follow[]
-  fesses      Fess[]
-  connections PlatformConnection[]
+  followers      Follow[]
+  fesses         Fess[]
+  connections    PlatformConnection[]
+  revenueWallet  BaseRevenueWallet?
+  revenueEntries BaseRevenueEntry[]
+  payouts        BasePayout[]
 
   @@index([category])
   @@index([handle])
   @@index([createdAt])
+  @@index([trialEndsAt])
+  @@index([freeForever])
 }
 
 model Follow {
@@ -105,43 +136,46 @@ model Follow {
 }
 
 model Fess {
-  id            String    @id @default(cuid())
-  baseHandle    String
-  baseId        String?
-  userId        String?
-  content       String
-  status        String    @default("pending") // "pending", "published", "approved", "rejected"
-  upvotes       Int       @default(0)
-  downvotes     Int       @default(0)
-  commentsCount Int       @default(0)
-  topic         String?
-  template      String?   @default("default")
-  tag           String? // "Cerita", "Tanya"
-  postedToIg    Boolean   @default(false)
+  id             String    @id @default(cuid())
+  baseHandle     String
+  baseId         String?
+  userId         String?
+  content        String
+  status         String    @default("pending") // "pending", "published", "approved", "rejected"
+  upvotes        Int       @default(0)
+  downvotes      Int       @default(0)
+  commentsCount  Int       @default(0)
+  topic          String?
+  template       String?   @default("default")
+  tag            String? // "Cerita", "Tanya"
+  postedToIg     Boolean   @default(false)
   // Status publikasi Instagram yang bisa dipantau admin:
   // idle → processing → pending (video) → published | failed
-  igStatus      String    @default("idle")
-  igError       String?
-  igAttempts    Int       @default(0)
-  igUpdatedAt   DateTime?
-  igMediaId     String? // ID media Instagram hasil publish, untuk take down
-  igPayload     Json? // item carousel + caption yang sudah dinormalisasi
-  autoFlagged   Boolean   @default(false) // terindikasi konten negatif oleh filter NLP saat auto post
-  flagReason    String? // alasan flag dari filter NLP (mis. "ujaran kebencian, ancaman")
-  scheduledAt   DateTime?
-  media         Json? // [{ id, type, url, thumbnail, duration, caption }]
-  carouselOrder String[]  @default([]) // urutan slide IG: "card:0", "media:<id>"
-  song          Json? // { id, title, artist, cover, preview_url }
-  quotedFess    Json? // { id, handle, content, time, avatar_bg, avatar_text }
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  igStatus       String    @default("idle")
+  igError        String?
+  igAttempts     Int       @default(0)
+  igUpdatedAt    DateTime?
+  igMediaId      String? // ID media Instagram hasil publish, untuk take down
+  igPayload      Json? // item carousel + caption yang sudah dinormalisasi
+  autoFlagged    Boolean   @default(false) // terindikasi konten negatif oleh filter NLP saat auto post
+  flagReason     String? // alasan flag dari filter NLP (mis. "ujaran kebencian, ancaman")
+  scheduledAt    DateTime?
+  media          Json? // [{ id, type, url, thumbnail, duration, caption }]
+  carouselOrder  String[]  @default([]) // urutan slide IG: "card:0", "media:<id>"
+  song           Json? // { id, title, artist, cover, preview_url }
+  quotedFess     Json? // { id, handle, content, time, avatar_bg, avatar_text }
+  idempotencyKey String?   @unique // cegah dua debit untuk satu aksi publish
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  base      Base?      @relation(fields: [baseId], references: [id], onDelete: SetNull)
-  author    User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
-  votes     Vote[]
-  comments  Comment[]
-  bookmarks Bookmark[]
-  reports   Report[]
+  base         Base?             @relation(fields: [baseId], references: [id], onDelete: SetNull)
+  author       User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  charge       FessCharge?
+  revenueEntry BaseRevenueEntry?
+  votes        Vote[]
+  comments     Comment[]
+  bookmarks    Bookmark[]
+  reports      Report[]
 
   @@index([baseHandle, status, createdAt])
   @@index([baseId, status, createdAt])
@@ -302,9 +336,12 @@ model PlatformConnection {
 }
 
 model SystemSetting {
-  key       String   @id
-  value     Json
-  updatedAt DateTime @updatedAt
+  key         String   @id
+  value       Json
+  description String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model SystemLog {
@@ -329,4 +366,277 @@ model Payout {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// CTF & payment ledger
+// ---------------------------------------------------------------------------
+
+enum CtfLedgerType {
+  TOPUP
+  FESS_CHARGE
+  FESS_REFUND
+  ADMIN_ADJUSTMENT
+  MIGRATION
+  CHARGEBACK
+  CORRECTION
+}
+
+enum PaymentOrderStatus {
+  PENDING
+  PAID
+  EXPIRED
+  FAILED
+  REFUNDED
+  PARTIAL_REFUND
+  CHARGEBACK
+}
+
+enum PaymentEventStatus {
+  RECEIVED
+  PROCESSED
+  IGNORED
+  INVALID_SIGNATURE
+  FAILED
+}
+
+enum FessChargeStatus {
+  CHARGED
+  REFUNDED
+  REVERSED
+}
+
+enum BaseRevenueEntryType {
+  EARNING
+  ADJUSTMENT
+}
+
+enum BaseRevenueEntryStatus {
+  PENDING
+  AVAILABLE
+  REVERSED
+}
+
+enum BasePayoutStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  PAID
+  FAILED
+  CANCELLED
+}
+
+model CtfWallet {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  balance   Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user          User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  ledgerEntries CtfLedgerEntry[]
+  fessCharges   FessCharge[]
+
+  @@index([updatedAt])
+}
+
+model CtfLedgerEntry {
+  id             String        @id @default(cuid())
+  walletId       String
+  userId         String
+  type           CtfLedgerType
+  amount         Int // positif = kredit, negatif = debit
+  balanceAfter   Int
+  referenceType  String?
+  referenceId    String?
+  idempotencyKey String        @unique
+  metadata       Json?
+  createdAt      DateTime      @default(now())
+
+  wallet CtfWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  user   User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([walletId, createdAt])
+  @@index([userId, createdAt])
+  @@index([referenceType, referenceId])
+}
+
+model PaymentOrder {
+  id                    String             @id @default(cuid())
+  orderId               String             @unique
+  userId                String
+  packageCode           String
+  packageName           String
+  amountIdr             Int
+  ctfAmount             Int
+  currency              String             @default("IDR")
+  status                PaymentOrderStatus @default(PENDING)
+  paymentMethod         String?
+  paymentChannel        String?
+  midtransTransactionId String?            @unique
+  midtransStatus        String?
+  qrString              String?
+  qrUrl                 String?
+  vaNumber              String?
+  deeplinkUrl           String?
+  expiresAt             DateTime?
+  paidAt                DateTime?
+  failedAt              DateTime?
+  refundedAt            DateTime?
+  refundedAmountIdr     Int?
+  refundReason          String?
+  lastSyncedAt          DateTime?
+  rawResponse           Json?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  user   User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  events PaymentEvent[]
+
+  @@index([userId, createdAt])
+  @@index([status, expiresAt])
+  @@index([createdAt])
+}
+
+model PaymentEvent {
+  id             String             @id @default(cuid())
+  paymentOrderId String?
+  orderId        String
+  eventType      String
+  status         PaymentEventStatus @default(RECEIVED)
+  signatureValid Boolean
+  idempotencyKey String             @unique
+  payload        Json
+  ipAddress      String?
+  userAgent      String?
+  processedAt    DateTime?
+  errorMessage   String?
+  createdAt      DateTime           @default(now())
+
+  paymentOrder PaymentOrder? @relation(fields: [paymentOrderId], references: [id], onDelete: SetNull)
+
+  @@index([orderId, createdAt])
+  @@index([status, createdAt])
+}
+
+model FessCharge {
+  id             String           @id @default(cuid())
+  fessId         String?          @unique
+  userId         String
+  walletId       String
+  amount         Int
+  status         FessChargeStatus @default(CHARGED)
+  idempotencyKey String           @unique
+  chargedAt      DateTime         @default(now())
+  refundedAt     DateTime?
+  refundReason   String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  fess   Fess?     @relation(fields: [fessId], references: [id], onDelete: SetNull)
+  user   User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  wallet CtfWallet @relation(fields: [walletId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Base revenue & payouts (IDR only; never CTF)
+// ---------------------------------------------------------------------------
+
+model BaseRevenueWallet {
+  id           String   @id @default(cuid())
+  baseId       String   @unique
+  pendingIdr   Int      @default(0)
+  availableIdr Int      @default(0)
+  lifetimeIdr  Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  base    Base               @relation(fields: [baseId], references: [id], onDelete: Restrict)
+  entries BaseRevenueEntry[]
+  payouts BasePayout[]
+
+  @@index([updatedAt])
+}
+
+model BaseRevenueEntry {
+  id             String                 @id @default(cuid())
+  walletId       String
+  baseId         String
+  fessId         String?                @unique
+  type           BaseRevenueEntryType   @default(EARNING)
+  amountIdr      Int // positif = earning, negatif = adjustment
+  status         BaseRevenueEntryStatus @default(PENDING)
+  availableAt    DateTime
+  reversedAt     DateTime?
+  reversalReason String?
+  reversedById   String?
+  idempotencyKey String                 @unique
+  metadata       Json?
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+
+  wallet     BaseRevenueWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  base       Base              @relation(fields: [baseId], references: [id], onDelete: Restrict)
+  fess       Fess?             @relation(fields: [fessId], references: [id], onDelete: SetNull)
+  reversedBy User?             @relation("BaseRevenueReversedBy", fields: [reversedById], references: [id], onDelete: SetNull)
+
+  @@index([baseId, status, availableAt])
+  @@index([walletId, createdAt])
+  @@index([type, createdAt])
+}
+
+model BasePayout {
+  id                String           @id @default(cuid())
+  baseId            String
+  walletId          String
+  requestedById     String
+  reviewedById      String?
+  amountIdr         Int
+  feeIdr            Int              @default(0)
+  netIdr            Int
+  status            BasePayoutStatus @default(REQUESTED)
+  bankName          String
+  bankAccountName   String
+  bankAccountNumber String
+  requestKey        String?          @unique
+  reference         String?
+  notes             String?
+  rejectionReason   String?
+  requestedAt       DateTime         @default(now())
+  reviewedAt        DateTime?
+  paidAt            DateTime?
+  failedAt          DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  base        Base              @relation(fields: [baseId], references: [id], onDelete: Restrict)
+  wallet      BaseRevenueWallet @relation(fields: [walletId], references: [id], onDelete: Restrict)
+  requestedBy User              @relation("BasePayoutRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+  reviewedBy  User?             @relation("BasePayoutReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([baseId, status, createdAt])
+  @@index([status, createdAt])
+  @@index([requestedById, createdAt])
+}
+
+model AdminAuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  action     String
+  targetType String
+  targetId   String?
+  reason     String?
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+  @@index([targetType, targetId])
 }

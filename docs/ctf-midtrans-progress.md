@@ -1,4 +1,4 @@
-# CTF + Midtrans — Progress Tracker
+# CTF + Midtrans â€” Progress Tracker
 
 Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to Fess), top-up Midtrans, trial base, pendapatan base, dan payout**.
 
@@ -57,20 +57,20 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 
 | Item | Status | Catatan |
 |---|---|---|
-| Branch backend `feat/ctf-midtrans` | ✅ Dibuat & di-push | `origin/feat/ctf-midtrans` |
-| Branch frontend `feat/ctf-midtrans` | ✅ Dibuat & di-push | `origin/feat/ctf-midtrans` |
-| File progress | ✅ Dibuat | Dokumen ini |
-| Supabase project development | ✅ Aktif | Ref `vtvnurgkhqboygkttzae`, region `ap-south-1`; DB dev terpisah dari production |
-| Vercel project dev backend | ✅ Dibuat | `be-fnc-dev` → `be-fnc-dev.vercel.app` |
-| Vercel project dev frontend | ✅ Dibuat | `fessncurious-dev` → `fessncurious-dev.vercel.app` |
-| Git repo dev backend | ✅ Terhubung | `ululhikam/be_FnC` |
-| Git repo dev frontend | ✅ Terhubung | `ululhikam/con.fess_WebApp` |
-| Midtrans sandbox | ⏳ Keys terisi | Keys ada di `.env.development` dan Vercel dev; route/webhook belum diimplementasikan |
-| Staging/dev database env | ✅ Lokal | `backend/.env.development` (gitignored), 10 migrasi sudah diterapkan |
-| Dev storage bucket | ✅ Ada | `confess-media-dev` (public), upload/public/delete terverifikasi |
-| Dev backend deployment | ✅ Live | `https://be-fnc-dev.vercel.app` (health + DB + CORS OK) |
-| Dev frontend deployment | ✅ Live | `https://fessncurious-dev.vercel.app` (build memakai API dev) |
-| Dev notification URL | ⏳ Route belum ada | `https://be-fnc-dev.vercel.app/api/payments/midtrans/notification` |
+| Branch backend `feat/ctf-midtrans` | âœ… Dibuat & di-push | `origin/feat/ctf-midtrans` |
+| Branch frontend `feat/ctf-midtrans` | âœ… Dibuat & di-push | `origin/feat/ctf-midtrans` |
+| File progress | âœ… Dibuat | Dokumen ini |
+| Supabase project development | âœ… Aktif | Ref `vtvnurgkhqboygkttzae`, region `ap-south-1`; DB dev terpisah dari production |
+| Vercel project dev backend | âœ… Dibuat | `be-fnc-dev` â†’ `be-fnc-dev.vercel.app` |
+| Vercel project dev frontend | âœ… Dibuat | `fessncurious-dev` â†’ `fessncurious-dev.vercel.app` |
+| Git repo dev backend | âœ… Terhubung | `ululhikam/be_FnC` |
+| Git repo dev frontend | âœ… Terhubung | `ululhikam/con.fess_WebApp` |
+| Midtrans sandbox | â³ Keys terisi | Keys ada di `.env.development` dan Vercel dev; route/webhook belum diimplementasikan |
+| Staging/dev database env | âœ… Lokal | `backend/.env.development` (gitignored), 10 migrasi sudah diterapkan |
+| Dev storage bucket | âœ… Ada | `confess-media-dev` (public), upload/public/delete terverifikasi |
+| Dev backend deployment | âœ… Live | `https://be-fnc-dev.vercel.app` (health + DB + CORS OK) |
+| Dev frontend deployment | âœ… Live | `https://fessncurious-dev.vercel.app` (build memakai API dev) |
+| Dev notification URL | â³ Route belum ada | `https://be-fnc-dev.vercel.app/api/payments/midtrans/notification` |
 
 > Catatan Vercel: `fessncurious.vercel.app` adalah domain project Vercel, bukan domain milik sendiri. Subdomain `dev.fessncurious.vercel.app` tidak bisa dibuat sebagai custom domain. Isolasi dev dilakukan dengan **project Vercel terpisah** (`fessncurious-dev.vercel.app`, `be-fnc-dev.vercel.app`). Jika nanti ada domain sendiri (mis. `fessncurious.com`), domain `dev.fessncurious.com` bisa dipasang ke project dev.
 
@@ -130,7 +130,7 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 
 ## 4. Rencana implementasi
 
-### Fase 0 — Persiapan
+### Fase 0 â€” Persiapan
 
 - [x] Kunci keputusan produk dan paket.
 - [x] Buat branch backend `feat/ctf-midtrans`.
@@ -144,25 +144,27 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 - [ ] Siapkan Midtrans sandbox (keys sudah ada; verifikasi transaksi belum).
 - [ ] Audit saldo `User.balance` existing (read-only).
 
-### Fase 1 — Schema & ledger
+### Fase 1 â€” Schema & ledger
 
-- [ ] `CtfWallet`
-- [ ] `CtfLedgerEntry`
-- [ ] `PaymentOrder`
-- [ ] `PaymentEvent`
-- [ ] `FessCharge`
-- [ ] `Base.trialEndsAt`
-- [ ] `Base.freeForever`
-- [ ] `BaseRevenueWallet`
-- [ ] `BaseRevenueEntry`
-- [ ] `BasePayout`
-- [ ] `AdminAuditLog`
-- [ ] `Fess.idempotencyKey`
-- [ ] `SystemSetting` config pembayaran
-- [ ] Migrasi additive + backfill
-- [ ] Uji migrasi di Supabase dev
+- [x] `CtfWallet`
+- [x] `CtfLedgerEntry`
+- [x] `PaymentOrder`
+- [x] `PaymentEvent`
+- [x] `FessCharge`
+- [x] `Base.trialEndsAt`
+- [x] `Base.freeForever`
+- [x] `BaseRevenueWallet`
+- [x] `BaseRevenueEntry`
+- [x] `BasePayout`
+- [x] `AdminAuditLog`
+- [x] `Fess.idempotencyKey`
+- [x] `SystemSetting` config pembayaran
+- [x] Migrasi additive + backfill
+- [x] Uji migrasi di Supabase dev
+- [x] `CtfWalletService` credit/debit atomik + idempotency
+- [x] Unit test wallet (8 test) + constraint anti-saldo-negatif
 
-### Fase 2 — Top-up Midtrans
+### Fase 2 â€” Top-up Midtrans
 
 - [ ] Service Midtrans Core API
 - [ ] `GET /payments/packages`
@@ -175,18 +177,18 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 - [ ] Cron/internal reconcile endpoint
 - [ ] Rate limit & validasi amount
 
-### Fase 3 — Fess, trial, refund
+### Fase 3 â€” Fess, trial, refund
 
 - [ ] Cek trial di `createFess`
 - [ ] Wajib login untuk base berbayar
 - [ ] Debit CTF atomik
-- [ ] `FessCharge` + ledger
+- [x] `FessCharge` + ledger
 - [ ] Refund otomatis saat reject/delete unpublished
 - [ ] Idempotency key fess
 - [ ] Error `402 INSUFFICIENT_CTF`
 - [ ] Error `401 AUTH_REQUIRED_FOR_PAID_FESS`
 
-### Fase 4 — Frontend
+### Fase 4 â€” Frontend
 
 - [ ] `TopUpModal` / panel top-up
 - [ ] Paket + metode pembayaran
@@ -200,7 +202,7 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 - [ ] Public base badge
 - [ ] Legal/help update
 
-### Fase 5 — Base revenue, payout, free forever
+### Fase 5 â€” Base revenue, payout, free forever
 
 - [ ] Kredit `BaseRevenueEntry` Rp80/fess
 - [ ] Exclude self-post
@@ -210,11 +212,11 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 - [ ] Request payout (min Rp50.000)
 - [ ] Approval payout Super Admin
 - [ ] KYC ringan + rekening
-- [ ] `Base.freeForever` + endpoint Super Admin
+- [x] `Base.freeForever` + endpoint Super Admin
 - [ ] Re-auth + audit + alert
 - [ ] Read-only badge untuk Base Admin
 
-### Fase 6 — Keamanan, test, rollout
+### Fase 6 â€” Keamanan, test, rollout
 
 - [ ] Unit test signature/amount/idempotency
 - [ ] Test concurrent debit
@@ -245,13 +247,13 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 
 ## 6. Follow-up konfigurasi dev
 
-1. **OAuth redirect URI** — daftarkan di Google/Meta:
+1. **OAuth redirect URI** â€” daftarkan di Google/Meta:
    - `https://be-fnc-dev.vercel.app/api/auth/google/callback`
    - `https://be-fnc-dev.vercel.app/api/auth/instagram/callback`
-2. **Midtrans sandbox** — keys sudah ada di env dev, tetapi transaksi/webhook belum diuji karena route belum dibuat.
-3. **Vercel Git deploy** — production branch project dev masih `main`. Deploy dev dilakukan manual dengan `--project`; jangan deploy tanpa `--project`.
-4. **Email dev** — pastikan domain pengirim Resend valid untuk pengiriman ke email tester.
-5. **Production CORS** — sebelum merge, isi `ALLOWED_ORIGINS` di Vercel production jika ada origin selain `FRONTEND_URL` (default fallback hanya `FRONTEND_URL`).
+2. **Midtrans sandbox** â€” keys sudah ada di env dev, tetapi transaksi/webhook belum diuji karena route belum dibuat.
+3. **Vercel Git deploy** â€” production branch project dev masih `main`. Deploy dev dilakukan manual dengan `--project`; jangan deploy tanpa `--project`.
+4. **Email dev** â€” pastikan domain pengirim Resend valid untuk pengiriman ke email tester.
+5. **Production CORS** â€” sebelum merge, isi `ALLOWED_ORIGINS` di Vercel production jika ada origin selain `FRONTEND_URL` (default fallback hanya `FRONTEND_URL`).
 
 ## 7. Log perubahan
 
@@ -260,3 +262,4 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 | 2026-10-23 | Branch fitur dan progress tracker dibuat; keputusan produk dikunci. |
 | 2026-10-24 | Supabase dev (`ap-south-1`) terhubung, 10 migrasi diterapkan, bucket dev dibuat; backend/frontend dev live dan terverifikasi. |
 | 2026-10-24 | CORS allowlist diterapkan dan diuji (243 test lulus); origin asing ditolak 403. |
+| 2026-10-24 | Migrasi 11 (`ctf_payments_ledger`) diterapkan di dev: wallet, ledger, payment, revenue, payout, audit, trial/freeForever; backfill `User.balance` terverifikasi. |

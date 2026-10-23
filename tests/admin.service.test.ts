@@ -13,6 +13,7 @@ vi.mock('../src/config/prisma.js', () => ({
     },
     base: {
       count: vi.fn(),
+      findMany: vi.fn(),
     },
     user: {
       count: vi.fn(),
@@ -138,25 +139,34 @@ describe('AdminService Unit Tests', () => {
   });
 
   describe('treasury & payout', () => {
-    it('should get treasury balance', async () => {
-      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
-        balance: 15000,
-        revenue: 500000,
-      } as any);
+    it('should get IDR treasury from base revenue wallets, never CTF', async () => {
+      vi.mocked(prisma.base.findMany).mockResolvedValueOnce([
+        {
+          id: 'base_1',
+          handle: '@codememfess',
+          name: 'Code & Memes',
+          revenueWallet: { pendingIdr: 5000, availableIdr: 15000, lifetimeIdr: 500000 },
+        },
+      ] as any);
 
-      const treasury = await AdminService.getTreasury({ id: 'usr_mod' });
+      const treasury = await AdminService.getTreasury({
+        id: 'usr_mod',
+        role: 'Base Admin',
+        managedBases: ['@codememfess'],
+      });
       expect(treasury.balance).toBe(15000);
-      expect(treasury.currency).toBe('$CLUB');
+      expect(treasury.available_idr).toBe(15000);
+      expect(treasury.pending_idr).toBe(5000);
+      expect(treasury.currency).toBe('IDR');
+      expect(prisma.user.findUnique).not.toHaveBeenCalled();
     });
 
-    it('should request payout when balance is sufficient', async () => {
-      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
-        balance: 20000,
-      } as any);
-
-      const result = await AdminService.requestPayout({ id: 'usr_mod' }, 5000, '0xWallet');
-      expect(result.ok).toBe(true);
-      expect(prisma.payout.create).toHaveBeenCalled();
+    it('should reject payout while BASE_PAYOUTS_ENABLED=false', async () => {
+      await expect(
+        AdminService.requestPayout({ id: 'usr_mod' }, 5000, '0xWallet')
+      ).rejects.toMatchObject({ code: 'PAYOUTS_DISABLED', status: 503 });
+      expect(prisma.payout.create).not.toHaveBeenCalled();
+      expect(prisma.user.update).not.toHaveBeenCalled();
     });
   });
 

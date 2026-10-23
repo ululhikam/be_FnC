@@ -1,4 +1,5 @@
 import { prisma } from '../config/prisma.js';
+import { ENV } from '../config/env.js';
 import { rateLimitConfig } from '../middlewares/rateLimit.middleware.js';
 import { FessService } from './fess.service.js';
 import { InstagramService } from './instagram.service.js';
@@ -477,49 +478,83 @@ export class AdminService {
   }
 
   /**
-   * Get treasury balance
+   * Get treasury balance. Treasury is IDR revenue owned by a Base and is
+   * deliberately separate from the user's CTF wallet (CTF is never cashable).
    */
-  static async getTreasury(currentUser: { id: string }) {
-    const user = await prisma.user.findUnique({
-      where: { id: currentUser.id },
-      select: { balance: true, revenue: true },
+  static async getTreasury(currentUser: {
+    id: string;
+    role: string;
+    managedBases?: string[];
+  }) {
+    const isSuperAdmin = currentUser.role === 'Super Admin';
+    const managedHandles = currentUser.managedBases || [];
+    const bases = await prisma.base.findMany({
+      where: isSuperAdmin
+        ? {}
+        : {
+            OR: [
+              { creatorId: currentUser.id },
+              ...(managedHandles.length > 0 ? [{ handle: { in: managedHandles } }] : []),
+            ],
+          },
+      select: {
+        id: true,
+        handle: true,
+        name: true,
+        revenueWallet: {
+          select: { pendingIdr: true, availableIdr: true, lifetimeIdr: true },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
     });
 
+    const totals = bases.reduce(
+      (acc, base) => {
+        acc.pendingIdr += base.revenueWallet?.pendingIdr ?? 0;
+        acc.availableIdr += base.revenueWallet?.availableIdr ?? 0;
+        acc.lifetimeIdr += base.revenueWallet?.lifetimeIdr ?? 0;
+        return acc;
+      },
+      { pendingIdr: 0, availableIdr: 0, lifetimeIdr: 0 }
+    );
+
     return {
-      balance: user?.balance ?? 0,
-      revenue: user?.revenue ?? 0,
-      currency: '$CLUB',
+      // `balance` is kept for the existing treasury UI; it is now IDR, not CTF.
+      balance: totals.availableIdr,
+      available_idr: totals.availableIdr,
+      pending_idr: totals.pendingIdr,
+      lifetime_idr: totals.lifetimeIdr,
+      currency: 'IDR',
+      bases: bases.map((base) => ({
+        id: base.id,
+        handle: base.handle,
+        name: base.name,
+        available_idr: base.revenueWallet?.availableIdr ?? 0,
+        pending_idr: base.revenueWallet?.pendingIdr ?? 0,
+        lifetime_idr: base.revenueWallet?.lifetimeIdr ?? 0,
+      })),
     };
   }
 
   /**
-   * Request treasury payout
+   * Request treasury payout. The dedicated IDR payout workflow is built in
+   * Phase 5; until then this endpoint must never touch CTF or legacy balance.
    */
-  static async requestPayout(currentUser: { id: string }, amount: number, destination = 'wallet') {
-    const user = await prisma.user.findUnique({ where: { id: currentUser.id } });
-
-    if (!user || amount <= 0 || user.balance < amount) {
-      const err: any = new Error('Saldo treasury tidak mencukupi untuk melakukan penarikan');
-      err.status = 400;
-      err.code = 'INSUFFICIENT_BALANCE';
+  static async requestPayout(
+    _currentUser: { id: string },
+    _amount: number,
+    _destination = 'wallet'
+  ) {
+    if (!ENV.BASE_PAYOUTS_ENABLED) {
+      const err: any = new Error('Payout base sedang dinonaktifkan');
+      err.status = 503;
+      err.code = 'PAYOUTS_DISABLED';
       throw err;
     }
 
-    await prisma.$transaction([
-      prisma.payout.create({
-        data: {
-          userId: currentUser.id,
-          amount,
-          destination,
-          status: 'pending',
-        },
-      }),
-      prisma.user.update({
-        where: { id: currentUser.id },
-        data: { balance: { decrement: amount } },
-      }),
-    ]);
-
-    return { ok: true, message: `Permintaan payout sebesar ${amount} $CLUB berhasil diajukan.` };
+    const err: any = new Error('Workflow payout IDR belum diaktifkan');
+    err.status = 501;
+    err.code = 'PAYOUTS_NOT_READY';
+    throw err;
   }
 }

@@ -86,4 +86,13 @@ export const ENV = {
   // Email (Resend SDK) — dipakai untuk mengirim kode OTP reset kata sandi
   RESEND_API_KEY: process.env.RESEND_API_KEY || '',
   EMAIL_FROM: process.env.EMAIL_FROM || 'Fess n Curious <onboarding@resend.dev>',
+
+  // Payments (Midtrans Core API). Default OFF until sign-off.
+  PAYMENTS_ENABLED: process.env.PAYMENTS_ENABLED === 'true',
+  BASE_PAYOUTS_ENABLED: process.env.BASE_PAYOUTS_ENABLED === 'true',
+  MIDTRANS_IS_PRODUCTION: process.env.MIDTRANS_IS_PRODUCTION === 'true',
+  MIDTRANS_SERVER_KEY: process.env.MIDTRANS_SERVER_KEY || '',
+  MIDTRANS_CLIENT_KEY: process.env.MIDTRANS_CLIENT_KEY || '',
+  MIDTRANS_MERCHANT_ID: process.env.MIDTRANS_MERCHANT_ID || '',
+  PAYMENT_RECONCILE_SECRET: process.env.PAYMENT_RECONCILE_SECRET || '',
 };

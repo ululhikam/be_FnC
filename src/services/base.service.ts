@@ -1,4 +1,5 @@
 import { prisma } from '../config/prisma.js';
+import { BASE_TRIAL_DAYS } from '../constants/payments.js';
 import {
   HANDLE_CHANGE_COOLDOWN_DAYS,
   getHandleChangeAvailableAt,
@@ -113,21 +114,55 @@ export class BaseService {
     }
 
     const name = data.name.trim();
+    const now = new Date();
+    const trialEndsAt = new Date(
+      now.getTime() + BASE_TRIAL_DAYS * 24 * 60 * 60 * 1000
+    );
 
-    const base = await prisma.base.create({
-      data: {
-        name,
-        handle: cleanHandle,
-        category: data.category || 'Umum',
-        color: data.color || '#0055FF',
-        keyword: data.keyword || `[${cleanHandle.replace('@', '')}]`,
-        bio: data.bio || '',
-        avatar: data.avatar || null,
-        initial: getInitials(name),
-        igAccount: data.ig_account || null,
-        rules: data.rules || [],
-        creatorId: userId,
-      },
+    const base = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        select: { id: true, baseTrialUsedAt: true },
+      });
+      if (!user) {
+        const err: any = new Error('Pengguna tidak ditemukan');
+        err.status = 404;
+        err.code = 'NOT_FOUND';
+        throw err;
+      }
+
+      // Conditional update prevents two parallel base creations from both
+      // consuming the creator's one-time trial.
+      let trialGranted = false;
+      if (!user.baseTrialUsedAt) {
+        const claimed = await tx.user.updateMany({
+          where: { id: userId, baseTrialUsedAt: null },
+          data: { baseTrialUsedAt: now },
+        });
+        trialGranted = claimed.count === 1;
+      }
+
+      const created = await tx.base.create({
+        data: {
+          name,
+          handle: cleanHandle,
+          category: data.category || 'Umum',
+          color: data.color || '#0055FF',
+          keyword: data.keyword || `[${cleanHandle.replace('@', '')}]`,
+          bio: data.bio || '',
+          avatar: data.avatar || null,
+          initial: getInitials(name),
+          igAccount: data.ig_account || null,
+          rules: data.rules || [],
+          creatorId: userId,
+          trialStartedAt: trialGranted ? now : null,
+          trialEndsAt: trialGranted ? trialEndsAt : null,
+          trialSource: trialGranted ? 'new' : null,
+        },
+      });
+
+      await tx.baseRevenueWallet.create({ data: { baseId: created.id } });
+      return created;
     });
 
     invalidateCache('bases:');

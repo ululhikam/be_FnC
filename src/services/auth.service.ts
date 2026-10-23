@@ -2,6 +2,7 @@ import { OAuth2Client } from 'google-auth-library';
 import crypto from 'crypto';
 import { prisma, type PrismaClient } from '../config/prisma.js';
 import { ENV } from '../config/env.js';
+import { BASE_TRIAL_DAYS } from '../constants/payments.js';
 import {
   HANDLE_CHANGE_COOLDOWN_DAYS,
   getHandleChangeAvailableAt,
@@ -248,6 +249,10 @@ export class AuthService {
     const hashedPassword = await hashPassword(payload.password);
 
     // Create user and base in transaction
+    const now = new Date();
+    const trialEndsAt = new Date(
+      now.getTime() + BASE_TRIAL_DAYS * 24 * 60 * 60 * 1000
+    );
     const result = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
@@ -260,6 +265,7 @@ export class AuthService {
           role: 'Base Admin',
           igAccount: cleanIg,
           badges: ['BASE CREATOR', 'VERIFIED ADMIN'],
+          baseTrialUsedAt: now,
         },
       });
 
@@ -277,8 +283,13 @@ export class AuthService {
           creatorId: user.id,
           verified: true,
           membersCount: 1,
+          trialStartedAt: now,
+          trialEndsAt,
+          trialSource: 'new',
         },
       });
+
+      await tx.baseRevenueWallet.create({ data: { baseId: base.id } });
 
       // Auto-connect Instagram platform connection if igAccount provided
       if (cleanIg) {
@@ -872,6 +883,7 @@ export class AuthService {
       where: { id: userId },
       include: {
         managedBases: { select: { handle: true } },
+        ctfWallet: { select: { balance: true } },
       },
     });
 
@@ -910,7 +922,7 @@ export class AuthService {
       followers_count: user.followersCount ?? 0,
       following_count: user.followingCount ?? 0,
       fess_count: user.fessCount ?? 0,
-      balance: user.balance ?? 0,
+      balance: user.ctfWallet?.balance ?? user.balance ?? 0,
       revenue: user.revenue ?? 0,
       ...(includeHandleCooldown
         ? {

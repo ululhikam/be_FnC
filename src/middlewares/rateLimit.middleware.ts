@@ -14,7 +14,16 @@ export const rateLimitConfig = {
   windowMs: 60 * 1000,
 };
 
+// Midtrans is server-to-server and can legitimately burst above the global
+// per-IP budget. This route has its own Postgres-backed limiter and SHA512
+// signature verification.
+const WEBHOOK_PATHS = new Set([
+  '/api/payments/midtrans/notification',
+  '/payments/midtrans/notification',
+]);
+
 export function rateLimiter(req: Request, res: Response, next: NextFunction) {
+  if (WEBHOOK_PATHS.has(req.path)) return next();
   const ip = req.ip || req.socket.remoteAddress || 'unknown-ip';
   const now = Date.now();
 

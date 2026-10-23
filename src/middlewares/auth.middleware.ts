@@ -95,6 +95,33 @@ function toAuthenticatedUser(user: AuthUserRecord): AuthenticatedUser {
   };
 }
 
+/**
+ * Payment/top-up requires a real, verified email. Anonymous Instagram-only
+ * accounts are intentionally excluded from paid flows.
+ */
+export function requireVerifiedEmail(req: Request, res: Response, next: NextFunction) {
+  if (!req.user) {
+    return errorResponse(res, 'Autentikasi dibutuhkan.', 401, 'UNAUTHORIZED');
+  }
+  if (!req.user.email) {
+    return errorResponse(
+      res,
+      'Tambahkan dan verifikasi email sebelum melakukan top-up.',
+      403,
+      'EMAIL_REQUIRED'
+    );
+  }
+  if (!req.user.emailVerifiedAt) {
+    return errorResponse(
+      res,
+      'Verifikasi email diperlukan sebelum melakukan top-up.',
+      403,
+      'EMAIL_NOT_VERIFIED'
+    );
+  }
+  next();
+}
+
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {

@@ -8,6 +8,7 @@ import uploadRoutes from './upload.routes.js';
 import songRoutes from './song.routes.js';
 import topicRoutes from './topic.routes.js';
 import adminRoutes from './admin.routes.js';
+import paymentRoutes from './payment.routes.js';
 
 const router = Router();
 
@@ -20,6 +21,7 @@ router.use('/upload', uploadRoutes);
 router.use('/songs', songRoutes);
 router.use('/topics', topicRoutes);
 router.use('/admin', adminRoutes);
+router.use('/payments', paymentRoutes);
 
 // Health check endpoint
 router.get('/health', (req, res) => {

@@ -225,7 +225,7 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 - [ ] E2E Midtrans sandbox
 - [ ] CORS allowlist
 - [ ] Rate limit terdistribusi
-- [ ] Preview Vercel dev
+- [x] Preview Vercel dev
 - [ ] Sign-off
 - [ ] Production canary
 
@@ -243,14 +243,18 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 - Semua aksi high-risk tercatat di audit log.
 - Build backend/frontend dan seluruh test lulus.
 
-## 6. Blocker saat ini
+## 6. Follow-up konfigurasi dev
 
-1. **Supabase development** — butuh access token/organization ID. Jalankan `npx supabase login` atau set `SUPABASE_ACCESS_TOKEN`.
-2. **Midtrans sandbox** — butuh server key/client key sandbox dan merchant ID.
-3. **Vercel dev** — project bisa dibuat sekarang, tetapi deployment backend harus menunggu database dev dan env sandbox.
+1. **OAuth redirect URI** — daftarkan di Google/Meta:
+   - `https://be-fnc-dev.vercel.app/api/auth/google/callback`
+   - `https://be-fnc-dev.vercel.app/api/auth/instagram/callback`
+2. **Midtrans sandbox** — keys sudah ada di env dev, tetapi transaksi/webhook belum diuji karena route belum dibuat.
+3. **Vercel Git deploy** — production branch project dev masih `main`. Deploy dev dilakukan manual dengan `--project`; jangan deploy tanpa `--project`.
+4. **Email dev** — pastikan domain pengirim Resend valid untuk pengiriman ke email tester.
 
 ## 7. Log perubahan
 
 | Tanggal | Perubahan |
 |---|---|
 | 2026-10-23 | Branch fitur dan progress tracker dibuat; keputusan produk dikunci. |
+| 2026-10-24 | Supabase dev (`ap-south-1`) terhubung, 10 migrasi diterapkan, bucket dev dibuat; backend/frontend dev live dan terverifikasi. |

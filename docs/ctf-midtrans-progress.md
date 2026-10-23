@@ -5,7 +5,7 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 - Repo backend: `ululhikam/be_FnC`
 - Repo frontend: `ululhikam/con.fess_WebApp`
 - Branch kerja: `feat/ctf-midtrans` (backend & frontend)
-- Status: **Fase 2 & 3 selesai di kode; dev E2E Midtrans dan sign-off production belum**
+- Status: **Fase 2 & 3 selesai dan ter-deploy di dev; E2E Midtrans sandbox dan sign-off production belum**
 - Jangan merge ke `main` atau deploy ke production sampai sign-off eksplisit.
 
 ## 1. Keputusan yang sudah dikunci
@@ -68,8 +68,8 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 | Migrasi dev | ✅ Sampai `20261024030000_fess_published_at` | Termasuk reserved payout dan `Fess.publishedAt` |
 | Midtrans sandbox keys | ❌ Belum ada | `MIDTRANS_SERVER_KEY` / `MIDTRANS_CLIENT_KEY` kosong di dev |
 | Midtrans notification URL | ❌ Belum diset | `https://be-fnc-dev.vercel.app/api/payments/midtrans/notification` |
-| Dev backend deployment Fase 3 | ⏳ Belum | Perlu deploy manual setelah commit |
-| Dev frontend deployment Fase 3 | ⏳ Belum | Perlu deploy manual setelah commit |
+| Dev backend deployment Fase 3 | Selesai | `dpl_3KnxEZyUsnuY1tDkqwZNVS2ipBnS` -> https://be-fnc-dev.vercel.app |
+| Dev frontend deployment Fase 3 | Selesai | `dpl_DdJibWBB2QHzRCqHfvB952kzuSNj` -> https://fessncurious-dev.vercel.app |
 | Dev notification URL / OAuth callback | ❌ Belum | Google/Instagram dev callback juga belum didaftarkan |
 | Production | ✅ Tidak disentuh | Tetap menunggu sign-off |
 
@@ -226,7 +226,7 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 - [x] CORS allowlist.
 - [x] Rate limit terdistribusi.
 - [ ] E2E Midtrans sandbox (QRIS/VA settlement + webhook).
-- [ ] Deploy dev Fase 3.
+- [x] Deploy dev Fase 3 (backend `dpl_3KnxEZyUsnuY1tDkqwZNVS2ipBnS`, frontend `dpl_DdJibWBB2QHzRCqHfvB952kzuSNj`).
 - [ ] Sign-off.
 - [ ] Production canary.
 
@@ -269,10 +269,9 @@ Approve dan mark-paid mewajibkan password re-auth. Semua aksi menolak self-appro
 3. **OAuth dev callback** — daftarkan:
    - `https://be-fnc-dev.vercel.app/api/auth/google/callback`
    - `https://be-fnc-dev.vercel.app/api/auth/instagram/callback`
-4. **Deploy dev Fase 3** — manual dengan `--project`, jangan production.
-5. **E2E sandbox** — QRIS/VA settlement, pending/expire, duplicate webhook, refund/chargeback.
-6. **Sign-off** — `PAYMENTS_ENABLED` dan `BASE_PAYOUTS_ENABLED` tetap `false` sampai disetujui.
-7. **Production** — jangan deploy/merge sebelum sign-off.
+4. **E2E sandbox** - QRIS/VA settlement, pending/expire, duplicate webhook, refund/chargeback.
+5. **Sign-off** - `PAYMENTS_ENABLED` dan `BASE_PAYOUTS_ENABLED` tetap `false` sampai disetujui.
+6. **Production** - jangan deploy/merge sebelum sign-off.
 
 ## 8. Log perubahan
 
@@ -288,3 +287,5 @@ Approve dan mark-paid mewajibkan password re-auth. Semua aksi menolak self-appro
 | 2026-10-24 | `Fess.publishedAt` + migrasi: refund CTF hanya jika belum pernah terbit. |
 | 2026-10-24 | Frontend: top-up, composer charge UX, Base Admin revenue/payout/bank, Super Admin payout/KYC/freeForever. |
 | 2026-10-24 | Backend full suite 302 test lulus; build backend & frontend lulus. |
+| 2026-10-24 | Deploy dev Fase 3: backend `dpl_3KnxEZyUsnuY1tDkqwZNVS2ipBnS` (be-fnc-dev), frontend `dpl_DdJibWBB2QHzRCqHfvB952kzuSNj` (fessncurious-dev); health 200, packages 200 (disabled), CORS allow/deny lulus, admin revenue unauth 401. |
+| 2026-10-24 | Gate Midtrans sandbox, notification URL, OAuth callback, dan sign-off production tetap terbuka. |

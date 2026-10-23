@@ -57,8 +57,8 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 
 | Item | Status | Catatan |
 |---|---|---|
-| Branch backend `feat/ctf-midtrans` | ✅ Dibuat | Belum di-push |
-| Branch frontend `feat/ctf-midtrans` | ✅ Dibuat | Belum di-push |
+| Branch backend `feat/ctf-midtrans` | ✅ Dibuat & di-push | `origin/feat/ctf-midtrans` |
+| Branch frontend `feat/ctf-midtrans` | ✅ Dibuat & di-push | `origin/feat/ctf-midtrans` |
 | File progress | ✅ Dibuat | Dokumen ini |
 | Supabase project development | ✅ Aktif | Ref `vtvnurgkhqboygkttzae`, region `ap-south-1`; DB dev terpisah dari production |
 | Vercel project dev backend | ✅ Dibuat | `be-fnc-dev` → `be-fnc-dev.vercel.app` |

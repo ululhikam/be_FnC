@@ -59,6 +59,7 @@ const AUTH_USER_SELECT = {
   handleChangedAt: true,
   isBanned: true,
   managedBases: { select: { handle: true } },
+  ctfWallet: { select: { balance: true } },
 } as const;
 
 function findAuthUser(userId: string) {
@@ -87,7 +88,7 @@ function toAuthenticatedUser(user: AuthUserRecord): AuthenticatedUser {
     followersCount: user.followersCount,
     followingCount: user.followingCount,
     fessCount: user.fessCount,
-    balance: user.balance,
+    balance: user.ctfWallet?.balance ?? user.balance,
     revenue: user.revenue,
     createdAt: user.createdAt,
     handleChangedAt: user.handleChangedAt,

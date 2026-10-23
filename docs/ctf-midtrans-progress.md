@@ -163,6 +163,9 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 - [x] Uji migrasi di Supabase dev
 - [x] `CtfWalletService` credit/debit atomik + idempotency
 - [x] Unit test wallet (8 test) + constraint anti-saldo-negatif
+- [x] Treasury admin pindah ke `BaseRevenueWallet` IDR (tidak baca CTF)
+- [x] Payout lama diblokir saat `BASE_PAYOUTS_ENABLED=false`
+- [x] Base baru otomatis trial 7 hari + revenue wallet
 
 ### Fase 2 â€” Top-up Midtrans
 
@@ -263,3 +266,4 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 | 2026-10-24 | Supabase dev (`ap-south-1`) terhubung, 10 migrasi diterapkan, bucket dev dibuat; backend/frontend dev live dan terverifikasi. |
 | 2026-10-24 | CORS allowlist diterapkan dan diuji (243 test lulus); origin asing ditolak 403. |
 | 2026-10-24 | Migrasi 11 (`ctf_payments_ledger`) diterapkan di dev: wallet, ledger, payment, revenue, payout, audit, trial/freeForever; backfill `User.balance` terverifikasi. |
+| 2026-10-24 | Treasury admin sekarang IDR dari `BaseRevenueWallet`; payout legacy diblokir 503 saat flag false; base baru mendapat trial 7 hari. |

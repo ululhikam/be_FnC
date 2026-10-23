@@ -3,6 +3,7 @@ import { ENV } from '../config/env.js';
 import { rateLimitConfig } from '../middlewares/rateLimit.middleware.js';
 import { FessService } from './fess.service.js';
 import { InstagramService } from './instagram.service.js';
+import { BaseRevenueService } from './base-revenue.service.js';
 
 export class AdminService {
   /**
@@ -486,6 +487,10 @@ export class AdminService {
     role: string;
     managedBases?: string[];
   }) {
+    // Pastikan revenue yang sudah melewati hold muncul sebagai available
+    // sebelum angka treasury dihitung.
+    await BaseRevenueService.releaseMatured();
+
     const isSuperAdmin = currentUser.role === 'Super Admin';
     const managedHandles = currentUser.managedBases || [];
     const bases = await prisma.base.findMany({
@@ -502,7 +507,12 @@ export class AdminService {
         handle: true,
         name: true,
         revenueWallet: {
-          select: { pendingIdr: true, availableIdr: true, lifetimeIdr: true },
+          select: {
+            pendingIdr: true,
+            availableIdr: true,
+            reservedIdr: true,
+            lifetimeIdr: true,
+          },
         },
       },
       orderBy: { createdAt: 'asc' },
@@ -512,10 +522,11 @@ export class AdminService {
       (acc, base) => {
         acc.pendingIdr += base.revenueWallet?.pendingIdr ?? 0;
         acc.availableIdr += base.revenueWallet?.availableIdr ?? 0;
+        acc.reservedIdr += base.revenueWallet?.reservedIdr ?? 0;
         acc.lifetimeIdr += base.revenueWallet?.lifetimeIdr ?? 0;
         return acc;
       },
-      { pendingIdr: 0, availableIdr: 0, lifetimeIdr: 0 }
+      { pendingIdr: 0, availableIdr: 0, reservedIdr: 0, lifetimeIdr: 0 }
     );
 
     return {
@@ -523,6 +534,7 @@ export class AdminService {
       balance: totals.availableIdr,
       available_idr: totals.availableIdr,
       pending_idr: totals.pendingIdr,
+      reserved_idr: totals.reservedIdr,
       lifetime_idr: totals.lifetimeIdr,
       currency: 'IDR',
       bases: bases.map((base) => ({
@@ -531,6 +543,7 @@ export class AdminService {
         name: base.name,
         available_idr: base.revenueWallet?.availableIdr ?? 0,
         pending_idr: base.revenueWallet?.pendingIdr ?? 0,
+        reserved_idr: base.revenueWallet?.reservedIdr ?? 0,
         lifetime_idr: base.revenueWallet?.lifetimeIdr ?? 0,
       })),
     };

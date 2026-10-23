@@ -3,10 +3,27 @@ import { normalizeHandle } from '../utils/format.util.js';
 import { TOPICS } from '../constants/topics.js';
 import { InstagramService } from './instagram.service.js';
 import { ModerationService } from './moderation.service.js';
+import { FessBillingService, getBaseBillingState } from './fess-billing.service.js';
+import { BaseRevenueService } from './base-revenue.service.js';
 import { invalidateCache, getOrSet } from '../utils/cache.util.js';
 
 /** Fess counters only track publicly visible confessions. */
 const PUBLISHED_STATUSES = ['published', 'approved'];
+
+type FessActor = {
+  id: string;
+  role?: string;
+  email?: string | null;
+  emailVerifiedAt?: Date | string | null;
+  managedBases?: string[];
+};
+
+/** Controller passes the full req.user; older callers/tests pass only an id. */
+function normalizeActor(user?: string | FessActor | null): FessActor | null {
+  if (!user) return null;
+  if (typeof user === 'string') return { id: user };
+  return user;
+}
 
 /** Comment fields rendered by the cards — avoids shipping unused columns. */
 const COMMENT_PREVIEW_SELECT = {
@@ -212,11 +229,39 @@ export class FessService {
       template?: string;
       quoted_fess?: any;
       tag?: string | null;
+      idempotency_key?: string | null;
     },
-    userId?: string,
+    userOrId?: string | FessActor,
     onBackground?: (task: Promise<unknown>) => void
   ) {
+    const actor = normalizeActor(userOrId);
     const cleanHandle = normalizeHandle(payload.base_handle);
+    const requestKey = payload.idempotency_key?.trim() || null;
+
+    // A retry with the same client key returns the original fess and never
+    // charges CTF twice.
+    if (requestKey) {
+      const existing = await prisma.fess.findUnique({
+        where: { idempotencyKey: requestKey },
+        include: { base: { select: BASE_PREVIEW_SELECT } },
+      });
+      if (existing) {
+        if (existing.baseHandle !== cleanHandle) {
+          const err: any = new Error('Idempotency-Key sudah dipakai untuk fess lain');
+          err.status = 409;
+          err.code = 'IDEMPOTENCY_CONFLICT';
+          throw err;
+        }
+        const sameActor = existing.userId ? existing.userId === actor?.id : !actor;
+        if (!sameActor) {
+          const err: any = new Error('Idempotency-Key sudah dipakai oleh pengguna lain');
+          err.status = 409;
+          err.code = 'IDEMPOTENCY_CONFLICT';
+          throw err;
+        }
+        return this.serializeFess(existing, null);
+      }
+    }
 
     const base = await prisma.base.findUnique({
       where: { handle: cleanHandle },
@@ -227,6 +272,29 @@ export class FessService {
       err.status = 404;
       err.code = 'NOT_FOUND';
       throw err;
+    }
+
+    const billing = getBaseBillingState(base);
+
+    // Paid bases require a signed-in account with a verified email. During the
+    // trial anonymous posting stays available; after the trial it does not.
+    if (billing.requiresPayment) {
+      if (!actor) {
+        const err: any = new Error(
+          'Login dengan email terverifikasi diperlukan untuk mengirim fess di base berbayar'
+        );
+        err.status = 401;
+        err.code = 'PAID_FESS_AUTH_REQUIRED';
+        throw err;
+      }
+      if (!actor.emailVerifiedAt) {
+        const err: any = new Error(
+          'Verifikasi email diperlukan untuk mengirim fess di base berbayar'
+        );
+        err.status = 403;
+        err.code = 'EMAIL_NOT_VERIFIED';
+        throw err;
+      }
     }
 
     const scheduledDate = payload.scheduled_at ? new Date(payload.scheduled_at) : null;
@@ -249,30 +317,78 @@ export class FessService {
       }
     }
 
-    const fess = await prisma.fess.create({
-      data: {
-        baseHandle: cleanHandle,
-        baseId: base.id,
-        userId: userId || null,
-        content: payload.content.trim(),
-        media: payload.media && payload.media.length > 0 ? payload.media : undefined,
-        carouselOrder:
-          payload.carousel_order && payload.carousel_order.length > 0
-            ? payload.carousel_order
-            : undefined,
-        topic: payload.topic || null,
-        scheduledAt: scheduledDate,
-        song: payload.song || undefined,
-        template: payload.template || 'default',
-        quotedFess: payload.quoted_fess || undefined,
-        tag: payload.tag || null,
-        status: initialStatus,
-        autoFlagged,
-        flagReason,
-        igStatus: initialStatus === 'published' ? 'processing' : 'idle',
-        igUpdatedAt: initialStatus === 'published' ? new Date() : null,
-      },
-    });
+    let transactionResult: { fess: any; charge: any };
+    try {
+      transactionResult = await prisma.$transaction(async (tx) => {
+        const created = await tx.fess.create({
+          data: {
+            baseHandle: cleanHandle,
+            baseId: base.id,
+            userId: actor?.id || null,
+            content: payload.content.trim(),
+            media: payload.media && payload.media.length > 0 ? payload.media : undefined,
+            carouselOrder:
+              payload.carousel_order && payload.carousel_order.length > 0
+                ? payload.carousel_order
+                : undefined,
+            topic: payload.topic || null,
+            scheduledAt: scheduledDate,
+            song: payload.song || undefined,
+            template: payload.template || 'default',
+            quotedFess: payload.quoted_fess || undefined,
+            tag: payload.tag || null,
+            status: initialStatus,
+            autoFlagged,
+            flagReason,
+            igStatus: initialStatus === 'published' ? 'processing' : 'idle',
+            igUpdatedAt: initialStatus === 'published' ? new Date() : null,
+            publishedAt: initialStatus === 'published' ? new Date() : null,
+            idempotencyKey: requestKey || undefined,
+          },
+        });
+
+        let charged: any = null;
+        if (billing.requiresPayment && actor) {
+          charged = await FessBillingService.chargeForFess(tx, {
+            fessId: created.id,
+            userId: actor.id,
+            base,
+          });
+        }
+
+        // Auto-published paid fess earns base revenue immediately. Free-trial
+        // and free-forever fesses pass charge=null and never accrue revenue.
+        if (initialStatus === 'published') {
+          await BaseRevenueService.accrueForPublishedFess(tx, {
+            fess: created,
+            base,
+            charge: charged ? { status: 'CHARGED', amount: charged.amount } : null,
+          });
+        }
+
+        return { fess: created, charge: charged };
+      });
+    } catch (error) {
+      // Two concurrent retries can both miss the idempotency lookup. The
+      // unique key makes one transaction fail before any charge is committed;
+      // return the winner's row instead of surfacing a 500.
+      if (requestKey && (error as any)?.code === 'P2002') {
+        const winner = await prisma.fess.findUnique({
+          where: { idempotencyKey: requestKey },
+          include: { base: { select: BASE_PREVIEW_SELECT } },
+        });
+        if (
+          winner &&
+          winner.baseHandle === cleanHandle &&
+          (winner.userId ? winner.userId === actor?.id : !actor)
+        ) {
+          return this.serializeFess(winner, null);
+        }
+      }
+      throw error;
+    }
+
+    const { fess, charge } = transactionResult;
 
     // Counter hanya menghitung fess terbit: mode moderasi menaikkannya di
     // approveFess(); mode auto post menaikkannya tepat di sini karena fess
@@ -307,22 +423,22 @@ export class FessService {
 
     // Kirim fess ke base → pengirim otomatis mengikuti base tersebut.
     // Lewati jika pengirim adalah pemilik/creator base (tidak mengikuti base sendiri).
-    if (userId && base.creatorId !== userId) {
+    if (actor && base.creatorId !== actor.id) {
       try {
         const existingFollow = await prisma.follow.findUnique({
-          where: { userId_baseId: { userId, baseId: base.id } },
+          where: { userId_baseId: { userId: actor.id, baseId: base.id } },
           select: { id: true },
         });
 
         if (!existingFollow) {
           await prisma.$transaction([
-            prisma.follow.create({ data: { userId, baseId: base.id } }),
+            prisma.follow.create({ data: { userId: actor.id, baseId: base.id } }),
             prisma.base.update({
               where: { id: base.id },
               data: { membersCount: { increment: 1 } },
             }),
             prisma.user.update({
-              where: { id: userId },
+              where: { id: actor.id },
               data: { followingCount: { increment: 1 } },
             }),
           ]);
@@ -351,7 +467,17 @@ export class FessService {
       });
     }
 
-    return this.serializeFess({ ...fess, base }, null);
+    return {
+      ...this.serializeFess({ ...fess, base }, null),
+      charged_ctf: charge?.amount ?? 0,
+      ctf_balance: charge?.balanceAfter ?? undefined,
+      base_billing: {
+        requires_payment: billing.requiresPayment,
+        reason: billing.reason,
+        free_forever: billing.freeForever,
+        trial_active: billing.trialActive,
+      },
+    };
   }
 
   /**
@@ -690,7 +816,10 @@ export class FessService {
   ) {
     const fess = await prisma.fess.findUnique({
       where: { id },
-      include: { base: true },
+      include: {
+        base: true,
+        charge: { select: { id: true, status: true, amount: true } },
+      },
     });
 
     if (!fess) {
@@ -701,7 +830,9 @@ export class FessService {
     }
 
     const isSuperAdmin = currentUser.role === 'Super Admin';
-    const isBaseAdmin = currentUser.managedBases?.includes(fess.baseHandle) || fess.base?.creatorId === currentUser.id;
+    const isBaseAdmin =
+      currentUser.managedBases?.includes(fess.baseHandle) ||
+      fess.base?.creatorId === currentUser.id;
 
     if (!isSuperAdmin && !isBaseAdmin) {
       const err: any = new Error('Anda tidak memiliki izin memoderasi fess ini');
@@ -710,23 +841,32 @@ export class FessService {
       throw err;
     }
 
+    if (fess.charge?.status === 'REFUNDED') {
+      const err: any = new Error(
+        'CTF untuk fess ini sudah direfund. Fess tidak dapat diterbitkan kembali; minta pengirim membuat fess baru.'
+      );
+      err.status = 409;
+      err.code = 'FESS_CHARGE_REFUNDED';
+      throw err;
+    }
+
     const wasPublished = PUBLISHED_STATUSES.includes(fess.status);
 
-    // Batch database operations dalam satu atomic round-trip transaction:
-    // 1) Update status fess
-    // 2) Increment counter Base & User (jika fess sebelumnya belum terbit)
-    // 3) Create notifikasi untuk author fess
-    const dbOperations: any[] = [
-      prisma.fess.update({
+    const updated = await prisma.$transaction(async (tx) => {
+      const row = await tx.fess.update({
         where: { id },
         data: {
           status: 'published',
+          // Preserve the first publication timestamp when a fess is approved
+          // again after a take-down. Refund policy must remain based on the
+          // first publication, not the current status.
+          publishedAt: fess.publishedAt ?? new Date(),
           ...(wasPublished
             ? {}
             : fess.postedToIg
               ? {
                   // Sudah pernah terbit ke IG (mis. setelah reject lalu approve
-                  // lagi) — jangan memicu posting/status processing baru.
+                  // lagi) - jangan memicu posting/status processing baru.
                   igStatus: 'published',
                   igError: null,
                   igUpdatedAt: new Date(),
@@ -739,16 +879,23 @@ export class FessService {
                 }),
         },
         include: COMMENT_PREVIEW_INCLUDE,
-      }),
-    ];
+      });
 
-    if (!wasPublished) {
-      dbOperations.push(...this.getCounterUpdateOperations(fess, 1));
-    }
+      if (!wasPublished) {
+        await tx.base.updateMany({
+          where: fess.baseId ? { id: fess.baseId } : { handle: fess.baseHandle },
+          data: { fessCount: { increment: 1 } },
+        });
+        if (fess.userId) {
+          await tx.user.updateMany({
+            where: { id: fess.userId },
+            data: { fessCount: { increment: 1 } },
+          });
+        }
+      }
 
-    if (fess.userId) {
-      dbOperations.push(
-        prisma.notification.create({
+      if (fess.userId) {
+        await tx.notification.create({
           data: {
             userId: fess.userId,
             type: 'moderation',
@@ -757,18 +904,28 @@ export class FessService {
             actor: fess.baseHandle,
             text: `Fess kamu di ${fess.baseHandle} telah disetujui & dipublikasikan!`,
           },
-        })
-      );
-    }
+        });
+      }
 
-    const [updated] = await prisma.$transaction(dbOperations);
+      // Revenue hanya untuk fess berbayar (punya FessCharge CHARGED). Fess
+      // trial/freeForever tidak pernah menghasilkan revenue base.
+      if (!wasPublished && fess.base && fess.charge?.status === 'CHARGED') {
+        await BaseRevenueService.accrueForPublishedFess(tx, {
+          fess,
+          base: fess.base,
+          charge: { status: 'CHARGED', amount: fess.charge.amount },
+        });
+      }
+
+      return row;
+    });
 
     if (!wasPublished) {
       invalidateCache('bases:');
       invalidateCache('fesses:');
     }
 
-    // Auto-post hanya saat transisi pending → published; approve ulang pada
+    // Auto-post hanya saat transisi pending -> published; approve ulang pada
     // fess yang sudah terbit tidak boleh membuat posting Instagram duplikat.
     if (!wasPublished && !fess.postedToIg) {
       const autoPostTask = exportFessCanvasForAutoPost(id, fess.template).catch((err) => {
@@ -780,13 +937,16 @@ export class FessService {
     return this.serializeFess(updated, null);
   }
 
-  /**
-   * Reject fess (moderation)
-   */
-  static async rejectFess(id: string, currentUser: { id: string; role: string; managedBases?: string[] }) {
+  static async rejectFess(
+    id: string,
+    currentUser: { id: string; role: string; managedBases?: string[] }
+  ) {
     const fess = await prisma.fess.findUnique({
       where: { id },
-      include: { base: true },
+      include: {
+        base: true,
+        charge: { select: { id: true, status: true, amount: true } },
+      },
     });
 
     if (!fess) {
@@ -797,7 +957,9 @@ export class FessService {
     }
 
     const isSuperAdmin = currentUser.role === 'Super Admin';
-    const isBaseAdmin = currentUser.managedBases?.includes(fess.baseHandle) || fess.base?.creatorId === currentUser.id;
+    const isBaseAdmin =
+      currentUser.managedBases?.includes(fess.baseHandle) ||
+      fess.base?.creatorId === currentUser.id;
 
     if (!isSuperAdmin && !isBaseAdmin) {
       const err: any = new Error('Anda tidak memiliki izin memoderasi fess ini');
@@ -807,26 +969,33 @@ export class FessService {
     }
 
     const wasPublished = PUBLISHED_STATUSES.includes(fess.status);
+    const wasEverPublished = wasPublished || Boolean(fess.publishedAt);
 
-    // Batch database operations dalam satu atomic round-trip transaction:
-    // 1) Update status fess ke 'rejected'
-    // 2) Decrement counter Base & User (hanya jika sebelumnya statusnya published)
-    // 3) Create notifikasi penolakan untuk author fess
-    const dbOperations: any[] = [
-      prisma.fess.update({
+    const { updated, refund, reversal } = await prisma.$transaction(async (tx) => {
+      const row = await tx.fess.update({
         where: { id },
         data: { status: 'rejected' },
         include: COMMENT_PREVIEW_INCLUDE,
-      }),
-    ];
+      });
 
-    if (wasPublished) {
-      dbOperations.push(...this.getCounterUpdateOperations(fess, -1));
-    }
+      if (wasPublished) {
+        await tx.base.updateMany({
+          where: {
+            ...(fess.baseId ? { id: fess.baseId } : { handle: fess.baseHandle }),
+            fessCount: { gt: 0 },
+          },
+          data: { fessCount: { increment: -1 } },
+        });
+        if (fess.userId) {
+          await tx.user.updateMany({
+            where: { id: fess.userId, fessCount: { gt: 0 } },
+            data: { fessCount: { increment: -1 } },
+          });
+        }
+      }
 
-    if (fess.userId) {
-      dbOperations.push(
-        prisma.notification.create({
+      if (fess.userId) {
+        await tx.notification.create({
           data: {
             userId: fess.userId,
             type: 'moderation',
@@ -835,23 +1004,50 @@ export class FessService {
             actor: fess.baseHandle,
             text: `Fess kamu di ${fess.baseHandle} ditolak moderator`,
           },
-        })
-      );
-    }
+        });
+      }
 
-    const [updated] = await prisma.$transaction(dbOperations);
+      // Refund hanya jika fess belum pernah terbit. Status saat ini tidak
+      // cukup: fess yang pernah terbit lalu ditolak tetap tidak boleh refund.
+      const refundResult = !wasEverPublished
+        ? await FessBillingService.refundForUnpublishedFess(tx, {
+            fessId: fess.id,
+            reason: 'Fess ditolak sebelum terbit',
+          })
+        : { refunded: false as const, amount: 0 };
+
+      // Fess berbayar yang pernah terbit kehilangan revenue base-nya. Operasi
+      // ini idempotent, jadi aman jika fess ditolak ulang.
+      const reversalResult = wasEverPublished
+        ? await BaseRevenueService.reverseForFess(tx, {
+            fessId: fess.id,
+            reason: 'Fess diturunkan setelah terbit',
+            reversedById: currentUser.id,
+          })
+        : null;
+
+      return { updated: row, refund: refundResult, reversal: reversalResult };
+    });
 
     if (wasPublished) {
       invalidateCache('bases:');
       invalidateCache('fesses:');
     }
 
-    return this.serializeFess(updated, null);
+    const result: any = this.serializeFess(updated, null);
+    if (refund.refunded) {
+      result.refunded_ctf = refund.amount;
+      result.ctf_balance = (refund as any).balanceAfter;
+    }
+    if (reversal) {
+      result.revenue_reversal = {
+        amount_idr: reversal.amountIdr,
+        status: reversal.status,
+      };
+    }
+    return result;
   }
 
-  /**
-   * Report fess
-   */
   static async reportFess(fessId: string, reason: string, note?: string | null, userId?: string) {
     const fess = await prisma.fess.findUnique({ where: { id: fessId } });
     if (!fess) {
@@ -966,8 +1162,17 @@ export class FessService {
   /**
    * Delete fess
    */
-  static async deleteFess(id: string, currentUser: { id: string; role: string; managedBases?: string[] }) {
-    const fess = await prisma.fess.findUnique({ where: { id } });
+  static async deleteFess(
+    id: string,
+    currentUser: { id: string; role: string; managedBases?: string[] }
+  ) {
+    const fess = await prisma.fess.findUnique({
+      where: { id },
+      include: {
+        base: { select: { creatorId: true } },
+        charge: { select: { id: true, status: true, amount: true } },
+      },
+    });
     if (!fess) {
       const err: any = new Error('Fess tidak ditemukan');
       err.status = 404;
@@ -977,7 +1182,9 @@ export class FessService {
 
     const isAuthor = fess.userId === currentUser.id;
     const isSuperAdmin = currentUser.role === 'Super Admin';
-    const isBaseAdmin = currentUser.managedBases?.includes(fess.baseHandle);
+    const isBaseAdmin =
+      fess.base?.creatorId === currentUser.id ||
+      currentUser.managedBases?.includes(fess.baseHandle);
 
     if (!isAuthor && !isSuperAdmin && !isBaseAdmin) {
       const err: any = new Error('Anda tidak memiliki izin menghapus fess ini');
@@ -986,11 +1193,55 @@ export class FessService {
       throw err;
     }
 
-    await prisma.fess.delete({ where: { id } });
+    const wasPublished = PUBLISHED_STATUSES.includes(fess.status);
+    const wasEverPublished = wasPublished || Boolean(fess.publishedAt);
+    const chargeStatus = fess.charge?.status;
+
+    // Refund/reversal must happen before the fess row is deleted because the
+    // foreign keys use SET NULL. A charged fess that never published gets its
+    // CTF back; a fess that was ever published reverses base revenue but can
+    // never refund CTF, even if it is currently rejected.
+    const { refund, reversal } = await prisma.$transaction(async (tx) => {
+      const refundResult =
+        !wasEverPublished && chargeStatus === 'CHARGED'
+          ? await FessBillingService.refundForUnpublishedFess(tx, {
+              fessId: fess.id,
+              reason: 'Fess dihapus sebelum terbit',
+            })
+          : { refunded: false as const, amount: 0 };
+
+      const reversalResult =
+        wasEverPublished && chargeStatus === 'CHARGED'
+          ? await BaseRevenueService.reverseForFess(tx, {
+              fessId: fess.id,
+              reason: 'Fess dihapus setelah terbit',
+              reversedById: currentUser.id,
+            })
+          : null;
+
+      await tx.fess.delete({ where: { id } });
+
+      if (wasPublished) {
+        await tx.base.updateMany({
+          where: {
+            ...(fess.baseId ? { id: fess.baseId } : { handle: fess.baseHandle }),
+            fessCount: { gt: 0 },
+          },
+          data: { fessCount: { increment: -1 } },
+        });
+        if (fess.userId) {
+          await tx.user.updateMany({
+            where: { id: fess.userId, fessCount: { gt: 0 } },
+            data: { fessCount: { increment: -1 } },
+          });
+        }
+      }
+
+      return { refund: refundResult, reversal: reversalResult };
+    });
 
     // Removing a published fess must not leave a stale published count.
-    if (PUBLISHED_STATUSES.includes(fess.status)) {
-      await this.adjustFessCounters(fess, -1);
+    if (wasPublished) {
       invalidateCache('bases:');
       invalidateCache('fesses:');
     }
@@ -1051,12 +1302,23 @@ export class FessService {
         .catch(() => {});
     }
 
-    return { ok: true, instagram };
+    return {
+      ok: true,
+      instagram,
+      ...(refund.refunded
+        ? { refunded_ctf: refund.amount, ctf_balance: (refund as any).balanceAfter }
+        : {}),
+      ...(reversal
+        ? {
+            revenue_reversal: {
+              amount_idr: reversal.amountIdr,
+              status: reversal.status,
+            },
+          }
+        : {}),
+    };
   }
 
-  /**
-   * Get fesses posted by a specific user (My Fess)
-   */
   static async getUserFesses(
     userId: string,
     params: { status?: string; sort?: 'newest' | 'popular'; page?: number; limit?: number }

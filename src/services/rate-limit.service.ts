@@ -65,6 +65,8 @@ type PaymentRateLimitOptions = {
   limit: number;
   windowSeconds: number;
   includeIp?: boolean;
+  message?: string;
+  code?: string;
 };
 
 /**
@@ -94,9 +96,9 @@ export function paymentRateLimit(options: PaymentRateLimitOptions) {
         res.setHeader('Retry-After', String(tightest.retryAfterSeconds));
         return errorResponse(
           res,
-          'Terlalu banyak percobaan pembayaran. Silakan coba beberapa saat lagi.',
+          options.message || 'Terlalu banyak percobaan pembayaran. Silakan coba beberapa saat lagi.',
           429,
-          'PAYMENT_RATE_LIMITED'
+          options.code || 'PAYMENT_RATE_LIMITED'
         );
       }
 

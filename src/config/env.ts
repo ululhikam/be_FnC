@@ -90,6 +90,12 @@ export const ENV = {
   // Payments (Midtrans Core API). Default OFF until sign-off.
   PAYMENTS_ENABLED: process.env.PAYMENTS_ENABLED === 'true',
   BASE_PAYOUTS_ENABLED: process.env.BASE_PAYOUTS_ENABLED === 'true',
+  // Default biaya transfer payout. Super Admin tetap bisa mengoreksi nominal
+  // saat approve; biaya tidak boleh melebihi nominal payout.
+  BASE_PAYOUT_FEE_IDR: (() => {
+    const parsed = parseInt(process.env.BASE_PAYOUT_FEE_IDR || '6500', 10);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 6500;
+  })(),
   MIDTRANS_IS_PRODUCTION: process.env.MIDTRANS_IS_PRODUCTION === 'true',
   MIDTRANS_SERVER_KEY: process.env.MIDTRANS_SERVER_KEY || '',
   MIDTRANS_CLIENT_KEY: process.env.MIDTRANS_CLIENT_KEY || '',

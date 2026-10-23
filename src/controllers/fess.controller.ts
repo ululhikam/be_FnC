@@ -17,7 +17,14 @@ export class FessController {
 
   static async createFess(req: Request, res: Response, next: NextFunction) {
     try {
-      const fess = await FessService.createFess(req.body, req.user?.id, trackBackground);
+      const headerKey = req.get('Idempotency-Key');
+      const idempotencyKey =
+        headerKey?.trim() || (req.body?.idempotency_key as string | undefined)?.trim() || undefined;
+      const fess = await FessService.createFess(
+        { ...req.body, idempotency_key: idempotencyKey },
+        req.user,
+        trackBackground
+      );
       return successResponse(res, fess, 201);
     } catch (error) {
       next(error);

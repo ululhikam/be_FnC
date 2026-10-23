@@ -32,6 +32,56 @@ export const TreasuryPayoutSchema = z.object({
   destination: z.string().optional().default('wallet'),
 });
 
+export const BasePayoutRequestSchema = z.object({
+  amount_idr: z
+    .number()
+    .int('Nominal payout harus bilangan bulat')
+    .min(50_000, 'Minimal penarikan Rp50.000'),
+  base_handle: z.string().min(1).max(60).optional().nullable(),
+  notes: z.string().max(500).optional().nullable(),
+});
+
+export const BasePayoutReviewSchema = z.object({
+  action: z.enum(['approve', 'reject', 'mark_paid', 'mark_failed']),
+  password: z.string().min(1).max(200).optional().nullable(),
+  reason: z.string().max(500).optional().nullable(),
+  fee_idr: z.number().int().min(0).optional(),
+  reference: z.string().max(160).optional().nullable(),
+});
+
+export const BaseBankDetailsSchema = z.object({
+  base_handle: z.string().min(1).max(60).optional().nullable(),
+  bank_name: z.string().min(2).max(80),
+  bank_account_name: z.string().min(2).max(120),
+  bank_account_number: z
+    .string()
+    .min(5)
+    .max(40)
+    .regex(/^[0-9\s]+$/, 'Nomor rekening hanya boleh berisi angka'),
+  password: z.string().min(1).max(200),
+});
+
+export const BaseKycSchema = z.object({
+  base_handle: z.string().min(1).max(60),
+  status: z.enum(['verified', 'rejected', 'unverified']),
+  note: z.string().max(500).optional().nullable(),
+  password: z.string().min(1).max(200),
+});
+
+export const BaseFreeForeverSchema = z.object({
+  base_handle: z.string().min(1).max(60),
+  free_forever: z.boolean(),
+  reason: z.string().min(5, 'Alasan wajib diisi minimal 5 karakter').max(500),
+  password: z.string().min(1).max(200),
+});
+
+export const BasePayoutQueueQuerySchema = z.object({
+  status: z
+    .enum(['requested', 'approved', 'rejected', 'paid', 'failed', 'cancelled'])
+    .optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
 export const ModerationQueueQuerySchema = z.object({
   base: z.string().optional(),
   page: z.coerce.number().int().min(1).default(1),
@@ -39,7 +89,9 @@ export const ModerationQueueQuerySchema = z.object({
 });
 
 export const SystemLogsQuerySchema = z.object({
-  source: z.enum(['RATE_LIMITER', 'CANVAS_WORKER', 'AUTO_BASE', 'REDIS_CACHE', 'AI_FILTER']).optional(),
+  source: z
+    .enum(['RATE_LIMITER', 'CANVAS_WORKER', 'AUTO_BASE', 'REDIS_CACHE', 'AI_FILTER', 'PAYOUT'])
+    .optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 

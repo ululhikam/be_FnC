@@ -1,12 +1,12 @@
-# CTF + Midtrans â€” Progress Tracker
+# CTF + Midtrans — Progress Tracker
 
 Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to Fess), top-up Midtrans, trial base, pendapatan base, dan payout**.
 
 - Repo backend: `ululhikam/be_FnC`
 - Repo frontend: `ululhikam/con.fess_WebApp`
 - Branch kerja: `feat/ctf-midtrans` (backend & frontend)
-- Status: **Fase persiapan / infrastruktur**
-- Jangan merge ke `main` atau deploy ke production sampai sign-off.
+- Status: **Fase 2 & 3 selesai di kode; dev E2E Midtrans dan sign-off production belum**
+- Jangan merge ke `main` atau deploy ke production sampai sign-off eksplisit.
 
 ## 1. Keputusan yang sudah dikunci
 
@@ -24,7 +24,8 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 - Self-post oleh creator/admin base **tidak menghasilkan revenue base**.
 - Base revenue memiliki holding **7 hari** sebelum available.
 - Payout base minimal **Rp50.000**, manual, dengan approval Super Admin.
-- Super Admin dapat menetapkan base **gratis selamanya**.
+- Biaya transfer payout default **Rp6.500**, dapat disesuaikan saat approval.
+- Super Admin dapat menetapkan base **gratis selamanya** (`freeForever`).
 - Base gratis selamanya: user tidak membayar, base tidak mendapat revenue.
 
 ### Paket CTF
@@ -38,70 +39,73 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 | Bundling | Rp100.000 | 500 | 125 | 625 | Rp160 |
 
 - Minimum top-up: Rp5.000.
-- VA/gerai minimum: Rp50.000 karena biaya flat.
-- Kartu kredit/debit **tidak** dipakai di v1 (menghindari 3DS/PCI).
-- Metode: QRIS, GoPay, ShopeePay, VA BCA/BNI/BRI/Permata, Mandiri Bill, Alfamart/Indomaret.
+- Kartu kredit/debit **tidak** dipakai di v1.
+- Metode aktif: QRIS, GoPay, ShopeePay, VA BCA/BNI/BRI/Permata, Mandiri Bill.
+- Snap dan halaman pembayaran eksternal tidak dipakai; flow pembayaran sepenuhnya in-app.
 
 ### Keamanan & refund
 
-- `User.balance` existing dianggap CTF dan akan dimigrasikan ke `CtfWallet`.
-- Treasury/payout tidak boleh membaca saldo CTF.
+- `User.balance` legacy dianggap CTF dan sudah dimigrasikan ke `CtfWallet` integer.
+- Treasury/payout tidak boleh membaca saldo CTF atau saldo legacy.
 - Top-up non-refundable, kecuali duplicate/kesalahan teknis.
-- Fess refund otomatis hanya jika ditolak atau dihapus sebelum terbit.
+- Fess refund otomatis hanya jika ditolak atau dihapus **sebelum pertama kali terbit**.
+- `Fess.publishedAt` menyimpan waktu terbit pertama. Fess yang pernah terbit tidak dapat menerima refund CTF setelah ditolak/dihapus.
 - Refund fess dalam CTF; refund top-up dalam IDR lewat Midtrans.
 - Semua refund/chargeback harus idempotent dan diaudit.
-- Hanya Super Admin yang boleh mengubah `freeForever`, konfigurasi pembayaran, refund, dan payout.
-- Aksi high-risk Super Admin wajib re-authentication + audit log.
+- Hanya Super Admin yang boleh mengubah `freeForever`, KYC, refund, dan approve payout.
+- Aksi high-risk Super Admin wajib re-authentication + audit log + alert.
 
 ## 2. Status infrastruktur
 
 | Item | Status | Catatan |
 |---|---|---|
-| Branch backend `feat/ctf-midtrans` | âœ… Dibuat & di-push | `origin/feat/ctf-midtrans` |
-| Branch frontend `feat/ctf-midtrans` | âœ… Dibuat & di-push | `origin/feat/ctf-midtrans` |
-| File progress | âœ… Dibuat | Dokumen ini |
-| Supabase project development | âœ… Aktif | Ref `vtvnurgkhqboygkttzae`, region `ap-south-1`; DB dev terpisah dari production |
-| Vercel project dev backend | âœ… Dibuat | `be-fnc-dev` â†’ `be-fnc-dev.vercel.app` |
-| Vercel project dev frontend | âœ… Dibuat | `fessncurious-dev` â†’ `fessncurious-dev.vercel.app` |
-| Git repo dev backend | âœ… Terhubung | `ululhikam/be_FnC` |
-| Git repo dev frontend | âœ… Terhubung | `ululhikam/con.fess_WebApp` |
-| Midtrans sandbox | â³ Keys terisi | Keys ada di `.env.development` dan Vercel dev; route/webhook belum diimplementasikan |
-| Staging/dev database env | âœ… Lokal | `backend/.env.development` (gitignored), 10 migrasi sudah diterapkan |
-| Dev storage bucket | âœ… Ada | `confess-media-dev` (public), upload/public/delete terverifikasi |
-| Dev backend deployment | âœ… Live | `https://be-fnc-dev.vercel.app` (health + DB + CORS OK) |
-| Dev frontend deployment | âœ… Live | `https://fessncurious-dev.vercel.app` (build memakai API dev) |
-| Dev notification URL | â³ Route belum ada | `https://be-fnc-dev.vercel.app/api/payments/midtrans/notification` |
+| Branch backend `feat/ctf-midtrans` | ✅ Dibuat | Kode Fase 2 & 3 ada di branch ini |
+| Branch frontend `feat/ctf-midtrans` | ✅ Dibuat | Top-up, revenue, payout, KYC, freeForever UI |
+| File progress | ✅ Diperbarui | Dokumen ini |
+| Supabase project development | ✅ Aktif | Ref `vtvnurgkhqboygkttzae`, region `ap-south-1` |
+| Vercel project dev backend | ✅ Dibuat | `be-fnc-dev` → `be-fnc-dev.vercel.app` |
+| Vercel project dev frontend | ✅ Dibuat | `fessncurious-dev` → `fessncurious-dev.vercel.app` |
+| Migrasi dev | ✅ Sampai `20261024030000_fess_published_at` | Termasuk reserved payout dan `Fess.publishedAt` |
+| Midtrans sandbox keys | ❌ Belum ada | `MIDTRANS_SERVER_KEY` / `MIDTRANS_CLIENT_KEY` kosong di dev |
+| Midtrans notification URL | ❌ Belum diset | `https://be-fnc-dev.vercel.app/api/payments/midtrans/notification` |
+| Dev backend deployment Fase 3 | ⏳ Belum | Perlu deploy manual setelah commit |
+| Dev frontend deployment Fase 3 | ⏳ Belum | Perlu deploy manual setelah commit |
+| Dev notification URL / OAuth callback | ❌ Belum | Google/Instagram dev callback juga belum didaftarkan |
+| Production | ✅ Tidak disentuh | Tetap menunggu sign-off |
 
-> Catatan Vercel: `fessncurious.vercel.app` adalah domain project Vercel, bukan domain milik sendiri. Subdomain `dev.fessncurious.vercel.app` tidak bisa dibuat sebagai custom domain. Isolasi dev dilakukan dengan **project Vercel terpisah** (`fessncurious-dev.vercel.app`, `be-fnc-dev.vercel.app`). Jika nanti ada domain sendiri (mis. `fessncurious.com`), domain `dev.fessncurious.com` bisa dipasang ke project dev.
+> Isolasi dev memakai **project Vercel terpisah**. Subdomain `dev.fessncurious.vercel.app` tidak bisa dibuat karena `fessncurious.vercel.app` adalah domain milik Vercel.
 
 Project Vercel dev:
 
 - Backend: `be-fnc-dev` (`prj_U3gr5zZHt5S1DD128Y8Hak30DdEl`)
 - Frontend: `fessncurious-dev` (`prj_11AGuBPTjOTBMjYXYY6zU2opoL9a`)
-- Keduanya terhubung ke repo GitHub masing-masing.
-- Production branch project dev masih default (`main`); branch kerja `feat/ctf-midtrans` akan menjadi preview sampai diubah ke production branch dev atau di-deploy manual ke project dev.
-- Deploy dev saat ini manual dari branch kerja:
-  - Backend: `vercel deploy --prod --project be-fnc-dev`
-  - Frontend: `vercel deploy --prod --project fessncurious-dev`
-- Jangan menjalankan `vercel deploy --prod` tanpa `--project` dari folder ini karena itu bisa menargetkan project production.
+- Team: `team_eagY6z8dtwxMU3LixbCgyk4V`
+- Production branch project dev masih `main`; deploy branch kerja dilakukan manual.
+- Deploy dev hanya dengan `--project` eksplisit:
+  - `vercel deploy --prod --project be-fnc-dev --scope team_eagY6z8dtwxMU3LixbCgyk4V --yes`
+  - `vercel deploy --prod --project fessncurious-dev --scope team_eagY6z8dtwxMU3LixbCgyk4V --yes`
+- Jangan menjalankan `vercel deploy --prod` tanpa `--project`.
 
-## 3. Environment variables yang dibutuhkan
+## 3. Environment variables
 
 ### Pemisahan env lokal
 
 - Production tetap memakai `backend/.env` (tidak disentuh).
-- Dev memakai `backend/.env.development` (gitignored) dengan Supabase project **kedua**.
+- Dev memakai `backend/.env.development` (gitignored) dengan Supabase project dev.
 - Template aman ada di `backend/.env.development.example`.
-- Vercel dev memakai environment variables project `be-fnc-dev` / `fessncurious-dev`, bukan file `.env` production.
+- Vercel dev memakai environment variables project `be-fnc-dev` / `fessncurious-dev`.
 
 ### Backend
 
 ```env
-# Feature flags
+# Feature flags — tetap false sampai sign-off
 PAYMENTS_ENABLED=false
 BASE_PAYOUTS_ENABLED=false
 
-# Midtrans sandbox
+# Payout
+BASE_PAYOUT_FEE_IDR=6500
+
+# Midtrans sandbox — isi nilainya di lokal/Vercel, jangan commit
 MIDTRANS_IS_PRODUCTION=false
 MIDTRANS_SERVER_KEY=
 MIDTRANS_CLIENT_KEY=
@@ -110,10 +114,10 @@ MIDTRANS_MERCHANT_ID=
 # Rekonsiliasi
 PAYMENT_RECONCILE_SECRET=
 
-# CORS
+# CORS allowlist
 ALLOWED_ORIGINS=http://localhost:5173,https://fessncurious-dev.vercel.app
 
-# Database dev (diisi setelah Supabase dev dibuat)
+# Database dev
 DATABASE_URL=
 DIRECT_URL=
 ```
@@ -130,140 +134,157 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 
 ## 4. Rencana implementasi
 
-### Fase 0 â€” Persiapan
+### Fase 0 — Persiapan
 
 - [x] Kunci keputusan produk dan paket.
-- [x] Buat branch backend `feat/ctf-midtrans`.
-- [x] Buat branch frontend `feat/ctf-midtrans`.
+- [x] Buat branch backend & frontend `feat/ctf-midtrans`.
 - [x] Buat progress tracker.
 - [x] Buat Supabase project development.
 - [x] Buat Vercel project dev backend + frontend.
-- [x] Isi environment dev (DB, storage, JWT, email, Midtrans).
+- [x] Isi environment dev (DB, storage, JWT, email).
 - [x] Deploy backend dev + verifikasi health/DB/CORS.
 - [x] Deploy frontend dev + verifikasi build memakai API dev.
-- [ ] Siapkan Midtrans sandbox (keys sudah ada; verifikasi transaksi belum).
-- [ ] Audit saldo `User.balance` existing (read-only).
+- [ ] Isi Midtrans sandbox keys yang valid dan verifikasi transaksi.
+- [x] Audit saldo `User.balance` existing (read-only) + backfill.
 
-### Fase 1 â€” Schema & ledger
+### Fase 1 — Schema & ledger
 
-- [x] `CtfWallet`
-- [x] `CtfLedgerEntry`
-- [x] `PaymentOrder`
-- [x] `PaymentEvent`
-- [x] `FessCharge`
-- [x] `Base.trialEndsAt`
-- [x] `Base.freeForever`
-- [x] `BaseRevenueWallet`
-- [x] `BaseRevenueEntry`
-- [x] `BasePayout`
-- [x] `AdminAuditLog`
-- [x] `Fess.idempotencyKey`
-- [x] `SystemSetting` config pembayaran
-- [x] Migrasi additive + backfill
-- [x] Uji migrasi di Supabase dev
-- [x] `CtfWalletService` credit/debit atomik + idempotency
-- [x] Unit test wallet (8 test) + constraint anti-saldo-negatif
-- [x] Treasury admin pindah ke `BaseRevenueWallet` IDR (tidak baca CTF)
-- [x] Payout lama diblokir saat `BASE_PAYOUTS_ENABLED=false`
-- [x] Base baru otomatis trial 7 hari + revenue wallet
+- [x] `CtfWallet`, `CtfLedgerEntry`, `PaymentOrder`, `PaymentEvent`, `FessCharge`.
+- [x] `Base.trialEndsAt`, `Base.freeForever`, kontrol payout/KYC/bank.
+- [x] `BaseRevenueWallet` + `reservedIdr`.
+- [x] `BaseRevenueEntry`, `BasePayout`, `AdminAuditLog`.
+- [x] `Fess.idempotencyKey`, `Fess.publishedAt`, `SystemSetting`.
+- [x] Migrasi additive + backfill aman; diterapkan di Supabase dev.
+- [x] `CtfWalletService` credit/debit atomik + idempotency + anti-saldo-negatif.
+- [x] Legacy treasury admin pindah ke `BaseRevenueWallet` IDR.
+- [x] Payout legacy diblokir `503 PAYOUTS_DISABLED` saat flag false.
+- [x] Base baru otomatis trial 7 hari + revenue wallet.
 
-### Fase 2 â€” Top-up Midtrans
+### Fase 2 — Top-up Midtrans
 
-- [ ] Service Midtrans Core API
-- [ ] `GET /payments/packages`
-- [ ] `POST /payments/orders`
-- [ ] `GET /payments/orders/:id`
-- [ ] `GET /payments/orders`
-- [ ] Webhook signature SHA512
-- [ ] Idempotent credit ledger
-- [ ] Rekonsiliasi status
-- [ ] Cron/internal reconcile endpoint
-- [ ] Rate limit & validasi amount
+- [x] Service Midtrans Core API (QRIS, VA, Mandiri Bill, GoPay, ShopeePay).
+- [x] `GET /payments/packages`
+- [x] `POST /payments/orders` + idempotency key.
+- [x] `GET /payments/orders/:id`
+- [x] `GET /payments/orders`
+- [x] Webhook signature SHA512, amount/currency/order checks.
+- [x] Webhook invalid signature ditolak sebelum DB write.
+- [x] Idempotent credit ledger.
+- [x] Rekonsiliasi status + cron/internal reconcile endpoint.
+- [x] Rate limit in-memory + Postgres fixed-window.
+- [x] CORS allowlist ketat.
 
-### Fase 3 â€” Fess, trial, refund
+### Fase 3 — Fess, trial, refund
 
-- [ ] Cek trial di `createFess`
-- [ ] Wajib login untuk base berbayar
-- [ ] Debit CTF atomik
-- [x] `FessCharge` + ledger
-- [ ] Refund otomatis saat reject/delete unpublished
-- [ ] Idempotency key fess
-- [ ] Error `402 INSUFFICIENT_CTF`
-- [ ] Error `401 AUTH_REQUIRED_FOR_PAID_FESS`
+- [x] Cek trial/freeForever di `createFess`.
+- [x] Wajib login + email verified untuk base berbayar.
+- [x] Debit CTF atomik saat membuat fess berbayar.
+- [x] `FessCharge` + ledger + idempotency key fess.
+- [x] Refund otomatis saat reject/delete sebelum pertama terbit.
+- [x] Fess yang pernah terbit tidak refund CTF setelah ditolak/dihapus.
+- [x] Error `402 INSUFFICIENT_CTF`.
+- [x] Error `401 PAID_FESS_AUTH_REQUIRED` / `403 EMAIL_NOT_VERIFIED`.
+- [x] Charge CTF dan saldo baru ditampilkan di composer/toast.
+- [x] Re-approve fess yang charge-nya sudah direfund diblokir `FESS_CHARGE_REFUNDED`.
 
-### Fase 4 â€” Frontend
+### Fase 4 — Frontend
 
-- [ ] `TopUpModal` / panel top-up
-- [ ] Paket + metode pembayaran
-- [ ] QR/VA/deeplink + countdown
-- [ ] Polling status + resume pending order
-- [ ] Riwayat transaksi
-- [ ] Composer: badge trial/gratis/1 CTF
-- [ ] Modal saldo kurang
-- [ ] Update saldo setelah top-up
-- [ ] Base dashboard: trial, CTF, revenue
-- [ ] Public base badge
-- [ ] Legal/help update
+- [x] Top-up flow in-app (paket, metode, QR/VA/deeplink, countdown).
+- [x] Polling status + resume pending order.
+- [x] Riwayat transaksi.
+- [x] Update saldo setelah top-up.
+- [x] Composer menampilkan biaya CTF dan saldo setelah publish.
+- [x] Base dashboard: saldo IDR, revenue, hold, payout, rekening, KYC read-only.
+- [x] Super Admin: review payout, KYC, freeForever, re-auth.
+- [ ] Badge trial/gratis/1 CTF di composer sebelum publish.
+- [ ] Modal saldo kurang dengan CTA top-up.
+- [ ] Public base badge.
+- [ ] Audit copy legal/help lama yang masih menyebut treasury $CLUB/85%.
 
-### Fase 5 â€” Base revenue, payout, free forever
+### Fase 5 — Base revenue, payout, freeForever
 
-- [ ] Kredit `BaseRevenueEntry` Rp80/fess
-- [ ] Exclude self-post
-- [ ] Holding 7 hari
-- [ ] Reversal saat refund
-- [ ] Dashboard revenue base
-- [ ] Request payout (min Rp50.000)
-- [ ] Approval payout Super Admin
-- [ ] KYC ringan + rekening
-- [x] `Base.freeForever` + endpoint Super Admin
-- [ ] Re-auth + audit + alert
-- [ ] Read-only badge untuk Base Admin
+- [x] Kredit `BaseRevenueEntry` Rp80/fess saat fess terbit.
+- [x] Exclude self-post, trial, dan freeForever.
+- [x] Holding 7 hari + release otomatis.
+- [x] Reversal saat fess diturunkan setelah terbit.
+- [x] Request payout min Rp50.000 → reserve `availableIdr` ke `reservedIdr`.
+- [x] Review Super Admin: approve, reject, mark paid, mark failed.
+- [x] Reject/fail melepas reservation; mark paid mengonsumsi reservation.
+- [x] KYC + rekening bank; perubahan rekening re-auth + hold 24 jam.
+- [x] `freeForever` Super Admin + re-auth + reason + audit + alert.
+- [x] Base Admin read-only untuk KYC/freeForever.
+- [x] Self-approval payout diblokir.
 
-### Fase 6 â€” Keamanan, test, rollout
+### Fase 6 — Keamanan, test, rollout
 
-- [ ] Unit test signature/amount/idempotency
-- [ ] Test concurrent debit
-- [ ] Test trial boundary
-- [ ] Test anonymous paid base
-- [ ] Test refund & revenue reversal
-- [ ] Test payout & free forever RBAC
-- [ ] E2E Midtrans sandbox
-- [x] CORS allowlist
-- [ ] Rate limit terdistribusi
-- [x] Preview Vercel dev
-- [ ] Sign-off
-- [ ] Production canary
+- [x] Unit test signature/amount/idempotency.
+- [x] Test concurrent debit / anti-negative balance.
+- [x] Test trial boundary.
+- [x] Test anonymous + unverified paid base.
+- [x] Test refund & revenue reversal, termasuk published → rejected → deleted.
+- [x] Test payout reservation/release/consume & freeForever RBAC.
+- [x] CORS allowlist.
+- [x] Rate limit terdistribusi.
+- [ ] E2E Midtrans sandbox (QRIS/VA settlement + webhook).
+- [ ] Deploy dev Fase 3.
+- [ ] Sign-off.
+- [ ] Production canary.
 
-## 5. Definisi selesai (acceptance criteria)
+## 5. API baru Fase 3
+
+| Method | Path | Akses |
+|---|---|---|
+| GET | `/api/admin/base-revenue` | Base Admin (base sendiri), Super Admin (semua base) |
+| GET | `/api/admin/base-revenue/payouts` | Base Admin, Super Admin |
+| POST | `/api/admin/base-revenue/payouts` | Base Admin, Super Admin + `Idempotency-Key` |
+| POST | `/api/admin/base-revenue/payouts/:id/review` | Super Admin |
+| PUT | `/api/admin/base-revenue/bank` | Base Admin, Super Admin + password |
+| POST | `/api/admin/base-revenue/kyc` | Super Admin + password |
+| POST | `/api/admin/base-revenue/free-forever` | Super Admin + password + reason |
+
+Aksi review payout: `approve`, `reject`, `mark_paid`, `mark_failed`.
+Approve dan mark-paid mewajibkan password re-auth. Semua aksi menolak self-approval dan menulis audit log.
+
+## 6. Definisi selesai (acceptance criteria)
 
 - User bisa top up dan saldo bertambah tepat sekali.
 - Fess berbayar memotong tepat 1 CTF.
 - Trial base bekerja sesuai tanggal.
 - Base gratis selamanya tidak memotong CTF.
-- Fess ditolak/refund mengembalikan CTF tepat sekali.
+- Fess ditolak/dihapus sebelum terbit mengembalikan CTF tepat sekali.
+- Fess yang pernah terbit tidak mengembalikan CTF setelah take-down.
 - Revenue base bertambah Rp80 hanya untuk fess berbayar yang terbit, bukan self-post.
 - Payout tidak bisa melebihi saldo available.
 - Tidak ada saldo CTF yang bisa ditarik sebagai uang.
-- Hanya Super Admin yang bisa mengubah free forever/refund/payout.
+- Hanya Super Admin yang bisa mengubah freeForever/KYC/refund/payout.
 - Semua aksi high-risk tercatat di audit log.
 - Build backend/frontend dan seluruh test lulus.
+- E2E Midtrans sandbox lulus.
+- Sign-off eksplisit sebelum production.
 
-## 6. Follow-up konfigurasi dev
+## 7. Gate yang masih terbuka
 
-1. **OAuth redirect URI** â€” daftarkan di Google/Meta:
+1. **Midtrans sandbox keys** — dev belum punya `SB-Mid-server-…` / `SB-Mid-client-…`; `POST /payments/orders` mengembalikan `503 PAYMENT_CONFIG_ERROR`.
+2. **Notification URL** — set ke `https://be-fnc-dev.vercel.app/api/payments/midtrans/notification`, lalu uji signature SHA512, amount mismatch, replay, dan unknown order.
+3. **OAuth dev callback** — daftarkan:
    - `https://be-fnc-dev.vercel.app/api/auth/google/callback`
    - `https://be-fnc-dev.vercel.app/api/auth/instagram/callback`
-2. **Midtrans sandbox** â€” keys sudah ada di env dev, tetapi transaksi/webhook belum diuji karena route belum dibuat.
-3. **Vercel Git deploy** â€” production branch project dev masih `main`. Deploy dev dilakukan manual dengan `--project`; jangan deploy tanpa `--project`.
-4. **Email dev** â€” pastikan domain pengirim Resend valid untuk pengiriman ke email tester.
-5. **Production CORS** â€” sebelum merge, isi `ALLOWED_ORIGINS` di Vercel production jika ada origin selain `FRONTEND_URL` (default fallback hanya `FRONTEND_URL`).
+4. **Deploy dev Fase 3** — manual dengan `--project`, jangan production.
+5. **E2E sandbox** — QRIS/VA settlement, pending/expire, duplicate webhook, refund/chargeback.
+6. **Sign-off** — `PAYMENTS_ENABLED` dan `BASE_PAYOUTS_ENABLED` tetap `false` sampai disetujui.
+7. **Production** — jangan deploy/merge sebelum sign-off.
 
-## 7. Log perubahan
+## 8. Log perubahan
 
 | Tanggal | Perubahan |
 |---|---|
 | 2026-10-23 | Branch fitur dan progress tracker dibuat; keputusan produk dikunci. |
-| 2026-10-24 | Supabase dev (`ap-south-1`) terhubung, 10 migrasi diterapkan, bucket dev dibuat; backend/frontend dev live dan terverifikasi. |
-| 2026-10-24 | CORS allowlist diterapkan dan diuji (243 test lulus); origin asing ditolak 403. |
-| 2026-10-24 | Migrasi 11 (`ctf_payments_ledger`) diterapkan di dev: wallet, ledger, payment, revenue, payout, audit, trial/freeForever; backfill `User.balance` terverifikasi. |
-| 2026-10-24 | Treasury admin sekarang IDR dari `BaseRevenueWallet`; payout legacy diblokir 503 saat flag false; base baru mendapat trial 7 hari. |
+| 2026-10-24 | Supabase dev (`ap-south-1`) terhubung, bucket dev dibuat; backend/frontend dev live. |
+| 2026-10-24 | CORS allowlist diterapkan dan diuji; origin asing ditolak 403. |
+| 2026-10-24 | Migrasi `ctf_payments_ledger`: wallet, ledger, payment, revenue, payout, audit, trial/freeForever; backfill `User.balance` terverifikasi. |
+| 2026-10-24 | Treasury admin pindah ke `BaseRevenueWallet` IDR; payout legacy diblokir 503 saat flag false. |
+| 2026-10-24 | Fase 2 selesai: Midtrans Core API, webhook SHA512, idempotency, reconciliation, rate limiting. |
+| 2026-10-24 | Fase 3 selesai: fess billing, refund policy, revenue Rp80, reserved payout, KYC/bank/freeForever, audit + re-auth. |
+| 2026-10-24 | `Fess.publishedAt` + migrasi: refund CTF hanya jika belum pernah terbit. |
+| 2026-10-24 | Frontend: top-up, composer charge UX, Base Admin revenue/payout/bank, Super Admin payout/KYC/freeForever. |
+| 2026-10-24 | Backend full suite 302 test lulus; build backend & frontend lulus. |

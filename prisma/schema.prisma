@@ -165,6 +165,7 @@ model Fess {
   song           Json? // { id, title, artist, cover, preview_url }
   quotedFess     Json? // { id, handle, content, time, avatar_bg, avatar_text }
   idempotencyKey String?   @unique // cegah dua debit untuk satu aksi publish
+  publishedAt    DateTime? // pertama kali terbit; menentukan kebijakan refund CTF
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -554,6 +555,7 @@ model BaseRevenueWallet {
   baseId       String   @unique
   pendingIdr   Int      @default(0)
   availableIdr Int      @default(0)
+  reservedIdr  Int      @default(0)
   lifetimeIdr  Int      @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

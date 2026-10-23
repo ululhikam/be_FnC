@@ -98,6 +98,9 @@ export const CreateFessSchema = z.object({
   template: z.enum(TEMPLATE_KEYS).optional().default('default'),
   quoted_fess: QuotedFessSchema.optional().nullable(),
   tag: z.enum(['Cerita', 'Tanya']).optional().nullable(),
+  // Optional body fallback for clients that cannot send custom headers.
+  // Header `Idempotency-Key` takes precedence in the controller.
+  idempotency_key: z.string().min(1).max(180).optional().nullable(),
 });
 
 export const GetFessesQuerySchema = z.object({

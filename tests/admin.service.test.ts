@@ -35,6 +35,22 @@ vi.mock('../src/config/prisma.js', () => ({
     payout: {
       create: vi.fn(),
     },
+    baseRevenueEntry: {
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn(),
+      updateMany: vi.fn(),
+    },
+    baseRevenueWallet: {
+      findUnique: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+    },
+    basePayout: {
+      findMany: vi.fn(),
+      findUnique: vi.fn(),
+      create: vi.fn(),
+      updateMany: vi.fn(),
+    },
     $transaction: vi.fn((items) => (typeof items === 'function' ? items(prisma) : Promise.all(items))),
   },
 }));

@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { FessService } from '../src/services/fess.service.js';
 import { InstagramService } from '../src/services/instagram.service.js';
+import { CtfWalletService } from '../src/services/ctf-wallet.service.js';
 import { prisma } from '../src/config/prisma.js';
+
+// Base fixtures below exercise the free-trial posting path. Paid-base billing
+// has its own dedicated tests in fess-billing.service.test.ts.
+const ACTIVE_TRIAL = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
 vi.mock('../src/config/prisma.js', () => ({
   prisma: {
@@ -53,6 +58,22 @@ vi.mock('../src/config/prisma.js', () => ({
     systemLog: {
       create: vi.fn(),
     },
+    fessCharge: {
+      findUnique: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+    },
+    baseRevenueEntry: {
+      findUnique: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
+      createMany: vi.fn(),
+      updateMany: vi.fn(),
+    },
+    baseRevenueWallet: {
+      upsert: vi.fn(),
+      update: vi.fn(),
+      findUnique: vi.fn(),
+    },
     $transaction: vi.fn((cb) => (typeof cb === 'function' ? cb(prisma) : Promise.all(cb))),
   },
 }));
@@ -60,6 +81,13 @@ vi.mock('../src/config/prisma.js', () => ({
 vi.mock('../src/services/storage.service.js', () => ({
   StorageService: {
     uploadMedia: vi.fn().mockResolvedValue({ url: 'https://storage/canvas.svg' }),
+  },
+}));
+
+vi.mock('../src/services/ctf-wallet.service.js', () => ({
+  CtfWalletService: {
+    debit: vi.fn(),
+    credit: vi.fn(),
   },
 }));
 
@@ -194,6 +222,7 @@ describe('FessService Unit Tests', () => {
         id: 'base_1',
         handle: '@codememfess',
         creatorId: 'mod_1',
+        trialEndsAt: ACTIVE_TRIAL,
       } as any);
 
       vi.mocked(prisma.fess.create).mockResolvedValueOnce({
@@ -228,6 +257,7 @@ describe('FessService Unit Tests', () => {
         id: 'base_1',
         handle: '@codememfess',
         creatorId: 'mod_1',
+        trialEndsAt: ACTIVE_TRIAL,
       } as any);
 
       vi.mocked(prisma.fess.create).mockResolvedValueOnce({
@@ -265,6 +295,7 @@ describe('FessService Unit Tests', () => {
         id: 'base_1',
         handle: '@codememfess',
         creatorId: 'mod_1',
+        trialEndsAt: ACTIVE_TRIAL,
       } as any);
 
       vi.mocked(prisma.fess.create).mockResolvedValueOnce({
@@ -303,6 +334,7 @@ describe('FessService Unit Tests', () => {
         id: 'base_1',
         handle: '@codememfess',
         creatorId: 'mod_1',
+        trialEndsAt: ACTIVE_TRIAL,
       } as any);
 
       vi.mocked(prisma.fess.create).mockResolvedValueOnce({
@@ -332,6 +364,7 @@ describe('FessService Unit Tests', () => {
         id: 'base_1',
         handle: '@codememfess',
         creatorId: 'usr_1',
+        trialEndsAt: ACTIVE_TRIAL,
       } as any);
 
       vi.mocked(prisma.fess.create).mockResolvedValueOnce({
@@ -359,6 +392,7 @@ describe('FessService Unit Tests', () => {
         id: 'base_1',
         handle: '@codememfess',
         creatorId: 'mod_1',
+        trialEndsAt: ACTIVE_TRIAL,
         postMode: 'auto',
       } as any);
 
@@ -399,6 +433,7 @@ describe('FessService Unit Tests', () => {
         id: 'base_1',
         handle: '@codememfess',
         creatorId: 'mod_1',
+        trialEndsAt: ACTIVE_TRIAL,
         postMode: 'auto',
       } as any);
 
@@ -432,6 +467,127 @@ describe('FessService Unit Tests', () => {
       expect(prisma.systemLog.create).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ source: 'AI_FILTER' }) })
       );
+    });
+
+    it('charges one CTF on a paid base and returns the new balance', async () => {
+      vi.mocked(prisma.base.findUnique).mockResolvedValueOnce({
+        id: 'base_1',
+        handle: '@codememfess',
+        creatorId: 'mod_1',
+        freeForever: false,
+        trialEndsAt: new Date(Date.now() - 1000),
+      } as any);
+      vi.mocked(prisma.fess.create).mockResolvedValueOnce({
+        id: 'fess_paid',
+        baseHandle: '@codememfess',
+        baseId: 'base_1',
+        userId: 'usr_1',
+        content: 'Paid confession',
+        status: 'pending',
+        upvotes: 0,
+        downvotes: 0,
+        createdAt: new Date(),
+        comments: [],
+      } as any);
+      vi.mocked(prisma.fessCharge.findUnique).mockResolvedValueOnce(null);
+      vi.mocked(CtfWalletService.debit).mockResolvedValueOnce({
+        walletId: 'wallet_1',
+        balance: 4,
+        idempotent: false,
+      } as any);
+      vi.mocked(prisma.fessCharge.create).mockResolvedValueOnce({} as any);
+      vi.mocked(prisma.follow.findUnique).mockResolvedValueOnce({ id: 'follow_1' } as any);
+
+      const result = await FessService.createFess(
+        { base_handle: '@codememfess', content: 'Paid confession' },
+        { id: 'usr_1', emailVerifiedAt: new Date() }
+      );
+
+      expect(result).toMatchObject({
+        id: 'fess_paid',
+        status: 'pending',
+        charged_ctf: 1,
+        ctf_balance: 4,
+        base_billing: { requires_payment: true, reason: 'paid' },
+      });
+      expect(CtfWalletService.debit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'usr_1',
+          amount: 1,
+          type: 'FESS_CHARGE',
+          referenceId: 'fess_paid',
+        }),
+        prisma
+      );
+    });
+
+    it('rejects a paid fess without a verified email or enough CTF', async () => {
+      vi.mocked(prisma.base.findUnique).mockResolvedValue({
+        id: 'base_1',
+        handle: '@codememfess',
+        creatorId: 'mod_1',
+        trialEndsAt: new Date(Date.now() - 1000),
+      } as any);
+
+      await expect(
+        FessService.createFess(
+          { base_handle: '@codememfess', content: 'No email' },
+          'usr_1'
+        )
+      ).rejects.toMatchObject({ code: 'EMAIL_NOT_VERIFIED', status: 403 });
+
+      vi.mocked(prisma.fess.create).mockResolvedValueOnce({
+        id: 'fess_paid',
+        baseHandle: '@codememfess',
+        baseId: 'base_1',
+        userId: 'usr_1',
+        content: 'Poor wallet',
+        status: 'pending',
+        comments: [],
+      } as any);
+      vi.mocked(prisma.fessCharge.findUnique).mockResolvedValueOnce(null);
+      vi.mocked(CtfWalletService.debit).mockRejectedValueOnce(
+        Object.assign(new Error('Saldo CTF tidak mencukupi'), {
+          status: 402,
+          code: 'INSUFFICIENT_CTF',
+        })
+      );
+
+      await expect(
+        FessService.createFess(
+          { base_handle: '@codememfess', content: 'Poor wallet' },
+          { id: 'usr_1', emailVerifiedAt: new Date() }
+        )
+      ).rejects.toMatchObject({ code: 'INSUFFICIENT_CTF', status: 402 });
+    });
+
+    it('replays an idempotent fess creation without charging again', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_existing',
+        baseHandle: '@codememfess',
+        userId: 'usr_1',
+        content: 'Same request',
+        status: 'pending',
+        upvotes: 0,
+        downvotes: 0,
+        createdAt: new Date(),
+        comments: [],
+        base: { avatar: null, color: '#123', initial: 'CM' },
+      } as any);
+
+      const result = await FessService.createFess(
+        {
+          base_handle: '@codememfess',
+          content: 'Same request',
+          idempotency_key: 'fess-key-1',
+        },
+        { id: 'usr_1', emailVerifiedAt: new Date() }
+      );
+
+      expect(result.id).toBe('fess_existing');
+      expect(prisma.base.findUnique).not.toHaveBeenCalled();
+      expect(prisma.fess.create).not.toHaveBeenCalled();
+      expect(CtfWalletService.debit).not.toHaveBeenCalled();
     });
   });
 
@@ -806,6 +962,172 @@ describe('FessService Unit Tests', () => {
         })
       );
     });
+
+    it('does not republish a fess whose CTF charge was already refunded', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_refunded',
+        baseHandle: '@codememfess',
+        baseId: 'base_1',
+        userId: 'usr_author',
+        status: 'rejected',
+        content: 'Refunded',
+        base: { creatorId: 'mod_owner' },
+        charge: { id: 'charge_1', status: 'REFUNDED', amount: 1 },
+      } as any);
+
+      await expect(
+        FessService.approveFess('fess_refunded', {
+          id: 'mod_owner',
+          role: 'Base Admin',
+          managedBases: ['@codememfess'],
+        })
+      ).rejects.toMatchObject({ code: 'FESS_CHARGE_REFUNDED', status: 409 });
+
+      expect(prisma.fess.update).not.toHaveBeenCalled();
+    });
+
+    it('refunds one CTF when a paid fess is rejected before publishing', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_pending',
+        baseHandle: '@codememfess',
+        baseId: 'base_1',
+        userId: 'usr_author',
+        status: 'pending',
+        content: 'Pending paid',
+        base: { creatorId: 'mod_owner' },
+        charge: { id: 'charge_1', status: 'CHARGED', amount: 1 },
+      } as any);
+      vi.mocked(prisma.fess.update).mockResolvedValueOnce({
+        id: 'fess_pending',
+        baseHandle: '@codememfess',
+        content: 'Pending paid',
+        status: 'rejected',
+        upvotes: 0,
+        downvotes: 0,
+        createdAt: new Date(),
+        comments: [],
+      } as any);
+      vi.mocked(prisma.fessCharge.findUnique).mockResolvedValueOnce({
+        id: 'charge_1',
+        userId: 'usr_author',
+        amount: 1,
+        status: 'CHARGED',
+      } as any);
+      vi.mocked(CtfWalletService.credit).mockResolvedValueOnce({
+        walletId: 'wallet_1',
+        balance: 5,
+        idempotent: false,
+      } as any);
+      vi.mocked(prisma.fessCharge.update).mockResolvedValueOnce({} as any);
+
+      const result = await FessService.rejectFess('fess_pending', {
+        id: 'mod_owner',
+        role: 'Base Admin',
+        managedBases: ['@codememfess'],
+      });
+
+      expect(result).toMatchObject({ status: 'rejected', refunded_ctf: 1, ctf_balance: 5 });
+      expect(CtfWalletService.credit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'usr_author',
+          amount: 1,
+          type: 'FESS_REFUND',
+          referenceId: 'fess_pending',
+        }),
+        prisma
+      );
+      expect(prisma.baseRevenueEntry.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('does not refund CTF but reverses base revenue after a published fess is rejected', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_live',
+        baseHandle: '@codememfess',
+        baseId: 'base_1',
+        userId: 'usr_author',
+        status: 'published',
+        content: 'Live paid',
+        base: { creatorId: 'mod_owner' },
+        charge: { id: 'charge_1', status: 'CHARGED', amount: 1 },
+      } as any);
+      vi.mocked(prisma.fess.update).mockResolvedValueOnce({
+        id: 'fess_live',
+        baseHandle: '@codememfess',
+        content: 'Live paid',
+        status: 'rejected',
+        upvotes: 0,
+        downvotes: 0,
+        createdAt: new Date(),
+        comments: [],
+      } as any);
+      vi.mocked(prisma.baseRevenueEntry.findUnique).mockResolvedValueOnce({
+        id: 'entry_1',
+        walletId: 'wallet_rev',
+        amountIdr: 80,
+        status: 'PENDING',
+        type: 'EARNING',
+      } as any);
+      vi.mocked(prisma.baseRevenueEntry.updateMany).mockResolvedValueOnce({ count: 1 } as any);
+      vi.mocked(prisma.baseRevenueWallet.update).mockResolvedValueOnce({} as any);
+
+      const result = await FessService.rejectFess('fess_live', {
+        id: 'mod_owner',
+        role: 'Base Admin',
+        managedBases: ['@codememfess'],
+      });
+
+      expect(result.revenue_reversal).toEqual({ amount_idr: 80, status: 'REVERSED' });
+      expect(CtfWalletService.credit).not.toHaveBeenCalled();
+      expect(prisma.baseRevenueWallet.update).toHaveBeenCalledWith({
+        where: { id: 'wallet_rev' },
+        data: {
+          pendingIdr: { decrement: 80 },
+          lifetimeIdr: { decrement: 80 },
+        },
+      });
+    });
+
+    it('does not refund CTF when a previously published fess is rejected again', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_was_live',
+        baseHandle: '@codememfess',
+        baseId: 'base_1',
+        userId: 'usr_author',
+        status: 'rejected',
+        publishedAt: new Date('2026-10-20T00:00:00Z'),
+        content: 'Pernah terbit',
+        base: { creatorId: 'mod_owner' },
+        charge: { id: 'charge_1', status: 'CHARGED', amount: 1 },
+      } as any);
+      vi.mocked(prisma.fess.update).mockResolvedValueOnce({
+        id: 'fess_was_live',
+        baseHandle: '@codememfess',
+        content: 'Pernah terbit',
+        status: 'rejected',
+        upvotes: 0,
+        downvotes: 0,
+        createdAt: new Date(),
+        comments: [],
+      } as any);
+      vi.mocked(prisma.baseRevenueEntry.findUnique).mockResolvedValueOnce({
+        id: 'entry_1',
+        walletId: 'wallet_rev',
+        amountIdr: 80,
+        status: 'REVERSED',
+        type: 'EARNING',
+      } as any);
+
+      const result = await FessService.rejectFess('fess_was_live', {
+        id: 'mod_owner',
+        role: 'Base Admin',
+        managedBases: ['@codememfess'],
+      });
+
+      expect(result.refunded_ctf).toBeUndefined();
+      expect(CtfWalletService.credit).not.toHaveBeenCalled();
+      expect(prisma.fessCharge.update).not.toHaveBeenCalled();
+      expect(prisma.baseRevenueEntry.updateMany).not.toHaveBeenCalled();
+    });
   });
 
   describe('reportFess', () => {
@@ -963,6 +1285,82 @@ describe('FessService Unit Tests', () => {
 
       expect(prisma.notification.create).not.toHaveBeenCalled();
       expect(prisma.systemLog.create).not.toHaveBeenCalled();
+    });
+
+    it('does not refund CTF when a previously published but now rejected fess is deleted', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_was_live',
+        baseHandle: '@codememfess',
+        baseId: 'base_1',
+        userId: 'usr_author',
+        content: 'Pernah terbit',
+        status: 'rejected',
+        publishedAt: new Date('2026-10-20T00:00:00Z'),
+        base: { creatorId: 'mod_owner' },
+        charge: { id: 'charge_1', status: 'CHARGED', amount: 1 },
+      } as any);
+      vi.mocked(prisma.baseRevenueEntry.findUnique).mockResolvedValueOnce({
+        id: 'entry_1',
+        walletId: 'wallet_rev',
+        amountIdr: 80,
+        status: 'REVERSED',
+        type: 'EARNING',
+      } as any);
+
+      const result = await FessService.deleteFess('fess_was_live', {
+        id: 'mod_owner',
+        role: 'Base Admin',
+        managedBases: ['@codememfess'],
+      });
+
+      expect(result.refunded_ctf).toBeUndefined();
+      expect(result.revenue_reversal).toBeUndefined();
+      expect(CtfWalletService.credit).not.toHaveBeenCalled();
+      expect(prisma.fessCharge.update).not.toHaveBeenCalled();
+    });
+
+    it('refunds CTF when a never-published paid fess is deleted', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_pending',
+        baseHandle: '@codememfess',
+        baseId: 'base_1',
+        userId: 'usr_author',
+        content: 'Belum terbit',
+        status: 'pending',
+        publishedAt: null,
+        base: { creatorId: 'mod_owner' },
+        charge: { id: 'charge_1', status: 'CHARGED', amount: 1 },
+      } as any);
+      vi.mocked(prisma.fessCharge.findUnique).mockResolvedValueOnce({
+        id: 'charge_1',
+        userId: 'usr_author',
+        amount: 1,
+        status: 'CHARGED',
+      } as any);
+      vi.mocked(CtfWalletService.credit).mockResolvedValueOnce({
+        walletId: 'wallet_1',
+        balance: 5,
+        idempotent: false,
+      } as any);
+      vi.mocked(prisma.fessCharge.update).mockResolvedValueOnce({} as any);
+
+      const result = await FessService.deleteFess('fess_pending', {
+        id: 'usr_author',
+        role: 'User',
+        managedBases: [],
+      });
+
+      expect(result).toMatchObject({ ok: true, refunded_ctf: 1, ctf_balance: 5 });
+      expect(CtfWalletService.credit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'usr_author',
+          amount: 1,
+          type: 'FESS_REFUND',
+          referenceId: 'fess_pending',
+        }),
+        prisma
+      );
+      expect(prisma.baseRevenueEntry.updateMany).not.toHaveBeenCalled();
     });
   });
 });

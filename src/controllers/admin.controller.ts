@@ -129,6 +129,30 @@ export class AdminController {
     }
   }
 
+  static async getInstagramInsights(req: Request, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) {
+        return errorResponse(res, 'Bukan admin', 403, 'FORBIDDEN');
+      }
+      const insights = await AdminService.getInstagramInsights(req.user);
+      return successResponse(res, insights, 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async getInstagramMediaInsights(req: Request, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) {
+        return errorResponse(res, 'Bukan admin', 403, 'FORBIDDEN');
+      }
+      const insights = await AdminService.getInstagramMediaInsights(req.user);
+      return successResponse(res, insights, 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
   static async requestPayout(req: Request, res: Response, next: NextFunction) {
     try {
       if (!req.user) {

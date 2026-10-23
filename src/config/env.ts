@@ -41,8 +41,10 @@ export const ENV = {
   // Versi Graph API Instagram (naikkan sesuai rilis Meta terbaru).
   INSTAGRAM_API_VERSION: process.env.INSTAGRAM_API_VERSION || 'v25.0',
   // Scope OAuth — hanya permission yang benar-benar dipakai app (syarat App Review).
+  // `instagram_business_manage_insights` wajib untuk endpoint /insights.
   INSTAGRAM_SCOPES:
-    process.env.INSTAGRAM_SCOPES || 'instagram_business_basic,instagram_business_content_publish',
+    process.env.INSTAGRAM_SCOPES ||
+    'instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights',
 
   // URL publik backend (dipakai worker internal untuk memanggil dirinya sendiri)
   BACKEND_PUBLIC_URL:

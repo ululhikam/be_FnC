@@ -46,6 +46,21 @@ router.get(
   AdminController.getPlatformConnections
 );
 
+// Instagram Insights (Base Admin)
+router.get(
+  '/instagram-insights',
+  requireAuth,
+  requireRole('Base Admin', 'Super Admin'),
+  AdminController.getInstagramInsights
+);
+
+router.get(
+  '/instagram-media-insights',
+  requireAuth,
+  requireRole('Base Admin', 'Super Admin'),
+  AdminController.getInstagramMediaInsights
+);
+
 router.post(
   '/connections/:platform',
   requireAuth,

@@ -73,7 +73,486 @@ export interface FinalizePayload {
   exp: number;
 }
 
+/* ============================================================
+ * Instagram Insights (analitik akun, audiens, dan konten)
+ * ============================================================ */
+
+const INSIGHTS_CACHE_TTL_MS = 5 * 60 * 1000;
+const INSIGHTS_RANGE_DAYS = 30;
+
+/** Satu titik data harian dari Meta Insights. */
+export interface IgInsightPoint {
+  date: string;
+  value: number;
+}
+
+/** Metrik akun yang sudah dinormalisasi untuk frontend. */
+export interface IgInsightMetric {
+  metric: string;
+  label: string;
+  aggregate: 'sum' | 'latest';
+  available: boolean;
+  /** Total seluruh rentang (sum) atau nilai terakhir (latest). */
+  total: number;
+  /** Nilai pada titik data terakhir. */
+  latest: number;
+  /** Nilai pada titik data pertama. */
+  first: number;
+  last7: number;
+  prev7: number;
+  /** Perubahan: sum = 7 hari terakhir vs 7 hari sebelumnya; latest = terakhir vs pertama. */
+  change: number;
+  changePct: number | null;
+  points: IgInsightPoint[];
+  error?: string;
+}
+
+/** Breakdown audiens (gender/usia, kota, negara, jam aktif). */
+export interface IgInsightBreakdown {
+  metric: string;
+  label: string;
+  available: boolean;
+  items: { label: string; value: number }[];
+  error?: string;
+}
+
+export interface IgAccountInsights {
+  fetchedAt: string;
+  range: { since: string; until: string; days: number };
+  metrics: IgInsightMetric[];
+  audience: IgInsightBreakdown[];
+  warnings: string[];
+}
+
+export interface IgMediaInsightItem {
+  id: string;
+  caption: string;
+  mediaType: string;
+  mediaProductType: string;
+  mediaUrl: string;
+  thumbnailUrl: string;
+  permalink: string;
+  timestamp: string;
+  likeCount: number;
+  commentsCount: number;
+  insights: Record<string, number>;
+}
+
+const IG_ACCOUNT_METRICS: Array<{
+  metric: string;
+  label: string;
+  aggregate: 'sum' | 'latest';
+  aliases?: string[];
+}> = [
+  { metric: 'follower_count', label: 'Total Pengikut', aggregate: 'latest' },
+  { metric: 'reach', label: 'Jangkauan (Reach)', aggregate: 'sum' },
+  { metric: 'views', label: 'Tayangan (Views)', aggregate: 'sum', aliases: ['impressions'] },
+  { metric: 'profile_views', label: 'Kunjungan Profil', aggregate: 'sum' },
+  { metric: 'website_clicks', label: 'Klik Website', aggregate: 'sum' },
+];
+
+const IG_AUDIENCE_METRICS: Array<{ metric: string; label: string }> = [
+  { metric: 'audience_gender_age', label: 'Gender & Rentang Usia' },
+  { metric: 'audience_city', label: 'Kota Asal Pengikut' },
+  { metric: 'audience_country', label: 'Negara Asal Pengikut' },
+  { metric: 'online_followers', label: 'Jam Aktif Pengikut' },
+];
+
+function metaErrorMessage(error: any): string {
+  return (
+    error?.response?.data?.error?.message ||
+    error?.response?.data?.message ||
+    error?.message ||
+    'Permintaan ke Meta Graph API gagal.'
+  );
+}
+
+function parseInsightPoints(item: any): IgInsightPoint[] {
+  const values = Array.isArray(item?.values) ? item.values : [];
+  const points: IgInsightPoint[] = [];
+
+  for (const entry of values) {
+    const numeric = typeof entry?.value === 'number' ? entry.value : Number(entry?.value);
+    const date = String(entry?.end_time || '').slice(0, 10);
+    if (date && Number.isFinite(numeric)) {
+      points.push({ date, value: numeric });
+    }
+  }
+
+  // Meta umumnya mengirim urutan kronologis; pastikan tetap urut naik.
+  return points.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function parseBreakdownItems(item: any): { label: string; value: number }[] {
+  const raw = item?.values?.[0]?.value;
+  if (!raw || typeof raw !== 'object') return [];
+
+  const entries = Object.entries(raw as Record<string, unknown>)
+    .map(([label, value]) => ({ label, value: Number(value) || 0 }))
+    .filter((entry) => entry.value > 0);
+
+  // `online_followers` memakai label jam (0–23) — urutkan sebagai angka.
+  const allNumeric = entries.every((entry) => /^\d+$/.test(entry.label));
+  if (allNumeric) {
+    return entries.sort((a, b) => Number(a.label) - Number(b.label));
+  }
+
+  return entries.sort((a, b) => b.value - a.value);
+}
+
+function sumValues(points: IgInsightPoint[]): number {
+  return points.reduce((total, point) => total + point.value, 0);
+}
+
+function buildMetric(
+  config: (typeof IG_ACCOUNT_METRICS)[number],
+  item: any | undefined,
+  error?: string
+): IgInsightMetric {
+  const points = item ? parseInsightPoints(item) : [];
+  const available = points.length > 0;
+  const total = available
+    ? config.aggregate === 'sum'
+      ? sumValues(points)
+      : points[points.length - 1].value
+    : 0;
+  const latest = available ? points[points.length - 1].value : 0;
+  const first = available ? points[0].value : 0;
+  // Untuk metrik akumulatif: 7 hari terakhir vs 7 hari sebelumnya.
+  // Untuk metrik stok (mis. total pengikut): nilai 7 hari lalu vs 14 hari lalu.
+  const last7 = available
+    ? config.aggregate === 'sum'
+      ? sumValues(points.slice(-7))
+      : points[Math.max(points.length - 8, 0)].value
+    : 0;
+  const prev7 = available
+    ? config.aggregate === 'sum'
+      ? sumValues(points.slice(-14, -7))
+      : points[Math.max(points.length - 15, 0)].value
+    : 0;
+
+  let change = 0;
+  let changePct: number | null = null;
+  if (available) {
+    if (config.aggregate === 'sum') {
+      change = last7 - prev7;
+      changePct = prev7 > 0 ? (change / prev7) * 100 : null;
+    } else {
+      change = latest - last7;
+      changePct = last7 > 0 ? (change / last7) * 100 : null;
+    }
+  }
+
+  return {
+    metric: config.metric,
+    label: config.label,
+    aggregate: config.aggregate,
+    available,
+    total,
+    latest,
+    first,
+    last7,
+    prev7,
+    change,
+    changePct,
+    points,
+    ...(error ? { error } : {}),
+  };
+}
+
+function buildBreakdown(
+  config: (typeof IG_AUDIENCE_METRICS)[number],
+  item: any | undefined,
+  error?: string
+): IgInsightBreakdown {
+  const items = item ? parseBreakdownItems(item) : [];
+  return {
+    metric: config.metric,
+    label: config.label,
+    available: items.length > 0,
+    items,
+    ...(error ? { error } : {}),
+  };
+}
+
 export class InstagramService {
+  /** Cache singkat agar perpindahan tab analitik tidak membanjiri rate limit Meta. */
+  private static insightsCache = new Map<string, { at: number; value: unknown }>();
+
+  private static cacheKey(scope: string, accessToken: string, suffix = ''): string {
+    const tokenHash = crypto.createHash('sha256').update(accessToken).digest('hex').slice(0, 16);
+    return `${scope}:${tokenHash}:${suffix}`;
+  }
+
+  private static cacheGet<T>(key: string): T | null {
+    const hit = this.insightsCache.get(key);
+    if (!hit) return null;
+    if (Date.now() - hit.at > INSIGHTS_CACHE_TTL_MS) {
+      this.insightsCache.delete(key);
+      return null;
+    }
+    return hit.value as T;
+  }
+
+  private static cacheSet(key: string, value: unknown): void {
+    this.insightsCache.set(key, { at: Date.now(), value });
+    if (this.insightsCache.size > 50) {
+      const oldest = this.insightsCache.keys().next().value;
+      if (oldest) this.insightsCache.delete(oldest);
+    }
+  }
+
+  private static async fetchInsights(
+    accessToken: string,
+    metrics: string[],
+    period?: 'day' | 'lifetime',
+    range?: { since: number; until: number }
+  ): Promise<any[]> {
+    const params: Record<string, string | number> = {
+      metric: metrics.join(','),
+      access_token: accessToken,
+    };
+    if (period) params.period = period;
+    if (range) {
+      params.since = range.since;
+      params.until = range.until;
+    }
+
+    const response = await axios.get(`${API_BASE}/me/insights`, {
+      params,
+      timeout: 8000,
+    });
+
+    return Array.isArray(response.data?.data) ? response.data.data : [];
+  }
+
+  /** Error izin/token tidak akan pulih dengan mencoba metrik satu per satu. */
+  private static isPermissionError(error: any): boolean {
+    const code = error?.response?.data?.error?.code;
+    return code === 10 || code === 190 || code === 200;
+  }
+
+  /**
+   * Ambil insights secara resilien: coba satu request gabungan, lalu fallback
+   * per metrik. Ini penting karena Meta menolak seluruh request bila salah satu
+   * metrik tidak tersedia untuk versi API/tipe akun tertentu.
+   */
+  private static async fetchInsightsResilient(
+    accessToken: string,
+    metrics: string[],
+    period: 'day' | 'lifetime',
+    range?: { since: number; until: number }
+  ): Promise<{ data: any[]; warnings: string[]; fatal: boolean }> {
+    try {
+      const data = await this.fetchInsights(accessToken, metrics, period, range);
+      return { data, warnings: [], fatal: false };
+    } catch (groupError: any) {
+      if (this.isPermissionError(groupError)) {
+        return { data: [], warnings: [metaErrorMessage(groupError)], fatal: true };
+      }
+
+      const settled = await Promise.allSettled(
+        metrics.map(async (metric) => ({
+          metric,
+          data: await this.fetchInsights(accessToken, [metric], period, range),
+        }))
+      );
+
+      const data: any[] = [];
+      const warnings: string[] = [];
+
+      settled.forEach((outcome, index) => {
+        if (outcome.status === 'fulfilled') {
+          data.push(...outcome.value.data);
+        } else {
+          warnings.push(`${metrics[index]}: ${metaErrorMessage(outcome.reason)}`);
+        }
+      });
+
+      return { data, warnings, fatal: false };
+    }
+  }
+
+  /**
+   * Ambil Instagram Account Insights + audiens.
+   * Rentang 30 hari terakhir, metrik dinormalisasi menjadi time-series siap chart.
+   */
+  static async getAccountInsights(accessToken: string): Promise<IgAccountInsights> {
+    const cacheKey = this.cacheKey('account', accessToken);
+    const cached = this.cacheGet<IgAccountInsights>(cacheKey);
+    if (cached) return cached;
+
+    const until = Math.floor(Date.now() / 1000);
+    const since = until - (INSIGHTS_RANGE_DAYS - 1) * 86400;
+    const range = { since, until };
+
+    // Metrik inti dan audiens dijalankan paralel (dua endpoint insights yang
+    // independen). `fatal` menandai error izin/token agar tidak mencoba
+    // probe metrik tambahan yang pasti gagal.
+    const audienceMetrics = IG_AUDIENCE_METRICS.map((config) => config.metric);
+    const [core, audienceResult] = await Promise.all([
+      this.fetchInsightsResilient(
+        accessToken,
+        ['follower_count', 'reach', 'profile_views', 'website_clicks'],
+        'day',
+        range
+      ),
+      this.fetchInsightsResilient(accessToken, audienceMetrics, 'lifetime'),
+    ]);
+    const warnings = [...core.warnings];
+
+    const coreByName = new Map<string, any>(core.data.map((item: any) => [item.name, item]));
+
+    // `views` adalah metrik pengganti `impressions` di API v22+. Coba berurutan.
+    if (!core.fatal && !coreByName.has('views') && !coreByName.has('impressions')) {
+      const viewsProbe = await this.fetchInsightsResilient(
+        accessToken,
+        ['views'],
+        'day',
+        range
+      );
+      const viewsItem = viewsProbe.data.find((item: any) => item.name === 'views');
+      if (viewsItem) {
+        coreByName.set('views', viewsItem);
+      } else if (!viewsProbe.fatal) {
+        const impressionsProbe = await this.fetchInsightsResilient(
+          accessToken,
+          ['impressions'],
+          'day',
+          range
+        );
+        const impressionsItem = impressionsProbe.data.find(
+          (item: any) => item.name === 'impressions'
+        );
+        if (impressionsItem) {
+          coreByName.set('impressions', impressionsItem);
+        } else {
+          warnings.push(
+            viewsProbe.warnings[0] || impressionsProbe.warnings[0] || 'Metrik tayangan tidak tersedia.'
+          );
+        }
+      }
+    }
+
+    const metrics = IG_ACCOUNT_METRICS.map((config) => {
+      const item =
+        coreByName.get(config.metric) ||
+        config.aliases?.map((alias) => coreByName.get(alias)).find(Boolean);
+      return buildMetric(config, item);
+    });
+
+    const audienceByName = new Map<string, any>(
+      audienceResult.data.map((item: any) => [item.name, item])
+    );
+    const audience = IG_AUDIENCE_METRICS.map((config) =>
+      buildBreakdown(config, audienceByName.get(config.metric))
+    );
+
+    warnings.push(...audienceResult.warnings);
+
+    const result: IgAccountInsights = {
+      fetchedAt: new Date().toISOString(),
+      range: {
+        since: new Date(since * 1000).toISOString().slice(0, 10),
+        until: new Date(until * 1000).toISOString().slice(0, 10),
+        days: INSIGHTS_RANGE_DAYS,
+      },
+      metrics,
+      audience,
+      warnings,
+    };
+
+    this.cacheSet(cacheKey, result);
+    return result;
+  }
+
+  /**
+   * Ambil konten Instagram terbaru beserta insights per media (reach, views,
+   * suka, komentar, simpan, bagikan). Dibatasi `limit` agar hemat rate limit.
+   */
+  static async getRecentMediaInsights(
+    accessToken: string,
+    limit = 6
+  ): Promise<{ fetchedAt: string; media: IgMediaInsightItem[]; warnings: string[] }> {
+    const safeLimit = Math.min(Math.max(limit, 1), 12);
+    const cacheKey = this.cacheKey('media', accessToken, String(safeLimit));
+    const cached = this.cacheGet<{
+      fetchedAt: string;
+      media: IgMediaInsightItem[];
+      warnings: string[];
+    }>(cacheKey);
+    if (cached) return cached;
+
+    const warnings: string[] = [];
+    const response = await axios.get(`${API_BASE}/me/media`, {
+      params: {
+        fields:
+          'id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count',
+        limit: safeLimit,
+        access_token: accessToken,
+      },
+      timeout: 10000,
+    });
+
+    const rawMedia: any[] = Array.isArray(response.data?.data) ? response.data.data : [];
+
+    const media = await Promise.all(
+      rawMedia.map(async (item): Promise<IgMediaInsightItem> => {
+        const normalized: IgMediaInsightItem = {
+          id: String(item.id || ''),
+          caption: String(item.caption || ''),
+          mediaType: String(item.media_type || 'IMAGE'),
+          mediaProductType: String(item.media_product_type || ''),
+          mediaUrl: String(item.media_url || ''),
+          thumbnailUrl: String(item.thumbnail_url || ''),
+          permalink: String(item.permalink || ''),
+          timestamp: String(item.timestamp || ''),
+          likeCount: Number(item.like_count) || 0,
+          commentsCount: Number(item.comments_count) || 0,
+          insights: {},
+        };
+
+        const baseMetrics = ['reach', 'likes', 'comments', 'shares', 'saved'];
+        let insightsData: any[] = [];
+
+        try {
+          insightsData = await this.fetchInsights(accessToken, ['reach', 'views', ...baseMetrics]);
+        } catch {
+          try {
+            insightsData = await this.fetchInsights(accessToken, baseMetrics);
+          } catch (error: any) {
+            warnings.push(`Media ${normalized.id}: ${metaErrorMessage(error)}`);
+          }
+        }
+
+        for (const metric of insightsData) {
+          const rawValue = metric?.values?.[0]?.value;
+          const numeric = typeof rawValue === 'number' ? rawValue : Number(rawValue);
+          if (metric?.name && Number.isFinite(numeric)) {
+            normalized.insights[metric.name] = numeric;
+          }
+        }
+
+        const likes = normalized.insights.likes ?? normalized.likeCount;
+        const comments = normalized.insights.comments ?? normalized.commentsCount;
+        const shares = normalized.insights.shares ?? 0;
+        const saved = normalized.insights.saved ?? 0;
+        normalized.insights.total_interactions = likes + comments + shares + saved;
+
+        return normalized;
+      })
+    );
+
+    const result = {
+      fetchedAt: new Date().toISOString(),
+      media,
+      warnings,
+    };
+
+    this.cacheSet(cacheKey, result);
+    return result;
+  }
+
   /**
    * Generate Meta Instagram OAuth authorization URL
    */

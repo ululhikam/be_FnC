@@ -1,6 +1,7 @@
 import { prisma } from '../config/prisma.js';
 import { rateLimitConfig } from '../middlewares/rateLimit.middleware.js';
 import { FessService } from './fess.service.js';
+import { InstagramService } from './instagram.service.js';
 
 export class AdminService {
   /**
@@ -251,6 +252,178 @@ export class AdminService {
     });
 
     return { data };
+  }
+
+  /**
+   * Cari koneksi Instagram yang relevan untuk admin:
+   * 1. koneksi milik admin sendiri,
+   * 2. koneksi level base yang dikelola,
+   * 3. koneksi milik kreator base yang dikelola.
+   */
+  private static async resolveInstagramConnection(currentUser: {
+    id: string;
+    managedBases?: string[];
+  }) {
+    const direct = await prisma.platformConnection.findFirst({
+      where: {
+        userId: currentUser.id,
+        platform: 'instagram',
+        connected: true,
+        accessToken: { not: null },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (direct) return direct;
+
+    const handles = currentUser.managedBases || [];
+    if (handles.length === 0) return null;
+
+    const bases = await prisma.base.findMany({
+      where: { handle: { in: handles } },
+      select: { id: true, creatorId: true },
+    });
+    if (bases.length === 0) return null;
+
+    const baseConnection = await prisma.platformConnection.findFirst({
+      where: {
+        baseId: { in: bases.map((base) => base.id) },
+        platform: 'instagram',
+        connected: true,
+        accessToken: { not: null },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (baseConnection) return baseConnection;
+
+    const creatorIds = bases
+      .map((base) => base.creatorId)
+      .filter((id): id is string => Boolean(id));
+    if (creatorIds.length === 0) return null;
+
+    return prisma.platformConnection.findFirst({
+      where: {
+        userId: { in: creatorIds },
+        platform: 'instagram',
+        connected: true,
+        accessToken: { not: null },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+  }
+
+  private static instagramAccountInfo(connection: {
+    accountHandle: string | null;
+    metadata: unknown;
+  }) {
+    const metadata = (connection.metadata || {}) as Record<string, unknown>;
+    return {
+      handle: connection.accountHandle || null,
+      ig_user_id: typeof metadata.igUserId === 'string' ? metadata.igUserId : null,
+      ig_username: typeof metadata.igUsername === 'string' ? metadata.igUsername : null,
+      token_expires_at:
+        typeof metadata.tokenExpiresAt === 'string' ? metadata.tokenExpiresAt : null,
+    };
+  }
+
+  private static instagramErrorMessage(error: any): string {
+    const metaError = error?.response?.data?.error;
+    const code = metaError?.code;
+    const text = String(metaError?.message || error?.message || '').trim();
+
+    if (code === 190) {
+      return 'Token Instagram kedaluwarsa atau dicabut. Hubungkan ulang akun dari menu Koneksi Medsos.';
+    }
+    if (code === 10 || code === 200 || /permission|scope|insufficient/i.test(text)) {
+      return 'Izin insights Instagram belum aktif. Hubungkan ulang akun Instagram dari menu Koneksi Medsos agar izin instagram_business_manage_insights diberikan.';
+    }
+    return text || 'Gagal mengambil Instagram Insights.';
+  }
+
+  /**
+   * Instagram account insights + audiens untuk admin base.
+   */
+  static async getInstagramInsights(currentUser: { id: string; managedBases?: string[] }) {
+    const conn = await this.resolveInstagramConnection(currentUser);
+
+    if (!conn) {
+      return {
+        connected: false,
+        account: null,
+        data: null,
+        message: 'Akun Instagram belum terhubung. Hubungkan dari menu Koneksi Medsos.',
+      };
+    }
+
+    const token = conn.accessToken;
+    if (!token) {
+      return {
+        connected: true,
+        account: this.instagramAccountInfo(conn),
+        data: null,
+        message: 'Token akses Instagram tidak tersedia.',
+      };
+    }
+
+    try {
+      const data = await InstagramService.getAccountInsights(token);
+      return {
+        connected: true,
+        account: this.instagramAccountInfo(conn),
+        data,
+      };
+    } catch (error: any) {
+      return {
+        connected: true,
+        account: this.instagramAccountInfo(conn),
+        data: null,
+        message: this.instagramErrorMessage(error),
+      };
+    }
+  }
+
+  /**
+   * Insights konten Instagram terbaru (media-level).
+   */
+  static async getInstagramMediaInsights(currentUser: {
+    id: string;
+    managedBases?: string[];
+  }) {
+    const conn = await this.resolveInstagramConnection(currentUser);
+
+    if (!conn) {
+      return {
+        connected: false,
+        account: null,
+        data: null,
+        message: 'Akun Instagram belum terhubung. Hubungkan dari menu Koneksi Medsos.',
+      };
+    }
+
+    const token = conn.accessToken;
+    if (!token) {
+      return {
+        connected: true,
+        account: this.instagramAccountInfo(conn),
+        data: null,
+        message: 'Token akses Instagram tidak tersedia.',
+      };
+    }
+
+    try {
+      const data = await InstagramService.getRecentMediaInsights(token, 6);
+      return {
+        connected: true,
+        account: this.instagramAccountInfo(conn),
+        data,
+      };
+    } catch (error: any) {
+      return {
+        connected: true,
+        account: this.instagramAccountInfo(conn),
+        data: null,
+        message: this.instagramErrorMessage(error),
+      };
+    }
   }
 
   /**

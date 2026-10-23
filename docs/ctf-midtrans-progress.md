@@ -60,14 +60,17 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 | Branch backend `feat/ctf-midtrans` | ✅ Dibuat | Belum di-push |
 | Branch frontend `feat/ctf-midtrans` | ✅ Dibuat | Belum di-push |
 | File progress | ✅ Dibuat | Dokumen ini |
-| Supabase project development | ⏳ Menunggu akses | Butuh `SUPABASE_ACCESS_TOKEN`; alternatif marketplace Supabase di Vercel perlu accept terms di browser |
+| Supabase project development | ✅ Aktif | Ref `vtvnurgkhqboygkttzae`, region `ap-south-1`; DB dev terpisah dari production |
 | Vercel project dev backend | ✅ Dibuat | `be-fnc-dev` → `be-fnc-dev.vercel.app` |
 | Vercel project dev frontend | ✅ Dibuat | `fessncurious-dev` → `fessncurious-dev.vercel.app` |
 | Git repo dev backend | ✅ Terhubung | `ululhikam/be_FnC` |
 | Git repo dev frontend | ✅ Terhubung | `ululhikam/con.fess_WebApp` |
-| Midtrans sandbox | ⏳ Belum | Butuh server/client key sandbox |
-| Staging/dev database env | ⏳ Belum | Diisi setelah Supabase dev ada |
-| Dev notification URL | ⏳ Belum | `https://be-fnc-dev.vercel.app/api/payments/midtrans/notification` |
+| Midtrans sandbox | ⏳ Keys terisi | Keys ada di `.env.development` dan Vercel dev; route/webhook belum diimplementasikan |
+| Staging/dev database env | ✅ Lokal | `backend/.env.development` (gitignored), 10 migrasi sudah diterapkan |
+| Dev storage bucket | ✅ Ada | `confess-media-dev` (public), upload/public/delete terverifikasi |
+| Dev backend deployment | ✅ Live | `https://be-fnc-dev.vercel.app` (health + DB + CORS OK) |
+| Dev frontend deployment | ✅ Live | `https://fessncurious-dev.vercel.app` (build memakai API dev) |
+| Dev notification URL | ⏳ Route belum ada | `https://be-fnc-dev.vercel.app/api/payments/midtrans/notification` |
 
 > Catatan Vercel: `fessncurious.vercel.app` adalah domain project Vercel, bukan domain milik sendiri. Subdomain `dev.fessncurious.vercel.app` tidak bisa dibuat sebagai custom domain. Isolasi dev dilakukan dengan **project Vercel terpisah** (`fessncurious-dev.vercel.app`, `be-fnc-dev.vercel.app`). Jika nanti ada domain sendiri (mis. `fessncurious.com`), domain `dev.fessncurious.com` bisa dipasang ke project dev.
 
@@ -77,6 +80,10 @@ Project Vercel dev:
 - Frontend: `fessncurious-dev` (`prj_11AGuBPTjOTBMjYXYY6zU2opoL9a`)
 - Keduanya terhubung ke repo GitHub masing-masing.
 - Production branch project dev masih default (`main`); branch kerja `feat/ctf-midtrans` akan menjadi preview sampai diubah ke production branch dev atau di-deploy manual ke project dev.
+- Deploy dev saat ini manual dari branch kerja:
+  - Backend: `vercel deploy --prod --project be-fnc-dev`
+  - Frontend: `vercel deploy --prod --project fessncurious-dev`
+- Jangan menjalankan `vercel deploy --prod` tanpa `--project` dari folder ini karena itu bisa menargetkan project production.
 
 ## 3. Environment variables yang dibutuhkan
 
@@ -129,10 +136,12 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 - [x] Buat branch backend `feat/ctf-midtrans`.
 - [x] Buat branch frontend `feat/ctf-midtrans`.
 - [x] Buat progress tracker.
-- [ ] Buat Supabase project development.
+- [x] Buat Supabase project development.
 - [x] Buat Vercel project dev backend + frontend.
-- [ ] Isi environment dev (sebagian sudah; database menunggu Supabase).
-- [ ] Siapkan Midtrans sandbox.
+- [x] Isi environment dev (DB, storage, JWT, email, Midtrans).
+- [x] Deploy backend dev + verifikasi health/DB/CORS.
+- [x] Deploy frontend dev + verifikasi build memakai API dev.
+- [ ] Siapkan Midtrans sandbox (keys sudah ada; verifikasi transaksi belum).
 - [ ] Audit saldo `User.balance` existing (read-only).
 
 ### Fase 1 — Schema & ledger

@@ -18,10 +18,16 @@ if ((process.env.NODE_ENV || 'development') === 'development') {
   const devEnvPath = path.join(backendRoot, '.env.development');
   if (fs.existsSync(devEnvPath)) {
     dotenv.config({ path: devEnvPath, override: true });
-  } else {
+  } else if (process.env.ALLOW_PROD_DB_FOR_LOCAL === 'true') {
     console.warn(
-      '[env] backend/.env.development not found; falling back to backend/.env. ' +
-        'Create it from .env.development.example before running against dev data.'
+      '[env] backend/.env.development not found; ALLOW_PROD_DB_FOR_LOCAL=true so ' +
+        'falling back to backend/.env. Do not use production data for normal development.'
+    );
+  } else {
+    throw new Error(
+      'backend/.env.development is required for local development. ' +
+        'Copy .env.development.example and fill in the dev Supabase credentials. ' +
+        'If you really need to use backend/.env, set ALLOW_PROD_DB_FOR_LOCAL=true.'
     );
   }
 }

@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -6,9 +7,24 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const backendRoot = path.resolve(__dirname, '../..');
 
-// Load environment variables explicitly from backend/.env and process.cwd()
+// Load environment variables explicitly from backend/.env and process.cwd().
+// Production/Vercel keeps using process env + .env; local development can
+// override it with backend/.env.development so production credentials are
+// never used by accident.
 dotenv.config({ path: path.join(backendRoot, '.env') });
 dotenv.config();
+
+if ((process.env.NODE_ENV || 'development') === 'development') {
+  const devEnvPath = path.join(backendRoot, '.env.development');
+  if (fs.existsSync(devEnvPath)) {
+    dotenv.config({ path: devEnvPath, override: true });
+  } else {
+    console.warn(
+      '[env] backend/.env.development not found; falling back to backend/.env. ' +
+        'Create it from .env.development.example before running against dev data.'
+    );
+  }
+}
 
 export const ENV = {
   PORT: parseInt(process.env.PORT || '3000', 10),

@@ -5,6 +5,10 @@ build/
 
 # Environment Variables
 .env
+.env.development
+.env.development.local
+.env.local
+.env.*.local
 
 # Prisma
 .prisma/
@@ -20,3 +24,4 @@ Thumbs.db
 # Skrip verifikasi lokal (jangan di-commit)
 tmp_verify_*.ts
 .vercel
+.opencodeignore

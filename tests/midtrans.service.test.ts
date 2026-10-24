@@ -100,7 +100,7 @@ describe('MidtransService', () => {
           status_code: '201',
           payment_type: 'qris',
           qr_string: 'QR-STRING',
-          expiry_time: '2026-10-25T00:00:00.000Z',
+          expiry_time: '2026-10-25 07:00:00',
           actions: [
             { name: 'generate-qr-code', url: 'https://example.test/qr.png' },
             { name: 'deeplink-redirect', url: 'https://example.test/deeplink' },
@@ -124,6 +124,7 @@ describe('MidtransService', () => {
     expect(result.qrString).toBe('QR-STRING');
     expect(result.qrUrl).toBe('https://example.test/qr.png');
     expect(result.deeplinkUrl).toBe('https://example.test/deeplink');
+    expect(result.expiresAt?.toISOString()).toBe('2026-10-25T00:00:00.000Z');
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(String(fetchMock.mock.calls[0][0])).toContain('api.sandbox.midtrans.com/v2/charge');
   });

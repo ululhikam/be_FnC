@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { ENV } from '../config/env.js';
 import type { PaymentMethodCode } from '../constants/payments.js';
+import { parseMidtransDate } from '../utils/midtrans-date.util.js';
 
 export type MidtransChargeInput = {
   orderId: string;
@@ -296,11 +297,8 @@ export class MidtransService {
     const vaNumbers = Array.isArray(raw.va_numbers)
       ? (raw.va_numbers as Array<{ va_number?: string }>)
       : [];
-    const rawExpiry = typeof raw.expiry_time === 'string' ? new Date(raw.expiry_time) : null;
-    const expiresAt =
-      rawExpiry && !Number.isNaN(rawExpiry.getTime())
-        ? rawExpiry
-        : new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const rawExpiry = parseMidtransDate(raw.expiry_time);
+    const expiresAt = rawExpiry || new Date(Date.now() + 24 * 60 * 60 * 1000);
 
     return {
       transactionId: typeof raw.transaction_id === 'string' ? raw.transaction_id : undefined,

@@ -13,6 +13,7 @@ import {
   findPaymentPackage,
   type PaymentMethodCode,
 } from '../constants/payments.js';
+import { parseMidtransDate } from '../utils/midtrans-date.util.js';
 import { CtfWalletService } from './ctf-wallet.service.js';
 import { MidtransError, MidtransService } from './midtrans.service.js';
 
@@ -101,12 +102,6 @@ function paymentChannelFor(method: PaymentMethodCode): string {
     default:
       return 'qris';
   }
-}
-
-function asDate(value: unknown): Date | undefined {
-  if (typeof value !== 'string') return undefined;
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 }
 
 function actionsFrom(value: unknown): Array<{ name?: string; url?: string }> {
@@ -664,7 +659,7 @@ export class PaymentService {
         data: {
           ...data,
           status: PaymentOrderStatus.PAID,
-          paidAt: asDate(payload.settlement_time) || new Date(),
+          paidAt: parseMidtransDate(payload.settlement_time) || new Date(),
           midtransStatus: String(payload.transaction_status ?? 'settlement'),
         },
       });
@@ -738,7 +733,7 @@ export class PaymentService {
       billerCode: payload.biller_code ? String(payload.biller_code) : undefined,
       billKey: payload.bill_key ? String(payload.bill_key) : undefined,
       actions: payload.actions ? (payload.actions as Prisma.InputJsonValue) : undefined,
-      expiresAt: asDate(payload.expiry_time),
+      expiresAt: parseMidtransDate(payload.expiry_time),
       rawResponse: payload as Prisma.InputJsonValue,
       lastSyncedAt: new Date(),
     };

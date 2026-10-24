@@ -211,6 +211,8 @@ describe('PaymentService', () => {
       gross_amount: '5000.00',
       currency: 'IDR',
       fraud_status: 'accept',
+      settlement_time: '2026-10-24 13:06:27',
+      expiry_time: '2026-10-25 07:00:00',
       signature_key: 'valid-signature',
     });
 
@@ -231,7 +233,11 @@ describe('PaymentService', () => {
           id: 'order_1',
           status: { in: ['PENDING', 'EXPIRED'] },
         }),
-        data: expect.objectContaining({ status: 'PAID' }),
+        data: expect.objectContaining({
+          status: 'PAID',
+          paidAt: new Date('2026-10-24T06:06:27.000Z'),
+          expiresAt: new Date('2026-10-25T00:00:00.000Z'),
+        }),
       })
     );
     expect(prisma.paymentEvent.update).toHaveBeenCalledWith(

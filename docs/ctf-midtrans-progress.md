@@ -5,7 +5,7 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 - Repo backend: `ululhikam/be_FnC`
 - Repo frontend: `ululhikam/con.fess_WebApp`
 - Branch kerja: `feat/ctf-midtrans` (backend & frontend)
-- Status: **Fase 2, 3, dan 4 selesai; E2E Midtrans sandbox (QRIS + BCA VA dengan notifikasi asli) selesai; E2E fess berbayar 1 CTF di dev selesai; smoke UI top-up selesai; parser WIB, lifecycle pending/expire, refund QRIS, dan rekonsiliasi manual sudah diverifikasi; idempotensi audit refund/chargeback diperbaiki; welcome bonus 1 CTF dan logo metode pembayaran sudah diverifikasi di dev; Meta/Instagram berfungsi dan opsional; publikasi FnC-only untuk base tanpa sosmed selesai; sign-off production belum**
+- Status: **Fase 2, 3, dan 4 selesai; E2E Midtrans sandbox (QRIS + BCA VA dengan notifikasi asli) selesai; E2E fess berbayar 1 CTF di dev selesai; smoke UI top-up selesai; parser WIB, lifecycle pending/expire, refund QRIS, dan rekonsiliasi manual sudah diverifikasi; idempotensi audit refund/chargeback diperbaiki; welcome bonus 1 CTF dan logo metode pembayaran sudah diverifikasi di dev; UI wallet/top-up dipoles dan diverifikasi di dev; Meta/Instagram berfungsi dan opsional; publikasi FnC-only untuk base tanpa sosmed selesai; sign-off production belum**
 - Jangan merge ke `main` atau deploy ke production sampai sign-off eksplisit.
 
 ## 1. Keputusan yang sudah dikunci
@@ -85,7 +85,7 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 | Midtrans sandbox keys | ✅ Aktif di dev | `MIDTRANS_SERVER_KEY` / `MIDTRANS_CLIENT_KEY` terpasang sebagai Vercel Sensitive env di `be-fnc-dev`; key sandbox valid walau tanpa prefix `SB-Mid-` |
 | Midtrans notification URL | ✅ Terverifikasi | `https://be-fnc-dev.vercel.app/api/payments/midtrans/notification`; notifikasi asli QRIS dan BCA VA diterima dan diproses |
 | Dev backend deployment terbaru | Selesai | `dpl_4AdsNFxCAyEchyKvaQWSb9dap7SQ` -> https://be-fnc-dev.vercel.app (welcome bonus; flag off) |
-| Dev frontend deployment terbaru | Selesai | `dpl_DVKgcZ1VuLdCeHzwsLeB6bRPR2F3` -> https://fessncurious-dev.vercel.app (logo brand pembayaran) |
+| Dev frontend deployment terbaru | Selesai | `dpl_9miwFrC66rNuFLqj3ZFbzM774PVv` -> https://fessncurious-dev.vercel.app (polish wallet/top-up; flag off) |
 | Flag dev | ✅ Aman | `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false` setelah jendela test |
 | Dev callback / OAuth | ✅ Berfungsi | Midtrans ✅; Google dilaporkan selesai; Meta/Instagram OAuth + callback berfungsi dan tetap opsional untuk base FnC-only |
 | Production | ✅ Tidak disentuh | Tetap menunggu sign-off |
@@ -256,7 +256,8 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 - [x] Refund QRIS asli lewat Midtrans refund API; status backend `refunded`, CTF tidak didebit otomatis.
 - [x] Idempotensi audit refund/chargeback: audit hanya ditulis saat transisi status; replay signed notification tidak menambah audit.
 - [x] Rekonsiliasi manual endpoint diuji: secret salah `401`, secret benar `200` (`checked=1, processed=1, failed=0`). Cron/rekonsiliasi terjadwal belum dikonfigurasi.
-- [x] Deploy dev terbaru (backend `dpl_4AdsNFxCAyEchyKvaQWSb9dap7SQ`, frontend `dpl_DVKgcZ1VuLdCeHzwsLeB6bRPR2F3`).
+- [x] Deploy dev terbaru (backend `dpl_4AdsNFxCAyEchyKvaQWSb9dap7SQ`, frontend `dpl_9miwFrC66rNuFLqj3ZFbzM774PVv`).
+- [x] Polish UI wallet/top-up (frontend `a95807a`) dan verifikasi deployed light/dark desktop/mobile; flag pembayaran tetap mati.
 - [ ] Sign-off.
 - [ ] Production canary.
 
@@ -364,6 +365,17 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 - Verifikasi visual frontend deployed memakai Playwright viewport mobile `430x932` dengan respons API `payments` di-intercept (karena flag dev mati): 8 metode tampil, 8 logo termuat (`naturalWidth > 0`), tidak ada console error. Screenshot verifikasi disimpan sebagai artefak sesi, bukan di repo.
 - Catatan: bonus untuk akun Google baru memakai jalur `google_signup`; akun Instagram-only tanpa email tidak mendapat bonus sampai email terverifikasi. User lama tidak di-backfill.
 
+### 8.5 Polish UI wallet & top-up (2026-10-24)
+
+- Frontend commit `a95807a` (`feat(wallet): polish top-up selection and payment states`); deploy dev frontend `dpl_9miwFrC66rNuFLqj3ZFbzM774PVv` -> https://fessncurious-dev.vercel.app. Backend tidak berubah pada pass ini.
+- Tampilan baru: hero saldo, tiga pesan kepercayaan, kartu paket dengan penanda `Paling hemat` berbasis rasio CTF/IDR, metode pembayaran berkelompok, ringkasan checkout sticky, CTA fixed di mobile/tablet sampai `980px`, panel instruksi VA/QRIS/e-wallet/Mandiri, state sukses/refund/expired/failed/chargeback, serta riwayat yang lebih ringkas.
+- Perilaku: setelah order dibuat atau dibuka, halaman scroll ke panel pembayaran (offset `82px`); kegagalan membuat/membuka/mengecek order tampil inline dan sebagai toast; `Idempotency-Key` dipertahankan pada kegagalan ambigu; status pembayaran diumumkan lewat `role="status"` pada pill, bukan pada countdown per detik.
+- Kebenaran copy: status `expired` memakai treatment warning dengan ikon jam, `refunded` memakai ikon refresh, sedangkan `failed`/`chargeback` memakai treatment danger. Toast sukses hanya muncul saat transisi `pending -> paid`, bukan saat membuka order yang sudah lama dibayar.
+- Verifikasi lokal Playwright: light/dark desktop dan mobile, lebar `360, 430, 768, 900, 980, 981, 1024, 1440px`, tanpa horizontal overflow atau console error; 5 paket, 8 metode, 8 logo termuat (`naturalWidth > 0`); `Bundling` menjadi kartu featured dan fixed CTA tampil sampai `980px`.
+- Flow UI dengan API mock: CTA mobile membuat paket `hemat` + `bca_va`, mengirim `Idempotency-Key`, menampilkan VA BCA, lalu `Cek status` mengubah state ke `paid` dan saldo `589 -> 734` CTF; panel pembayaran berhenti di offset `82px`. Error `503` menampilkan inline error + toast, tombol aktif kembali, dan retry memakai idempotency key yang sama.
+- Verifikasi deployed: state terkunci memakai respons asli `GET /payments/packages` dev (`enabled:false`, `configured:true`); preview `enabled:true` memakai intercept agar flag dev tidak diubah. Desktop/mobile light/dark memuat bundle `TopUpFlow-DaX10m_8.js`, 5 paket, 8 metode, 8 logo, tanpa overflow/error. `PAYMENTS_ENABLED=false` dan `BASE_PAYOUTS_ENABLED=false` tetap berlaku; production tidak disentuh.
+- Frontend build lulus; Prettier check lulus untuk dua file yang berubah (`TopUpFlow.vue`, `WalletPage.vue`).
+
 ## 9. Log perubahan
 
 | Tanggal | Perubahan |
@@ -398,6 +410,7 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 | 2026-10-24 | Welcome bonus 1 CTF ditambahkan: ledger `WELCOME_BONUS`, idempotency `welcome-bonus:<userId>`, hook verifikasi email + Google baru, no backfill; migrasi `20261024040000_welcome_ctf_bonus`; 3 test baru; backend full suite 316/316 lulus. |
 | 2026-10-24 | Logo metode pembayaran diganti dari ikon generik ke aset brand lokal QRIS, GoPay, ShopeePay, BCA, BNI, BRI, Permata, dan Mandiri; frontend build lulus. |
 | 2026-10-24 | Deploy dev: backend `dpl_4AdsNFxCAyEchyKvaQWSb9dap7SQ`, frontend `dpl_DVKgcZ1VuLdCeHzwsLeB6bRPR2F3`; flag pembayaran tetap mati. E2E API welcome bonus lulus (1 CTF, replay 1 CTF, ledger tunggal), dan verifikasi visual 8 logo pembayaran lulus. |
+| 2026-10-24 | UI wallet/top-up dipoles (frontend `a95807a`): layout dua kolom + checkout sticky, CTA mobile, kartu paket/featured, metode berkelompok, state pembayaran dan riwayat, scroll ke panel, error inline + toast, serta perbaikan ARIA. Verifikasi lokal dan deployed light/dark desktop/mobile lulus; frontend dev `dpl_9miwFrC66rNuFLqj3ZFbzM774PVv`; flag pembayaran tetap mati. |
 | 2026-10-24 | Gate tersisa: chargeback asli tidak dapat dipicu dari merchant sandbox (ditutup unit test), cron rekonsiliasi terjadwal, Midtrans production, operasional refund/chargeback, sign-off. |
 
 ## 10. Checklist production (belum dijalankan)

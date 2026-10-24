@@ -5,7 +5,7 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 - Repo backend: `ululhikam/be_FnC`
 - Repo frontend: `ululhikam/con.fess_WebApp`
 - Branch kerja: `feat/ctf-midtrans` (backend & frontend)
-- Status: **Fase 2, 3, dan 4 selesai; E2E Midtrans sandbox (QRIS + BCA VA dengan notifikasi asli) selesai; E2E fess berbayar 1 CTF di dev selesai; smoke UI top-up `Coba Dulu` + BCA VA selesai; saldo top-up langsung terlihat dan parser waktu WIB Midtrans sudah diperbaiki; Meta/Instagram berfungsi dan opsional; publikasi FnC-only untuk base tanpa sosmed selesai; sign-off production belum**
+- Status: **Fase 2, 3, dan 4 selesai; E2E Midtrans sandbox (QRIS + BCA VA dengan notifikasi asli) selesai; E2E fess berbayar 1 CTF di dev selesai; smoke UI top-up selesai; parser WIB, lifecycle pending/expire, refund QRIS, dan rekonsiliasi manual sudah diverifikasi; idempotensi audit refund/chargeback diperbaiki; Meta/Instagram berfungsi dan opsional; publikasi FnC-only untuk base tanpa sosmed selesai; sign-off production belum**
 - Jangan merge ke `main` atau deploy ke production sampai sign-off eksplisit.
 
 ## 1. Keputusan yang sudah dikunci
@@ -76,7 +76,7 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 | Migrasi dev | ✅ Sampai `20261024030000_fess_published_at` | Termasuk reserved payout dan `Fess.publishedAt` |
 | Midtrans sandbox keys | ✅ Aktif di dev | `MIDTRANS_SERVER_KEY` / `MIDTRANS_CLIENT_KEY` terpasang sebagai Vercel Sensitive env di `be-fnc-dev`; key sandbox valid walau tanpa prefix `SB-Mid-` |
 | Midtrans notification URL | ✅ Terverifikasi | `https://be-fnc-dev.vercel.app/api/payments/midtrans/notification`; notifikasi asli QRIS dan BCA VA diterima dan diproses |
-| Dev backend deployment terbaru | Selesai | `dpl_BvKN6mMrXXAnEiYZftvc8Tg2h5un` -> https://be-fnc-dev.vercel.app |
+| Dev backend deployment terbaru | Selesai | `dpl_JJnJGo3RyErQby4Rrxi6oRVPkQpK` -> https://be-fnc-dev.vercel.app (flag off + fix idempotensi refund/chargeback) |
 | Dev frontend deployment terbaru | Selesai | `dpl_8po9KhPNDguEJtsUEuaFxLNjHMZV` -> https://fessncurious-dev.vercel.app |
 | Flag dev | ✅ Aman | `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false` setelah jendela test |
 | Dev callback / OAuth | ✅ Berfungsi | Midtrans ✅; Google dilaporkan selesai; Meta/Instagram OAuth + callback berfungsi dan tetap opsional untuk base FnC-only |
@@ -240,7 +240,12 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 - [x] E2E Midtrans sandbox (QRIS + BCA VA via simulator, notifikasi asli; duplicate/invalid signature/amount mismatch/unknown order diuji).
 - [x] E2E fess berbayar dev: debit 1 CTF, idempotency replay tanpa double charge, revenue base Rp80 `PENDING`, dan verifikasi UI sebelum submit.
 - [x] Smoke UI top-up dev: `Coba Dulu` Rp5.000 / 25 CTF via BCA VA, saldo naik tepat sekali, UI sukses langsung menampilkan saldo baru.
-- [x] Deploy dev terbaru (backend `dpl_BvKN6mMrXXAnEiYZftvc8Tg2h5un`, frontend `dpl_8po9KhPNDguEJtsUEuaFxLNjHMZV`).
+- [x] Verifikasi live parser WIB: expiry `24.001` jam (bukan 31 jam) dan `paid_at` dalam `0.35` menit dari settlement; saldo UI langsung terlihat.
+- [x] Order pending -> expired lewat Midtrans expire API; status backend `expired`, saldo CTF tidak berubah.
+- [x] Refund QRIS asli lewat Midtrans refund API; status backend `refunded`, CTF tidak didebit otomatis.
+- [x] Idempotensi audit refund/chargeback: audit hanya ditulis saat transisi status; replay signed notification tidak menambah audit.
+- [x] Rekonsiliasi manual endpoint diuji: secret salah `401`, secret benar `200` (`checked=1, processed=1, failed=0`). Cron/rekonsiliasi terjadwal belum dikonfigurasi.
+- [x] Deploy dev terbaru (backend `dpl_JJnJGo3RyErQby4Rrxi6oRVPkQpK`, frontend `dpl_8po9KhPNDguEJtsUEuaFxLNjHMZV`).
 - [ ] Sign-off.
 - [ ] Production canary.
 
@@ -278,10 +283,11 @@ Approve dan mark-paid mewajibkan password re-auth. Semua aksi menolak self-appro
 
 ## 7. Gate yang masih terbuka
 
-1. **Skenario Midtrans lanjutan** — pending/expire, refund/chargeback, dan rekonsiliasi terjadwal belum diuji dengan transaksi sandbox asli.
+1. **Skenario Midtrans lanjutan** — pending/expire dan refund QRIS sudah diuji dengan transaksi sandbox asli. Chargeback tidak dapat dipicu langsung dari sisi merchant di sandbox; logika chargeback serta replay refund ditutup dengan unit test dan signed notification. Rekonsiliasi manual endpoint sudah diuji, tetapi **cron/rekonsiliasi terjadwal belum dikonfigurasi**.
 2. **Midtrans production** — production key/environment belum diisi dan tidak boleh memakai key sandbox.
 3. **Sign-off** — `PAYMENTS_ENABLED` dan `BASE_PAYOUTS_ENABLED` tetap `false` sampai disetujui.
 4. **Production** — jangan deploy/merge sebelum sign-off; production env dan deployment belum disentuh.
+5. **Operasional produksi** — cron rekonsiliasi, alert pembayaran, dan runbook refund/chargeback manual masih perlu disiapkan sebelum canary.
 
 Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasinya tetap opsional; base tanpa koneksi sosmed beroperasi penuh sebagai base FnC-only.
 
@@ -324,6 +330,19 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 - Restore flag: `PAYMENTS_ENABLED=false` + `BASE_PAYOUTS_ENABLED=false`; deploy backend `dpl_BvKN6mMrXXAnEiYZftvc8Tg2h5un`. Verifikasi: `GET /payments/packages` -> `enabled:false`, `configured:true`; UI `/wallet` menampilkan `Top up belum dibuka` dan tidak ada package card.
 - Catatan dev: setelah smoke kedua, ada order `Kampus` GoPay Rp50.000 (300 CTF) dari sesi dev lain yang menaikkan saldo `@pawarnash` ke **539 CTF**. Order itu tidak termasuk smoke test ini. Masih ada order `Kampus` BCA VA pending `FNC-MVLZOLTX-833F32D64E` dari sesi lain; order pending tersebut tidak menambah saldo.
 
+### 8.3 Lifecycle Midtrans, refund, dan idempotensi (2026-10-24)
+
+- Jendela test memakai project dev `be-fnc-dev` dengan `PAYMENTS_ENABLED=true`; production tidak disentuh. Test user `@pawarnash` mulai dari **539 CTF**.
+- **Parser WIB live** — order `FNC-MVM17O6T-A5E51E5F37` (Coba Dulu, BCA VA) dibuat `2026-10-24T06:42:35.958Z`, `expires_at=2026-10-25T06:42:38.000Z` sehingga selisihnya **24.001 jam** (bukan 31 jam). VA dibayar lewat simulator; backend menjadi `paid`, `paid_at=2026-10-24T06:42:59.000Z` (selisih **0.35 menit** dari waktu pengecekan), dan panel sukses UI langsung menampilkan `Saldo sekarang: 564 CTF`. Saldo `539 -> 564`.
+- **Expire** — order `FNC-MVM18TA0-3AB0327666` (Coba Dulu, BCA VA) dibuat lalu di-expire lewat Midtrans API. Status Midtrans `expire` (`status_code=407`), status backend `expired`, dan saldo tetap **564 CTF** (tidak ada kredit).
+- **Refund QRIS asli** — order `FNC-MVM19T8V-455F3B3D33` (Coba Dulu, QRIS) dibayar lewat simulator pada `2026-10-24T06:45:41.000Z`; saldo `564 -> 589`. Refund dikirim lewat Midtrans Refund API dan disetujui (`status_code=200`, "Success, refund request is approved"). Notifikasi asli membuat order menjadi `refunded`, `refunded_at=2026-10-24T06:50:44.630Z`; DB mencatat `refundedAmountIdr=5000`, `refundReason='Midtrans refund'` (alasan asli `dev lifecycle test` tersimpan di payload audit). Saldo CTF tetap **589** karena refund top-up tidak boleh mendebit CTF otomatis.
+- **Temuan idempotensi audit** — sebelum perbaikan, satu refund bisa menghasilkan dua baris `PAYMENT_REFUND_RECEIVED` karena notifikasi dan pengecekan status sama-sama menerapkan status refund. Perbaikan: update refund hanya diizinkan dari `PAID`/`PARTIAL_REFUND`, chargeback hanya dari `PAID`, dan audit hanya ditulis bila `updateMany().count > 0`. Empat unit test refund/chargeback ditambahkan.
+- **Verifikasi replay setelah deploy** — signed notification refund dikirim ulang untuk order yang sudah `refunded`; respons `200 {status:'refunded', ignored:true}` dan jumlah audit `PAYMENT_REFUND_RECEIVED` tetap **2** (tidak bertambah). Dua baris lama dibiarkan sebagai bukti insiden dev.
+- **Rekonsiliasi manual** — `POST /api/payments/reconcile` dengan secret salah mengembalikan `401`; dengan secret benar mengembalikan `200 {ok:true, checked:1, processed:1, failed:0}` dalam ~5,75 detik. Satu order pending diproses tanpa perubahan saldo. Cron/rekonsiliasi terjadwal belum dikonfigurasi.
+- **Test & build** — backend full suite **313/313 lulus**; `npm run build` backend lulus.
+- **Restore flag** — `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false`; backend dev dideploy `dpl_JJnJGo3RyErQby4Rrxi6oRVPkQpK`. `GET /payments/packages` -> `enabled:false`, `configured:true`; UI `/wallet` menampilkan `Top up belum dibuka`; saldo tetap **589 CTF**.
+- **Artefak saldo dev** — 25 CTF dari order QRIS yang direfund tetap ada di saldo dev karena desain tidak mendebit CTF otomatis; ini harus ditinjau manual pada production. Order lifecycle: `FNC-MVM17O6T-A5E51E5F37` paid, `FNC-MVM18TA0-3AB0327666` expired, `FNC-MVM19T8V-455F3B3D33` refunded, `FNC-MVLZOLTX-833F32D64E` (Kampus) masih pending.
+
 ## 9. Log perubahan
 
 | Tanggal | Perubahan |
@@ -352,4 +371,7 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 | 2026-10-24 | Deploy dev terbaru: backend `dpl_8aq64xBqhV9RQBgzFesWYvGAyepS`, frontend `dpl_65MisBby2gDw9QTunSUtHYurvCyL`; flag tetap `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false`. |
 | 2026-10-24 | Smoke UI top-up lulus: Hemat 159 -> 214 CTF, lalu `Coba Dulu` 214 -> 239 CTF via BCA VA. Panel sukses sempat menampilkan saldo lama; fix optimistis `6af3bb1`, frontend dev `dpl_8po9KhPNDguEJtsUEuaFxLNjHMZV`. |
 | 2026-10-24 | Parser waktu Midtrans diperbaiki `1d1e941`: `settlement_time`/`expiry_time` WIB tidak lagi bergeser 7 jam. Backend full suite 309/309 lulus; backend dev `dpl_BvKN6mMrXXAnEiYZftvc8Tg2h5un`; `PAYMENTS_ENABLED=false` dan UI top-up terkunci. |
-| 2026-10-24 | Gate tersisa: skenario pending/expire/refund, Midtrans production, sign-off. |
+| 2026-10-24 | Lifecycle sandbox lulus: expiry 24.001 jam, `paid_at` benar, order expire tidak mengkredit CTF, dan refund QRIS asli membuat order `refunded` tanpa mendebit CTF. Saldo dev 539 -> 564 -> 589. |
+| 2026-10-24 | Idempotensi audit refund/chargeback diperbaiki: audit hanya saat transisi status; 4 test baru; backend full suite 313/313 lulus. Replay signed refund setelah deploy tidak menambah audit. |
+| 2026-10-24 | Rekonsiliasi manual diuji (`401` secret salah, `200` secret benar); flag pembayaran dikembalikan ke `false`; backend dev `dpl_JJnJGo3RyErQby4Rrxi6oRVPkQpK`; UI `/wallet` terkunci. |
+| 2026-10-24 | Gate tersisa: chargeback asli tidak dapat dipicu dari merchant sandbox (ditutup unit test), cron rekonsiliasi terjadwal, Midtrans production, operasional refund/chargeback, sign-off. |

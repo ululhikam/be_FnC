@@ -285,4 +285,125 @@ describe('PaymentService', () => {
     expect(result).toMatchObject({ ignored: true, status: 'unknown_order' });
     expect(prisma.paymentEvent.create).not.toHaveBeenCalled();
   });
+
+  it('marks a paid order refunded without crediting or debiting CTF', async () => {
+    vi.mocked(prisma.paymentOrder.findUnique).mockResolvedValue({
+      ...order,
+      status: 'PAID',
+      paidAt: new Date('2026-10-24T06:45:41.000Z'),
+    } as any);
+
+    const result = await PaymentService.handleNotification({
+      order_id: order.orderId,
+      transaction_id: 'tx-1',
+      transaction_status: 'refund',
+      status_code: '200',
+      gross_amount: '5000.00',
+      refund_amount: '5000.00',
+      currency: 'IDR',
+      signature_key: 'valid-signature',
+    });
+
+    expect(result).toMatchObject({ status: 'refunded' });
+    expect(prisma.paymentOrder.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: 'order_1',
+          status: { in: ['PAID', 'PARTIAL_REFUND'] },
+        }),
+        data: expect.objectContaining({
+          status: 'REFUNDED',
+          refundedAmountIdr: 5000,
+          refundReason: 'Midtrans refund',
+        }),
+      })
+    );
+    expect(CtfWalletService.credit).not.toHaveBeenCalled();
+    expect(prisma.adminAuditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ action: 'PAYMENT_REFUND_RECEIVED' }),
+      })
+    );
+  });
+
+  it('does not audit a refund notification that made no state transition', async () => {
+    vi.mocked(prisma.paymentOrder.findUnique).mockResolvedValue({
+      ...order,
+      status: 'REFUNDED',
+      refundedAt: new Date('2026-10-24T06:50:44.000Z'),
+    } as any);
+    vi.mocked(prisma.paymentOrder.updateMany).mockResolvedValue({ count: 0 } as any);
+
+    const result = await PaymentService.handleNotification({
+      order_id: order.orderId,
+      transaction_id: 'tx-1',
+      transaction_status: 'refund',
+      status_code: '200',
+      gross_amount: '5000.00',
+      refund_amount: '5000.00',
+      currency: 'IDR',
+      signature_key: 'valid-signature',
+    });
+
+    expect(result).toMatchObject({ status: 'refunded', ignored: true });
+    expect(CtfWalletService.credit).not.toHaveBeenCalled();
+    expect(prisma.adminAuditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('marks a chargeback without crediting or debiting CTF', async () => {
+    vi.mocked(prisma.paymentOrder.findUnique).mockResolvedValue({
+      ...order,
+      status: 'PAID',
+      paidAt: new Date('2026-10-24T06:45:41.000Z'),
+    } as any);
+
+    const result = await PaymentService.handleNotification({
+      order_id: order.orderId,
+      transaction_id: 'tx-1',
+      transaction_status: 'chargeback',
+      status_code: '200',
+      gross_amount: '5000.00',
+      currency: 'IDR',
+      signature_key: 'valid-signature',
+    });
+
+    expect(result).toMatchObject({ status: 'chargeback' });
+    expect(prisma.paymentOrder.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: 'order_1',
+          status: 'PAID',
+        }),
+        data: expect.objectContaining({ status: 'CHARGEBACK' }),
+      })
+    );
+    expect(CtfWalletService.credit).not.toHaveBeenCalled();
+    expect(prisma.adminAuditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ action: 'PAYMENT_CHARGEBACK_RECEIVED' }),
+      })
+    );
+  });
+
+  it('does not audit a chargeback notification that made no state transition', async () => {
+    vi.mocked(prisma.paymentOrder.findUnique).mockResolvedValue({
+      ...order,
+      status: 'CHARGEBACK',
+    } as any);
+    vi.mocked(prisma.paymentOrder.updateMany).mockResolvedValue({ count: 0 } as any);
+
+    const result = await PaymentService.handleNotification({
+      order_id: order.orderId,
+      transaction_id: 'tx-1',
+      transaction_status: 'chargeback',
+      status_code: '200',
+      gross_amount: '5000.00',
+      currency: 'IDR',
+      signature_key: 'valid-signature',
+    });
+
+    expect(result).toMatchObject({ status: 'chargeback', ignored: true });
+    expect(CtfWalletService.credit).not.toHaveBeenCalled();
+    expect(prisma.adminAuditLog.create).not.toHaveBeenCalled();
+  });
 });

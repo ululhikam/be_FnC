@@ -601,10 +601,10 @@ export class PaymentService {
         transactionStatus === 'partial_refund'
           ? PaymentOrderStatus.PARTIAL_REFUND
           : PaymentOrderStatus.REFUNDED;
-      await prisma.paymentOrder.updateMany({
+      const update = await prisma.paymentOrder.updateMany({
         where: {
           id: order.id,
-          status: { in: [PaymentOrderStatus.PAID, PaymentOrderStatus.PARTIAL_REFUND, PaymentOrderStatus.REFUNDED] },
+          status: { in: [PaymentOrderStatus.PAID, PaymentOrderStatus.PARTIAL_REFUND] },
         },
         data: {
           ...data,
@@ -614,6 +614,12 @@ export class PaymentService {
           refundReason: String(payload.refund_reason ?? 'Midtrans refund'),
         },
       });
+      // Midtrans may deliver the same refund notification more than once, and
+      // order polling can re-apply it. Only audit when this call actually moved
+      // the order into a refund state.
+      if (update.count === 0) {
+        return { status: nextStatus.toLowerCase(), ignored: true };
+      }
       await this.auditPaymentEvent(
         order,
         'PAYMENT_REFUND_RECEIVED',
@@ -625,13 +631,16 @@ export class PaymentService {
     }
 
     if (transactionStatus === 'chargeback') {
-      await prisma.paymentOrder.updateMany({
+      const update = await prisma.paymentOrder.updateMany({
         where: {
           id: order.id,
-          status: { in: [PaymentOrderStatus.PAID, PaymentOrderStatus.CHARGEBACK] },
+          status: PaymentOrderStatus.PAID,
         },
         data: { ...data, status: PaymentOrderStatus.CHARGEBACK },
       });
+      if (update.count === 0) {
+        return { status: 'chargeback', ignored: true };
+      }
       await this.auditPaymentEvent(
         order,
         'PAYMENT_CHARGEBACK_RECEIVED',

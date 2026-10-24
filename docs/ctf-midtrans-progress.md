@@ -5,7 +5,7 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 - Repo backend: `ululhikam/be_FnC`
 - Repo frontend: `ululhikam/con.fess_WebApp`
 - Branch kerja: `feat/ctf-midtrans` (backend & frontend)
-- Status: **Fase 2, 3, dan 4 selesai; E2E Midtrans sandbox (QRIS + BCA VA dengan notifikasi asli) selesai; E2E fess berbayar 1 CTF di dev selesai; Meta/Instagram berfungsi dan opsional; publikasi FnC-only untuk base tanpa sosmed selesai; sign-off production belum**
+- Status: **Fase 2, 3, dan 4 selesai; E2E Midtrans sandbox (QRIS + BCA VA dengan notifikasi asli) selesai; E2E fess berbayar 1 CTF di dev selesai; smoke UI top-up `Coba Dulu` + BCA VA selesai; saldo top-up langsung terlihat dan parser waktu WIB Midtrans sudah diperbaiki; Meta/Instagram berfungsi dan opsional; publikasi FnC-only untuk base tanpa sosmed selesai; sign-off production belum**
 - Jangan merge ke `main` atau deploy ke production sampai sign-off eksplisit.
 
 ## 1. Keputusan yang sudah dikunci
@@ -76,8 +76,8 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 | Migrasi dev | ✅ Sampai `20261024030000_fess_published_at` | Termasuk reserved payout dan `Fess.publishedAt` |
 | Midtrans sandbox keys | ✅ Aktif di dev | `MIDTRANS_SERVER_KEY` / `MIDTRANS_CLIENT_KEY` terpasang sebagai Vercel Sensitive env di `be-fnc-dev`; key sandbox valid walau tanpa prefix `SB-Mid-` |
 | Midtrans notification URL | ✅ Terverifikasi | `https://be-fnc-dev.vercel.app/api/payments/midtrans/notification`; notifikasi asli QRIS dan BCA VA diterima dan diproses |
-| Dev backend deployment terbaru | Selesai | `dpl_8aq64xBqhV9RQBgzFesWYvGAyepS` -> https://be-fnc-dev.vercel.app |
-| Dev frontend deployment terbaru | Selesai | `dpl_65MisBby2gDw9QTunSUtHYurvCyL` -> https://fessncurious-dev.vercel.app |
+| Dev backend deployment terbaru | Selesai | `dpl_BvKN6mMrXXAnEiYZftvc8Tg2h5un` -> https://be-fnc-dev.vercel.app |
+| Dev frontend deployment terbaru | Selesai | `dpl_8po9KhPNDguEJtsUEuaFxLNjHMZV` -> https://fessncurious-dev.vercel.app |
 | Flag dev | ✅ Aman | `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false` setelah jendela test |
 | Dev callback / OAuth | ✅ Berfungsi | Midtrans ✅; Google dilaporkan selesai; Meta/Instagram OAuth + callback berfungsi dan tetap opsional untuk base FnC-only |
 | Production | ✅ Tidak disentuh | Tetap menunggu sign-off |
@@ -239,7 +239,8 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 - [x] Rate limit terdistribusi.
 - [x] E2E Midtrans sandbox (QRIS + BCA VA via simulator, notifikasi asli; duplicate/invalid signature/amount mismatch/unknown order diuji).
 - [x] E2E fess berbayar dev: debit 1 CTF, idempotency replay tanpa double charge, revenue base Rp80 `PENDING`, dan verifikasi UI sebelum submit.
-- [x] Deploy dev terbaru (backend `dpl_8aq64xBqhV9RQBgzFesWYvGAyepS`, frontend `dpl_65MisBby2gDw9QTunSUtHYurvCyL`).
+- [x] Smoke UI top-up dev: `Coba Dulu` Rp5.000 / 25 CTF via BCA VA, saldo naik tepat sekali, UI sukses langsung menampilkan saldo baru.
+- [x] Deploy dev terbaru (backend `dpl_BvKN6mMrXXAnEiYZftvc8Tg2h5un`, frontend `dpl_8po9KhPNDguEJtsUEuaFxLNjHMZV`).
 - [ ] Sign-off.
 - [ ] Production canary.
 
@@ -277,11 +278,10 @@ Approve dan mark-paid mewajibkan password re-auth. Semua aksi menolak self-appro
 
 ## 7. Gate yang masih terbuka
 
-1. **Manual UI smoke top-up (dev)** — flow top-up dari browser belum diuji manual setelah key sandbox aktif; jalur backend + notifikasi asli sudah lulus. UI fess berbayar sudah diuji dengan Playwright.
-2. **Skenario Midtrans lanjutan** — pending/expire, refund/chargeback, dan rekonsiliasi terjadwal belum diuji dengan transaksi sandbox asli.
-3. **Midtrans production** — production key/environment belum diisi dan tidak boleh memakai key sandbox.
-4. **Sign-off** — `PAYMENTS_ENABLED` dan `BASE_PAYOUTS_ENABLED` tetap `false` sampai disetujui.
-5. **Production** — jangan deploy/merge sebelum sign-off; production env dan deployment belum disentuh.
+1. **Skenario Midtrans lanjutan** — pending/expire, refund/chargeback, dan rekonsiliasi terjadwal belum diuji dengan transaksi sandbox asli.
+2. **Midtrans production** — production key/environment belum diisi dan tidak boleh memakai key sandbox.
+3. **Sign-off** — `PAYMENTS_ENABLED` dan `BASE_PAYOUTS_ENABLED` tetap `false` sampai disetujui.
+4. **Production** — jangan deploy/merge sebelum sign-off; production env dan deployment belum disentuh.
 
 Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasinya tetap opsional; base tanpa koneksi sosmed beroperasi penuh sebagai base FnC-only.
 
@@ -294,7 +294,7 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 - Synthetic webhook: duplicate replay `already_processed`; signature salah 401 tanpa DB write; unknown order 200 `unknown_order`; amount mismatch 400 `PAYMENT_AMOUNT_MISMATCH`.
 - Idempotency order: request ulang dengan `Idempotency-Key` yang sama mengembalikan 200 dan order ID yang sama.
 - Setelah pengujian, `PAYMENTS_ENABLED=false` dan `BASE_PAYOUTS_ENABLED=false`; backend dev dideploy ulang dan `GET /payments/packages` mengembalikan `enabled:false`, `configured:true`.
-- Test backend terakhir: 306/306 lulus; build backend & frontend lulus.
+- Test backend saat E2E tersebut: 306/306 lulus; build backend & frontend lulus.
 - Smoke API dev setelah deploy: `GET /api/bases` mengembalikan objek `billing`; detail `@testbase` mengembalikan `billing.reason=trial` dan `instagram_connected=true`; `GET /api/payments/packages` tetap `enabled:false`, `configured:true`.
 
 ### 8.1 E2E fess berbayar (2026-10-24)
@@ -312,6 +312,17 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
   - Tombol konfirmasi: `Posting & Potong 1 CTF`.
   - Badge publik `@paidtest`: `Berbayar · 1 CTF/fess`.
 - Catatan fixture: creator `@testbase` memiliki koneksi Instagram level user `@2003.paw`, sehingga fess uji auto-post ke Instagram. Jangan submit fess uji lagi ke `@paidtest`/`@testbase` sebelum auto-post dimatikan.
+
+### 8.2 Smoke UI top-up + perbaikan waktu Midtrans (2026-10-24)
+
+- Jendela test: `PAYMENTS_ENABLED=true` hanya di project dev `be-fnc-dev`; production tidak disentuh. `GET /payments/packages` mengembalikan `enabled:true`, `configured:true`.
+- Smoke pertama (Hemat, BCA VA, order `FNC-MVLZN8EQ-0F32B318A5`): dibuat dari UI, VA dibayar lewat simulator Midtrans, status menjadi `Pembayaran berhasil`; saldo `159 -> 214 CTF` (+55) dan `GET /auth/me` juga 214. Ditemukan panel sukses masih menampilkan saldo lama `159 CTF` sesaat sebelum `fetchMe` selesai.
+- Fix frontend `6af3bb1` (`fix(wallet): show topped-up CTF balance immediately`): saldo dikreditkan optimistis hanya saat order yang sama bertransisi `pending -> paid`; membuka ulang order yang sudah `paid` tidak menambah CTF lagi. Build frontend lulus dan dideploy `dpl_8po9KhPNDguEJtsUEuaFxLNjHMZV`.
+- Smoke kedua (paket terkecil `Coba Dulu`, BCA VA, order `FNC-MVLZW93P-32FEC6A22D`, VA `82370488017864321404495`): dibuat dan dibayar dari UI. Hasil: `Pembayaran berhasil`, `+25 CTF`, saldo `214 -> 239 CTF`; panel sukses langsung menampilkan `Saldo sekarang: 239 CTF` dan `GET /auth/me` = 239. Verifikasi Playwright + screenshot lulus.
+- Bug waktu Midtrans ditemukan dari order di atas: status API mengirim `transaction_time=2026-10-24 13:05:45`, `settlement_time=2026-10-24 13:05:53`, dan `expiry_time=2026-10-25 13:05:45` (WIB tanpa offset). Parser lama menyimpannya sebagai UTC sehingga `paid_at` tercatat 7 jam ke depan dan countdown kedaluwarsa menjadi 31 jam. Fix `1d1e941` (`fix(payments): parse Midtrans timestamps as WIB`) memakai `parseMidtransDate` untuk `settlement_time` dan `expiry_time`; konversi benar menjadi `2026-10-24T06:05:53.000Z` dan `2026-10-25T06:05:45.000Z`. Test regresi ditambahkan.
+- Backend full suite: **309/309 lulus** (`npx vitest run --testTimeout=60000`); build backend & frontend lulus.
+- Restore flag: `PAYMENTS_ENABLED=false` + `BASE_PAYOUTS_ENABLED=false`; deploy backend `dpl_BvKN6mMrXXAnEiYZftvc8Tg2h5un`. Verifikasi: `GET /payments/packages` -> `enabled:false`, `configured:true`; UI `/wallet` menampilkan `Top up belum dibuka` dan tidak ada package card.
+- Catatan dev: setelah smoke kedua, ada order `Kampus` GoPay Rp50.000 (300 CTF) dari sesi dev lain yang menaikkan saldo `@pawarnash` ke **539 CTF**. Order itu tidak termasuk smoke test ini. Masih ada order `Kampus` BCA VA pending `FNC-MVLZOLTX-833F32D64E` dari sesi lain; order pending tersebut tidak menambah saldo.
 
 ## 9. Log perubahan
 
@@ -339,4 +350,6 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 | 2026-10-24 | E2E fess berbayar dev lulus: 1 CTF didebit (160 → 159), replay idempotent tidak double charge, revenue base Rp80 `PENDING`. Ditemukan dan diperbaiki timeout transaksi `P2028` dengan `maxWait=10s`/`timeout=30s`. |
 | 2026-10-24 | Copy UI biaya diperjelas: `Posting · 1 CTF`, saldo sebelum → sesudah di modal, dan tombol `Posting & Potong 1 CTF`; badge publik `Berbayar · 1 CTF/fess`. Diverifikasi Playwright di dev. |
 | 2026-10-24 | Deploy dev terbaru: backend `dpl_8aq64xBqhV9RQBgzFesWYvGAyepS`, frontend `dpl_65MisBby2gDw9QTunSUtHYurvCyL`; flag tetap `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false`. |
-| 2026-10-24 | Gate tersisa: manual UI smoke top-up, skenario pending/expire/refund, Midtrans production, sign-off. |
+| 2026-10-24 | Smoke UI top-up lulus: Hemat 159 -> 214 CTF, lalu `Coba Dulu` 214 -> 239 CTF via BCA VA. Panel sukses sempat menampilkan saldo lama; fix optimistis `6af3bb1`, frontend dev `dpl_8po9KhPNDguEJtsUEuaFxLNjHMZV`. |
+| 2026-10-24 | Parser waktu Midtrans diperbaiki `1d1e941`: `settlement_time`/`expiry_time` WIB tidak lagi bergeser 7 jam. Backend full suite 309/309 lulus; backend dev `dpl_BvKN6mMrXXAnEiYZftvc8Tg2h5un`; `PAYMENTS_ENABLED=false` dan UI top-up terkunci. |
+| 2026-10-24 | Gate tersisa: skenario pending/expire/refund, Midtrans production, sign-off. |

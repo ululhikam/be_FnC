@@ -169,17 +169,44 @@ describe('MidtransService', () => {
     await expect(MidtransService.getStatus('FNC-UNKNOWN')).resolves.toBeNull();
   });
 
-  it('refuses to use a production key in sandbox mode', async () => {
-    ENV.MIDTRANS_SERVER_KEY = 'Mid-server-production';
-    await expect(
-      MidtransService.charge({
-        orderId: 'FNC-ORDER-1',
-        amountIdr: 5000,
-        packageCode: 'coba_dulu',
-        packageName: 'Coba Dulu',
-        method: 'qris',
-        customer: { name: 'tester' },
-      })
-    ).rejects.toMatchObject({ code: 'PAYMENT_CONFIG_ERROR', status: 503 });
+  it('uses the sandbox API for a sandbox key without the legacy SB- prefix', async () => {
+    ENV.MIDTRANS_SERVER_KEY = 'Mid-server-sandbox-key';
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('{}', { status: 201, headers: { 'Content-Type': 'application/json' } })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await MidtransService.charge({
+      orderId: 'FNC-ORDER-1',
+      amountIdr: 5000,
+      packageCode: 'coba_dulu',
+      packageName: 'Coba Dulu',
+      method: 'qris',
+      customer: { name: 'tester' },
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0][0])).toContain('api.sandbox.midtrans.com/v2/charge');
+  });
+
+  it('uses the production API only when MIDTRANS_IS_PRODUCTION is true', async () => {
+    ENV.MIDTRANS_SERVER_KEY = 'Mid-server-production-key';
+    ENV.MIDTRANS_IS_PRODUCTION = true;
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('{}', { status: 201, headers: { 'Content-Type': 'application/json' } })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await MidtransService.charge({
+      orderId: 'FNC-ORDER-2',
+      amountIdr: 5000,
+      packageCode: 'coba_dulu',
+      packageName: 'Coba Dulu',
+      method: 'qris',
+      customer: { name: 'tester' },
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0][0])).toContain('api.midtrans.com/v2/charge');
   });
 });

@@ -61,20 +61,10 @@ function assertConfigured() {
       503
     );
   }
-  if (ENV.MIDTRANS_IS_PRODUCTION && ENV.MIDTRANS_SERVER_KEY.startsWith('SB-')) {
-    throw new MidtransError(
-      'PAYMENT_CONFIG_ERROR',
-      'Server key Midtrans sandbox tidak boleh dipakai di production',
-      503
-    );
-  }
-  if (!ENV.MIDTRANS_IS_PRODUCTION && ENV.MIDTRANS_SERVER_KEY.startsWith('Mid-server-')) {
-    throw new MidtransError(
-      'PAYMENT_CONFIG_ERROR',
-      'Server key Midtrans production tidak boleh dipakai di sandbox',
-      503
-    );
-  }
+  // Do not infer the Midtrans environment from the key prefix. Midtrans can
+  // issue sandbox keys without the legacy "SB-" prefix, and the API host is
+  // already selected explicitly by MIDTRANS_IS_PRODUCTION. A key from the
+  // wrong environment is rejected by Midtrans with a 401 at request time.
 }
 
 function basicAuthHeader() {

@@ -5,7 +5,7 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 - Repo backend: `ululhikam/be_FnC`
 - Repo frontend: `ululhikam/con.fess_WebApp`
 - Branch kerja: `feat/ctf-midtrans` (backend & frontend)
-- Status: **Fase 2 & 3 selesai dan ter-deploy di dev; E2E Midtrans sandbox dan sign-off production belum**
+- Status: **Fase 2 & 3 selesai; E2E Midtrans sandbox (QRIS + BCA VA dengan notifikasi asli) selesai; sign-off production belum**
 - Jangan merge ke `main` atau deploy ke production sampai sign-off eksplisit.
 
 ## 1. Keputusan yang sudah dikunci
@@ -66,11 +66,12 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 | Vercel project dev backend | ✅ Dibuat | `be-fnc-dev` → `be-fnc-dev.vercel.app` |
 | Vercel project dev frontend | ✅ Dibuat | `fessncurious-dev` → `fessncurious-dev.vercel.app` |
 | Migrasi dev | ✅ Sampai `20261024030000_fess_published_at` | Termasuk reserved payout dan `Fess.publishedAt` |
-| Midtrans sandbox keys | ❌ Belum ada | `MIDTRANS_SERVER_KEY` / `MIDTRANS_CLIENT_KEY` kosong di dev |
-| Midtrans notification URL | ❌ Belum diset | `https://be-fnc-dev.vercel.app/api/payments/midtrans/notification` |
-| Dev backend deployment Fase 3 | Selesai | `dpl_3KnxEZyUsnuY1tDkqwZNVS2ipBnS` -> https://be-fnc-dev.vercel.app |
-| Dev frontend deployment Fase 3 | Selesai | `dpl_DdJibWBB2QHzRCqHfvB952kzuSNj` -> https://fessncurious-dev.vercel.app |
-| Dev notification URL / OAuth callback | ❌ Belum | Google/Instagram dev callback juga belum didaftarkan |
+| Midtrans sandbox keys | ✅ Aktif di dev | `MIDTRANS_SERVER_KEY` / `MIDTRANS_CLIENT_KEY` terpasang sebagai Vercel Sensitive env di `be-fnc-dev`; key sandbox valid walau tanpa prefix `SB-Mid-` |
+| Midtrans notification URL | ✅ Terverifikasi | `https://be-fnc-dev.vercel.app/api/payments/midtrans/notification`; notifikasi asli QRIS dan BCA VA diterima dan diproses |
+| Dev backend deployment terbaru | Selesai | `dpl_3yFf4JFHtXxoRzvMNG6snmxMu5GA` -> https://be-fnc-dev.vercel.app |
+| Dev frontend deployment terbaru | Selesai | `dpl_DdJibWBB2QHzRCqHfvB952kzuSNj` -> https://fessncurious-dev.vercel.app |
+| Flag dev | ✅ Aman | `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false` setelah jendela test |
+| Dev callback / OAuth | ⚠️ Sebagian | Midtrans ✅; Google dilaporkan selesai; Instagram/Meta masih tertahan callback production |
 | Production | ✅ Tidak disentuh | Tetap menunggu sign-off |
 
 > Isolasi dev memakai **project Vercel terpisah**. Subdomain `dev.fessncurious.vercel.app` tidak bisa dibuat karena `fessncurious.vercel.app` adalah domain milik Vercel.
@@ -144,7 +145,7 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 - [x] Isi environment dev (DB, storage, JWT, email).
 - [x] Deploy backend dev + verifikasi health/DB/CORS.
 - [x] Deploy frontend dev + verifikasi build memakai API dev.
-- [ ] Isi Midtrans sandbox keys yang valid dan verifikasi transaksi.
+- [x] Isi Midtrans sandbox keys yang valid dan verifikasi transaksi.
 - [x] Audit saldo `User.balance` existing (read-only) + backfill.
 
 ### Fase 1 — Schema & ledger
@@ -225,8 +226,8 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 - [x] Test payout reservation/release/consume & freeForever RBAC.
 - [x] CORS allowlist.
 - [x] Rate limit terdistribusi.
-- [ ] E2E Midtrans sandbox (QRIS/VA settlement + webhook).
-- [x] Deploy dev Fase 3 (backend `dpl_3KnxEZyUsnuY1tDkqwZNVS2ipBnS`, frontend `dpl_DdJibWBB2QHzRCqHfvB952kzuSNj`).
+- [x] E2E Midtrans sandbox (QRIS + BCA VA via simulator, notifikasi asli; duplicate/invalid signature/amount mismatch/unknown order diuji).
+- [x] Deploy dev terbaru (backend `dpl_3yFf4JFHtXxoRzvMNG6snmxMu5GA`, frontend `dpl_DdJibWBB2QHzRCqHfvB952kzuSNj`).
 - [ ] Sign-off.
 - [ ] Production canary.
 
@@ -264,16 +265,25 @@ Approve dan mark-paid mewajibkan password re-auth. Semua aksi menolak self-appro
 
 ## 7. Gate yang masih terbuka
 
-1. **Midtrans sandbox keys** — dev belum punya `SB-Mid-server-…` / `SB-Mid-client-…`; `POST /payments/orders` mengembalikan `503 PAYMENT_CONFIG_ERROR`.
-2. **Notification URL** — set ke `https://be-fnc-dev.vercel.app/api/payments/midtrans/notification`, lalu uji signature SHA512, amount mismatch, replay, dan unknown order.
-3. **OAuth dev callback** — daftarkan:
-   - `https://be-fnc-dev.vercel.app/api/auth/google/callback`
-   - `https://be-fnc-dev.vercel.app/api/auth/instagram/callback`
-4. **E2E sandbox** - QRIS/VA settlement, pending/expire, duplicate webhook, refund/chargeback.
-5. **Sign-off** - `PAYMENTS_ENABLED` dan `BASE_PAYOUTS_ENABLED` tetap `false` sampai disetujui.
-6. **Production** - jangan deploy/merge sebelum sign-off.
+1. **Manual UI smoke (dev)** — flow top-up dari browser belum diuji manual setelah key sandbox aktif; jalur backend + notifikasi asli sudah lulus.
+2. **Meta Instagram callback** — app Meta saat ini hanya punya satu callback URL dan sudah dipakai production. Opsi: app dev terpisah (disarankan), tukar callback sementara (berisiko), atau skip Instagram E2E di dev. Google callback dilaporkan sudah selesai.
+3. **Skenario Midtrans lanjutan** — pending/expire, refund/chargeback, dan rekonsiliasi terjadwal belum diuji dengan transaksi sandbox asli.
+4. **Midtrans production** — production key/environment belum diisi dan tidak boleh memakai key sandbox.
+5. **Sign-off** — `PAYMENTS_ENABLED` dan `BASE_PAYOUTS_ENABLED` tetap `false` sampai disetujui.
+6. **Production** — jangan deploy/merge sebelum sign-off; production env dan deployment belum disentuh.
 
-## 8. Log perubahan
+## 8. Bukti E2E dev (2026-10-24)
+
+- Validasi kredensial: sandbox API menerima key (HTTP 200 `Transaction doesn't exist`), production API menolak (401). Prefix `Mid-server-` bukan indikator environment; service memilih host hanya dari `MIDTRANS_IS_PRODUCTION`.
+- QRIS sandbox: order `FNC-MVLSIXS8-CFB0F55D1A`, Rp5.000, 25 CTF, dibayar lewat simulator Midtrans; notifikasi asli diterima dan order menjadi `PAID`.
+- BCA VA sandbox: order `FNC-MVLSK5MK-A679B4BF82`, Rp10.000, 55 CTF, VA `82370900254356908824431`, dibayar lewat simulator; notifikasi asli diterima dan order menjadi `PAID`.
+- Saldo test user naik dari 80 menjadi 160 CTF (25 + 55) setelah dua settlement asli; tidak ada kredit ganda.
+- Synthetic webhook: duplicate replay `already_processed`; signature salah 401 tanpa DB write; unknown order 200 `unknown_order`; amount mismatch 400 `PAYMENT_AMOUNT_MISMATCH`.
+- Idempotency order: request ulang dengan `Idempotency-Key` yang sama mengembalikan 200 dan order ID yang sama.
+- Setelah pengujian, `PAYMENTS_ENABLED=false` dan `BASE_PAYOUTS_ENABLED=false`; backend dev dideploy ulang dan `GET /payments/packages` mengembalikan `enabled:false`, `configured:true`.
+- Test backend terakhir: 303/303 lulus; build backend & frontend lulus.
+
+## 9. Log perubahan
 
 | Tanggal | Perubahan |
 |---|---|
@@ -286,6 +296,9 @@ Approve dan mark-paid mewajibkan password re-auth. Semua aksi menolak self-appro
 | 2026-10-24 | Fase 3 selesai: fess billing, refund policy, revenue Rp80, reserved payout, KYC/bank/freeForever, audit + re-auth. |
 | 2026-10-24 | `Fess.publishedAt` + migrasi: refund CTF hanya jika belum pernah terbit. |
 | 2026-10-24 | Frontend: top-up, composer charge UX, Base Admin revenue/payout/bank, Super Admin payout/KYC/freeForever. |
-| 2026-10-24 | Backend full suite 302 test lulus; build backend & frontend lulus. |
-| 2026-10-24 | Deploy dev Fase 3: backend `dpl_3KnxEZyUsnuY1tDkqwZNVS2ipBnS` (be-fnc-dev), frontend `dpl_DdJibWBB2QHzRCqHfvB952kzuSNj` (fessncurious-dev); health 200, packages 200 (disabled), CORS allow/deny lulus, admin revenue unauth 401. |
-| 2026-10-24 | Gate Midtrans sandbox, notification URL, OAuth callback, dan sign-off production tetap terbuka. |
+| 2026-10-24 | Backend full suite 303 test lulus; build backend & frontend lulus. |
+| 2026-10-24 | Perbaikan Midtrans: guard prefix dihapus karena key sandbox valid juga memakai prefix `Mid-server-`; host tetap dipilih dari `MIDTRANS_IS_PRODUCTION`. |
+| 2026-10-24 | Vercel dev `be-fnc-dev` diisi `MIDTRANS_SERVER_KEY` / `MIDTRANS_CLIENT_KEY` (sensitive), `MIDTRANS_IS_PRODUCTION=false`; `GET /payments/packages` mengembalikan `configured:true`. |
+| 2026-10-24 | E2E sandbox asli lulus: QRIS Rp5.000 + BCA VA Rp10.000 dibayar via simulator, notifikasi asli masuk, saldo test naik 80 -> 160 CTF; replay/signature/amount/idempotency diuji. |
+| 2026-10-24 | Jendela test ditutup: `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false`; backend dev dideploy ulang `dpl_3yFf4JFHtXxoRzvMNG6snmxMu5GA`. |
+| 2026-10-24 | Gate tersisa: manual UI smoke, Meta Instagram callback dev, skenario pending/expire/refund, Midtrans production, sign-off. |

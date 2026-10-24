@@ -361,7 +361,7 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 - Verifikasi end-to-end lewat API deployed memakai user sementara: register -> OTP -> verifikasi email pertama menghasilkan saldo **1 CTF**, `GET /auth/me` = **1 CTF**, ledger tunggal `WELCOME_BONUS` amount `1`, idempotency `welcome-bonus:<userId>`, dan replay verifikasi tetap **1 CTF**. User sementara dibersihkan setelah test.
 - Unit test: `welcome-bonus.service.test.ts` 3 test (amount 1, disabled, transaction/Google source), auth verification test memastikan bonus dipanggil di transaksi yang sama; backend full suite **316/316 lulus**; build backend lulus.
 - UI payment option memakai aset brand lokal: QRIS, GoPay, ShopeePay, BCA, BNI, BRI, Permata, Mandiri. Frontend build lulus dan seluruh SVG masuk bundle.
-- Verifikasi visual frontend deployed memakai Playwright viewport mobile `430x932` dengan respons API `payments` di-intercept (karena flag dev mati): 8 metode tampil, 8 logo termuat (`naturalWidth > 0`), tidak ada console error. Screenshot: `wallet-logos-mobile.png`.
+- Verifikasi visual frontend deployed memakai Playwright viewport mobile `430x932` dengan respons API `payments` di-intercept (karena flag dev mati): 8 metode tampil, 8 logo termuat (`naturalWidth > 0`), tidak ada console error. Screenshot verifikasi disimpan sebagai artefak sesi, bukan di repo.
 - Catatan: bonus untuk akun Google baru memakai jalur `google_signup`; akun Instagram-only tanpa email tidak mendapat bonus sampai email terverifikasi. User lama tidak di-backfill.
 
 ## 9. Log perubahan

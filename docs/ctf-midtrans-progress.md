@@ -5,7 +5,7 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 - Repo backend: `ululhikam/be_FnC`
 - Repo frontend: `ululhikam/con.fess_WebApp`
 - Branch kerja: `feat/ctf-midtrans` (backend & frontend)
-- Status: **Fase 2, 3, dan 4 selesai; E2E Midtrans sandbox (QRIS + BCA VA dengan notifikasi asli) selesai; E2E fess berbayar 1 CTF di dev selesai; smoke UI top-up selesai; parser WIB, lifecycle pending/expire, refund QRIS, dan rekonsiliasi manual sudah diverifikasi; idempotensi audit refund/chargeback diperbaiki; welcome bonus 1 CTF dan logo metode pembayaran sudah disiapkan; Meta/Instagram berfungsi dan opsional; publikasi FnC-only untuk base tanpa sosmed selesai; sign-off production belum**
+- Status: **Fase 2, 3, dan 4 selesai; E2E Midtrans sandbox (QRIS + BCA VA dengan notifikasi asli) selesai; E2E fess berbayar 1 CTF di dev selesai; smoke UI top-up selesai; parser WIB, lifecycle pending/expire, refund QRIS, dan rekonsiliasi manual sudah diverifikasi; idempotensi audit refund/chargeback diperbaiki; welcome bonus 1 CTF dan logo metode pembayaran sudah diverifikasi di dev; Meta/Instagram berfungsi dan opsional; publikasi FnC-only untuk base tanpa sosmed selesai; sign-off production belum**
 - Jangan merge ke `main` atau deploy ke production sampai sign-off eksplisit.
 
 ## 1. Keputusan yang sudah dikunci
@@ -84,8 +84,8 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 | Migrasi dev | ✅ Sampai `20261024040000_welcome_ctf_bonus` | Termasuk reserved payout, `Fess.publishedAt`, dan enum `WELCOME_BONUS` |
 | Midtrans sandbox keys | ✅ Aktif di dev | `MIDTRANS_SERVER_KEY` / `MIDTRANS_CLIENT_KEY` terpasang sebagai Vercel Sensitive env di `be-fnc-dev`; key sandbox valid walau tanpa prefix `SB-Mid-` |
 | Midtrans notification URL | ✅ Terverifikasi | `https://be-fnc-dev.vercel.app/api/payments/midtrans/notification`; notifikasi asli QRIS dan BCA VA diterima dan diproses |
-| Dev backend deployment terbaru | Selesai | `dpl_JJnJGo3RyErQby4Rrxi6oRVPkQpK` -> https://be-fnc-dev.vercel.app (flag off + fix idempotensi refund/chargeback) |
-| Dev frontend deployment terbaru | Selesai | `dpl_8po9KhPNDguEJtsUEuaFxLNjHMZV` -> https://fessncurious-dev.vercel.app |
+| Dev backend deployment terbaru | Selesai | `dpl_4AdsNFxCAyEchyKvaQWSb9dap7SQ` -> https://be-fnc-dev.vercel.app (welcome bonus; flag off) |
+| Dev frontend deployment terbaru | Selesai | `dpl_DVKgcZ1VuLdCeHzwsLeB6bRPR2F3` -> https://fessncurious-dev.vercel.app (logo brand pembayaran) |
 | Flag dev | ✅ Aman | `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false` setelah jendela test |
 | Dev callback / OAuth | ✅ Berfungsi | Midtrans ✅; Google dilaporkan selesai; Meta/Instagram OAuth + callback berfungsi dan tetap opsional untuk base FnC-only |
 | Production | ✅ Tidak disentuh | Tetap menunggu sign-off |
@@ -256,7 +256,7 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 - [x] Refund QRIS asli lewat Midtrans refund API; status backend `refunded`, CTF tidak didebit otomatis.
 - [x] Idempotensi audit refund/chargeback: audit hanya ditulis saat transisi status; replay signed notification tidak menambah audit.
 - [x] Rekonsiliasi manual endpoint diuji: secret salah `401`, secret benar `200` (`checked=1, processed=1, failed=0`). Cron/rekonsiliasi terjadwal belum dikonfigurasi.
-- [x] Deploy dev terbaru (backend `dpl_JJnJGo3RyErQby4Rrxi6oRVPkQpK`, frontend `dpl_8po9KhPNDguEJtsUEuaFxLNjHMZV`).
+- [x] Deploy dev terbaru (backend `dpl_4AdsNFxCAyEchyKvaQWSb9dap7SQ`, frontend `dpl_DVKgcZ1VuLdCeHzwsLeB6bRPR2F3`).
 - [ ] Sign-off.
 - [ ] Production canary.
 
@@ -357,9 +357,11 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 ### 8.4 Welcome bonus 1 CTF + logo pembayaran (2026-10-24)
 
 - Migrasi enum `20261024040000_welcome_ctf_bonus` diterapkan ke DB dev; tidak ada perubahan production.
-- Verifikasi end-to-end service di DB dev memakai user sementara: verifikasi email pertama menghasilkan saldo **1 CTF**, ledger tunggal `WELCOME_BONUS` amount `1`, idempotency `welcome-bonus:<userId>`, dan verifikasi ulang tidak menambah saldo. User sementara dibersihkan setelah test.
+- Deploy dev: backend `dpl_4AdsNFxCAyEchyKvaQWSb9dap7SQ`, frontend `dpl_DVKgcZ1VuLdCeHzwsLeB6bRPR2F3`. `GET /payments/packages` tetap `enabled:false`, `configured:true`; production tidak disentuh.
+- Verifikasi end-to-end lewat API deployed memakai user sementara: register -> OTP -> verifikasi email pertama menghasilkan saldo **1 CTF**, `GET /auth/me` = **1 CTF**, ledger tunggal `WELCOME_BONUS` amount `1`, idempotency `welcome-bonus:<userId>`, dan replay verifikasi tetap **1 CTF**. User sementara dibersihkan setelah test.
 - Unit test: `welcome-bonus.service.test.ts` 3 test (amount 1, disabled, transaction/Google source), auth verification test memastikan bonus dipanggil di transaksi yang sama; backend full suite **316/316 lulus**; build backend lulus.
 - UI payment option memakai aset brand lokal: QRIS, GoPay, ShopeePay, BCA, BNI, BRI, Permata, Mandiri. Frontend build lulus dan seluruh SVG masuk bundle.
+- Verifikasi visual frontend deployed memakai Playwright viewport mobile `430x932` dengan respons API `payments` di-intercept (karena flag dev mati): 8 metode tampil, 8 logo termuat (`naturalWidth > 0`), tidak ada console error. Screenshot: `wallet-logos-mobile.png`.
 - Catatan: bonus untuk akun Google baru memakai jalur `google_signup`; akun Instagram-only tanpa email tidak mendapat bonus sampai email terverifikasi. User lama tidak di-backfill.
 
 ## 9. Log perubahan
@@ -395,6 +397,7 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 | 2026-10-24 | Rekonsiliasi manual diuji (`401` secret salah, `200` secret benar); flag pembayaran dikembalikan ke `false`; backend dev `dpl_JJnJGo3RyErQby4Rrxi6oRVPkQpK`; UI `/wallet` terkunci. |
 | 2026-10-24 | Welcome bonus 1 CTF ditambahkan: ledger `WELCOME_BONUS`, idempotency `welcome-bonus:<userId>`, hook verifikasi email + Google baru, no backfill; migrasi `20261024040000_welcome_ctf_bonus`; 3 test baru; backend full suite 316/316 lulus. |
 | 2026-10-24 | Logo metode pembayaran diganti dari ikon generik ke aset brand lokal QRIS, GoPay, ShopeePay, BCA, BNI, BRI, Permata, dan Mandiri; frontend build lulus. |
+| 2026-10-24 | Deploy dev: backend `dpl_4AdsNFxCAyEchyKvaQWSb9dap7SQ`, frontend `dpl_DVKgcZ1VuLdCeHzwsLeB6bRPR2F3`; flag pembayaran tetap mati. E2E API welcome bonus lulus (1 CTF, replay 1 CTF, ledger tunggal), dan verifikasi visual 8 logo pembayaran lulus. |
 | 2026-10-24 | Gate tersisa: chargeback asli tidak dapat dipicu dari merchant sandbox (ditutup unit test), cron rekonsiliasi terjadwal, Midtrans production, operasional refund/chargeback, sign-off. |
 
 ## 10. Checklist production (belum dijalankan)

@@ -4,6 +4,7 @@ import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { Strategy as InstagramStrategy } from 'passport-instagram';
 import { ENV } from './env.js';
 import { prisma } from './prisma.js';
+import { WelcomeBonusService } from '../services/welcome-bonus.service.js';
 
 // JWT Strategy
 passport.use(
@@ -97,18 +98,28 @@ if (ENV.GOOGLE_CLIENT_ID && ENV.GOOGLE_CLIENT_SECRET) {
               cleanHandle = `@u_${Date.now().toString().slice(-6)}`;
             }
 
-            user = await prisma.user.create({
-              data: {
-                googleId,
-                email: email || undefined,
-                username: displayName,
-                handle: cleanHandle,
-                avatar,
-                role,
-                emailVerifiedAt: new Date(),
-                bio: 'Joined via Google Sign-In',
+            user = await prisma.$transaction(
+              async (tx) => {
+                const created = await tx.user.create({
+                  data: {
+                    googleId,
+                    email: email || undefined,
+                    username: displayName,
+                    handle: cleanHandle,
+                    avatar,
+                    role,
+                    emailVerifiedAt: new Date(),
+                    bio: 'Joined via Google Sign-In',
+                  },
+                });
+
+                // New Google accounts are email-verified immediately; grant
+                // the same one-time welcome bonus used by the OTP flow.
+                await WelcomeBonusService.grant(created.id, tx, 'google_signup');
+                return created;
               },
-            });
+              { maxWait: 10_000, timeout: 30_000 }
+            );
           } else if (!user.googleId) {
             // Link googleId
             user = await prisma.user.update({

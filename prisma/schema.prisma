@@ -382,6 +382,7 @@ enum CtfLedgerType {
   MIGRATION
   CHARGEBACK
   CORRECTION
+  WELCOME_BONUS
 }
 
 enum PaymentOrderStatus {

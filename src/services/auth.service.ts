@@ -15,6 +15,7 @@ import {
 } from '../utils/jwt.util.js';
 import { normalizeHandle, getInitials } from '../utils/format.util.js';
 import { EmailService } from './email.service.js';
+import { WelcomeBonusService } from './welcome-bonus.service.js';
 
 const googleClient = new OAuth2Client(ENV.GOOGLE_CLIENT_ID);
 
@@ -375,6 +376,7 @@ export class AuthService {
       },
       include: {
         managedBases: { select: { handle: true } },
+        ctfWallet: { select: { balance: true } },
       },
     });
 
@@ -396,21 +398,39 @@ export class AuthService {
         cleanHandle = `@u_${Date.now().toString().slice(-6)}`;
       }
 
-      user = await prisma.user.create({
-        data: {
-          email,
-          username: name || 'Pengguna Google',
-          handle: cleanHandle,
-          avatar: picture || null,
-          role: role === 'Base Admin' ? 'Base Admin' : 'User',
-          googleId: googleSub,
-          emailVerifiedAt: new Date(),
-          badges: ['GOOGLE VERIFIED', 'MEMBER'],
+      user = await prisma.$transaction(
+        async (tx) => {
+          const created = await tx.user.create({
+            data: {
+              email,
+              username: name || 'Pengguna Google',
+              handle: cleanHandle,
+              avatar: picture || null,
+              role: role === 'Base Admin' ? 'Base Admin' : 'User',
+              googleId: googleSub,
+              emailVerifiedAt: new Date(),
+              badges: ['GOOGLE VERIFIED', 'MEMBER'],
+            },
+            include: {
+              managedBases: { select: { handle: true } },
+              ctfWallet: { select: { balance: true } },
+            },
+          });
+
+          // Google accounts are verified at creation, so they do not pass
+          // through verifyEmail(); grant the same one-time bonus here.
+          const welcomeBonus = await WelcomeBonusService.grant(
+            created.id,
+            tx,
+            'google_signup'
+          );
+          if (welcomeBonus) {
+            created.ctfWallet = { balance: welcomeBonus.balance };
+          }
+          return created;
         },
-        include: {
-          managedBases: { select: { handle: true } },
-        },
-      });
+        { maxWait: 10_000, timeout: 30_000 }
+      );
     } else if (!user.googleId) {
       // Link the Google identity to the existing email account
       await prisma.user.update({
@@ -565,7 +585,10 @@ export class AuthService {
 
     const user = await prisma.user.findUnique({
       where: { id: payload.sub },
-      include: { managedBases: { select: { handle: true } } },
+      include: {
+        managedBases: { select: { handle: true } },
+        ctfWallet: { select: { balance: true } },
+      },
     });
 
     if (!user?.email || user.email.toLowerCase() !== payload.email.toLowerCase()) {
@@ -613,13 +636,22 @@ export class AuthService {
     }
 
     const verifiedAt = new Date();
-    await prisma.$transaction([
-      prisma.user.update({ where: { id: user.id }, data: { emailVerifiedAt: verifiedAt } }),
-      // deleteMany membuat verifikasi tetap idempoten bila request ganda masuk.
-      prisma.emailVerification.deleteMany({ where: { userId: user.id } }),
-    ]);
+    const welcomeBonus = await prisma.$transaction(
+      async (tx) => {
+        await tx.user.update({ where: { id: user.id }, data: { emailVerifiedAt: verifiedAt } });
+        // deleteMany membuat verifikasi tetap idempoten bila request ganda masuk.
+        await tx.emailVerification.deleteMany({ where: { userId: user.id } });
+        // Credit the welcome bonus in the same transaction so a failed credit
+        // rolls back verification and the user can retry the OTP safely.
+        return WelcomeBonusService.grant(user.id, tx, 'email_verification');
+      },
+      { maxWait: 10_000, timeout: 30_000 }
+    );
 
     user.emailVerifiedAt = verifiedAt;
+    if (welcomeBonus) {
+      user.ctfWallet = { balance: welcomeBonus.balance };
+    }
     return {
       user: this.serializeUser(user),
       token: this.issueAccessToken(user),

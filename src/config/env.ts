@@ -87,6 +87,12 @@ export const ENV = {
   RESEND_API_KEY: process.env.RESEND_API_KEY || '',
   EMAIL_FROM: process.env.EMAIL_FROM || 'Fess n Curious <onboarding@resend.dev>',
 
+  // Welcome CTF bonus for newly verified users. Set to 0 to disable.
+  WELCOME_CTF_BONUS: (() => {
+    const parsed = parseInt(process.env.WELCOME_CTF_BONUS ?? '1', 10);
+    return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1_000_000 ? parsed : 1;
+  })(),
+
   // Payments (Midtrans Core API). Default OFF until sign-off.
   PAYMENTS_ENABLED: process.env.PAYMENTS_ENABLED === 'true',
   BASE_PAYOUTS_ENABLED: process.env.BASE_PAYOUTS_ENABLED === 'true',

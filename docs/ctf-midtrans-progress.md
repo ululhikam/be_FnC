@@ -5,7 +5,7 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 - Repo backend: `ululhikam/be_FnC`
 - Repo frontend: `ululhikam/con.fess_WebApp`
 - Branch kerja: `feat/ctf-midtrans` (backend & frontend)
-- Status: **Fase 2, 3, dan 4 selesai; E2E Midtrans sandbox (QRIS + BCA VA dengan notifikasi asli) selesai; E2E fess berbayar 1 CTF di dev selesai; smoke UI top-up selesai; parser WIB, lifecycle pending/expire, refund QRIS, dan rekonsiliasi manual sudah diverifikasi; idempotensi audit refund/chargeback diperbaiki; Meta/Instagram berfungsi dan opsional; publikasi FnC-only untuk base tanpa sosmed selesai; sign-off production belum**
+- Status: **Fase 2, 3, dan 4 selesai; E2E Midtrans sandbox (QRIS + BCA VA dengan notifikasi asli) selesai; E2E fess berbayar 1 CTF di dev selesai; smoke UI top-up selesai; parser WIB, lifecycle pending/expire, refund QRIS, dan rekonsiliasi manual sudah diverifikasi; idempotensi audit refund/chargeback diperbaiki; welcome bonus 1 CTF dan logo metode pembayaran sudah disiapkan; Meta/Instagram berfungsi dan opsional; publikasi FnC-only untuk base tanpa sosmed selesai; sign-off production belum**
 - Jangan merge ke `main` atau deploy ke production sampai sign-off eksplisit.
 
 ## 1. Keputusan yang sudah dikunci
@@ -27,6 +27,14 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 - Biaya transfer payout default **Rp6.500**, dapat disesuaikan saat approval.
 - Super Admin dapat menetapkan base **gratis selamanya** (`freeForever`).
 - Base gratis selamanya: user tidak membayar, base tidak mendapat revenue.
+
+### Welcome bonus
+
+- User baru yang **pertama kali menyelesaikan verifikasi email** mendapat welcome bonus **1 CTF**.
+- Bonus diberikan sekali per akun, idempotent dengan key `welcome-bonus:<userId>`, dan memakai tipe ledger `WELCOME_BONUS`.
+- Akun Google baru yang langsung terverifikasi juga mendapat bonus yang sama.
+- Akun Instagram-only tanpa email belum mendapat bonus; bonus diberikan saat emailnya diverifikasi.
+- User lama yang sudah terverifikasi **tidak di-backfill**. Nominal dapat diubah lewat `WELCOME_CTF_BONUS`; set `0` untuk menonaktifkan.
 
 ### Publikasi FnC-only & sosial media
 
@@ -73,7 +81,7 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 | Supabase project development | ✅ Aktif | Ref `vtvnurgkhqboygkttzae`, region `ap-south-1` |
 | Vercel project dev backend | ✅ Dibuat | `be-fnc-dev` → `be-fnc-dev.vercel.app` |
 | Vercel project dev frontend | ✅ Dibuat | `fessncurious-dev` → `fessncurious-dev.vercel.app` |
-| Migrasi dev | ✅ Sampai `20261024030000_fess_published_at` | Termasuk reserved payout dan `Fess.publishedAt` |
+| Migrasi dev | ✅ Sampai `20261024040000_welcome_ctf_bonus` | Termasuk reserved payout, `Fess.publishedAt`, dan enum `WELCOME_BONUS` |
 | Midtrans sandbox keys | ✅ Aktif di dev | `MIDTRANS_SERVER_KEY` / `MIDTRANS_CLIENT_KEY` terpasang sebagai Vercel Sensitive env di `be-fnc-dev`; key sandbox valid walau tanpa prefix `SB-Mid-` |
 | Midtrans notification URL | ✅ Terverifikasi | `https://be-fnc-dev.vercel.app/api/payments/midtrans/notification`; notifikasi asli QRIS dan BCA VA diterima dan diproses |
 | Dev backend deployment terbaru | Selesai | `dpl_JJnJGo3RyErQby4Rrxi6oRVPkQpK` -> https://be-fnc-dev.vercel.app (flag off + fix idempotensi refund/chargeback) |
@@ -107,9 +115,12 @@ Project Vercel dev:
 ### Backend
 
 ```env
-# Feature flags — tetap false sampai sign-off
+# Feature flags - tetap false sampai sign-off
 PAYMENTS_ENABLED=false
 BASE_PAYOUTS_ENABLED=false
+
+# Welcome bonus 1 CTF untuk user baru yang emailnya terverifikasi
+WELCOME_CTF_BONUS=1
 
 # Payout
 BASE_PAYOUT_FEE_IDR=6500
@@ -343,6 +354,14 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 - **Restore flag** — `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false`; backend dev dideploy `dpl_JJnJGo3RyErQby4Rrxi6oRVPkQpK`. `GET /payments/packages` -> `enabled:false`, `configured:true`; UI `/wallet` menampilkan `Top up belum dibuka`; saldo tetap **589 CTF**.
 - **Artefak saldo dev** — 25 CTF dari order QRIS yang direfund tetap ada di saldo dev karena desain tidak mendebit CTF otomatis; ini harus ditinjau manual pada production. Order lifecycle: `FNC-MVM17O6T-A5E51E5F37` paid, `FNC-MVM18TA0-3AB0327666` expired, `FNC-MVM19T8V-455F3B3D33` refunded, `FNC-MVLZOLTX-833F32D64E` (Kampus) masih pending.
 
+### 8.4 Welcome bonus 1 CTF + logo pembayaran (2026-10-24)
+
+- Migrasi enum `20261024040000_welcome_ctf_bonus` diterapkan ke DB dev; tidak ada perubahan production.
+- Verifikasi end-to-end service di DB dev memakai user sementara: verifikasi email pertama menghasilkan saldo **1 CTF**, ledger tunggal `WELCOME_BONUS` amount `1`, idempotency `welcome-bonus:<userId>`, dan verifikasi ulang tidak menambah saldo. User sementara dibersihkan setelah test.
+- Unit test: `welcome-bonus.service.test.ts` 3 test (amount 1, disabled, transaction/Google source), auth verification test memastikan bonus dipanggil di transaksi yang sama; backend full suite **316/316 lulus**; build backend lulus.
+- UI payment option memakai aset brand lokal: QRIS, GoPay, ShopeePay, BCA, BNI, BRI, Permata, Mandiri. Frontend build lulus dan seluruh SVG masuk bundle.
+- Catatan: bonus untuk akun Google baru memakai jalur `google_signup`; akun Instagram-only tanpa email tidak mendapat bonus sampai email terverifikasi. User lama tidak di-backfill.
+
 ## 9. Log perubahan
 
 | Tanggal | Perubahan |
@@ -374,6 +393,8 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 | 2026-10-24 | Lifecycle sandbox lulus: expiry 24.001 jam, `paid_at` benar, order expire tidak mengkredit CTF, dan refund QRIS asli membuat order `refunded` tanpa mendebit CTF. Saldo dev 539 -> 564 -> 589. |
 | 2026-10-24 | Idempotensi audit refund/chargeback diperbaiki: audit hanya saat transisi status; 4 test baru; backend full suite 313/313 lulus. Replay signed refund setelah deploy tidak menambah audit. |
 | 2026-10-24 | Rekonsiliasi manual diuji (`401` secret salah, `200` secret benar); flag pembayaran dikembalikan ke `false`; backend dev `dpl_JJnJGo3RyErQby4Rrxi6oRVPkQpK`; UI `/wallet` terkunci. |
+| 2026-10-24 | Welcome bonus 1 CTF ditambahkan: ledger `WELCOME_BONUS`, idempotency `welcome-bonus:<userId>`, hook verifikasi email + Google baru, no backfill; migrasi `20261024040000_welcome_ctf_bonus`; 3 test baru; backend full suite 316/316 lulus. |
+| 2026-10-24 | Logo metode pembayaran diganti dari ikon generik ke aset brand lokal QRIS, GoPay, ShopeePay, BCA, BNI, BRI, Permata, dan Mandiri; frontend build lulus. |
 | 2026-10-24 | Gate tersisa: chargeback asli tidak dapat dipicu dari merchant sandbox (ditutup unit test), cron rekonsiliasi terjadwal, Midtrans production, operasional refund/chargeback, sign-off. |
 
 ## 10. Checklist production (belum dijalankan)
@@ -383,8 +404,8 @@ Semua item di bawah ini **rencana**; belum ada aksi terhadap production.
 ### Pre-flight
 
 - [ ] Review dan merge branch `feat/ctf-midtrans` setelah sign-off eksplisit.
-- [ ] Backup database production dan terapkan migrasi additive (`prisma migrate deploy`) sebelum deploy kode.
-- [ ] Isi env production: `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false`, `MIDTRANS_IS_PRODUCTION=true`, production server/client/merchant key, `PAYMENT_RECONCILE_SECRET` kuat, DB URL, JWT, storage, email.
+- [ ] Backup database production dan terapkan migrasi additive (`prisma migrate deploy`) sebelum deploy kode, termasuk enum `WELCOME_BONUS`.
+- [ ] Isi env production: `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false`, `WELCOME_CTF_BONUS=1`, `MIDTRANS_IS_PRODUCTION=true`, production server/client/merchant key, `PAYMENT_RECONCILE_SECRET` kuat, DB URL, JWT, storage, email.
 - [ ] Pastikan tidak ada key sandbox di project production dan tidak ada key production di frontend.
 - [ ] Set Midtrans production notification URL ke `https://<domain-production>/api/payments/midtrans/notification`; aktifkan metode pembayaran dan izin refund yang disetujui.
 - [ ] Set `ALLOWED_ORIGINS` hanya ke domain production; verifikasi CORS dari origin asing ditolak.
@@ -395,6 +416,7 @@ Semua item di bawah ini **rencana**; belum ada aksi terhadap production.
 ### Canary
 
 - [ ] Deploy production dengan flag pembayaran `false`; verifikasi health, login, publikasi fess FnC-only, dan `/wallet` terkunci.
+- [ ] Verifikasi user baru yang emailnya terverifikasi menerima tepat 1 CTF sekali (ledger `WELCOME_BONUS`, saldo +1, replay tidak menambah), dan user lama tidak mendapat backfill.
 - [ ] Aktifkan `PAYMENTS_ENABLED=true` hanya untuk jendela canary singkat.
 - [ ] Satu top-up internal sekecil mungkin: verifikasi notifikasi asli, saldo naik tepat sekali, satu `CtfLedgerEntry`, dan audit.
 - [ ] Satu fess berbayar: verifikasi debit 1 CTF, idempotency replay, `FessCharge`, dan `BaseRevenueEntry` Rp80 `PENDING`.

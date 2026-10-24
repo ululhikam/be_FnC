@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import crypto from 'node:crypto';
 import { AuthService } from '../src/services/auth.service.js';
 import { EmailService } from '../src/services/email.service.js';
+import { WelcomeBonusService } from '../src/services/welcome-bonus.service.js';
 import { prisma } from '../src/config/prisma.js';
 import * as passwordUtil from '../src/utils/password.util.js';
 import { generateEmailVerificationTicket } from '../src/utils/jwt.util.js';
@@ -216,7 +217,10 @@ describe('AuthService Unit Tests', () => {
         otpExpiresAt: new Date(Date.now() + 60_000),
         attempts: 0,
       } as any);
-      vi.mocked(prisma.$transaction).mockResolvedValueOnce([{}, {}] as any);
+      vi.mocked(prisma.$transaction).mockImplementationOnce(async (callback: any) => callback(prisma));
+      const grantSpy = vi
+        .spyOn(WelcomeBonusService, 'grant')
+        .mockResolvedValueOnce({ balance: 1 } as any);
 
       const ticket = generateEmailVerificationTicket({
         sub: user.id,
@@ -228,7 +232,10 @@ describe('AuthService Unit Tests', () => {
 
       expect(result.token).toBeDefined();
       expect(result.user.email_verified).toBe(true);
+      expect(result.user.balance).toBe(1);
       expect(prisma.emailVerification.deleteMany).toHaveBeenCalled();
+      expect(grantSpy).toHaveBeenCalledWith(user.id, prisma, 'email_verification');
+      grantSpy.mockRestore();
     });
 
     it('increments attempts and rejects a wrong OTP', async () => {

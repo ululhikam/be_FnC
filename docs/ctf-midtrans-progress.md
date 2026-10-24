@@ -375,3 +375,35 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 | 2026-10-24 | Idempotensi audit refund/chargeback diperbaiki: audit hanya saat transisi status; 4 test baru; backend full suite 313/313 lulus. Replay signed refund setelah deploy tidak menambah audit. |
 | 2026-10-24 | Rekonsiliasi manual diuji (`401` secret salah, `200` secret benar); flag pembayaran dikembalikan ke `false`; backend dev `dpl_JJnJGo3RyErQby4Rrxi6oRVPkQpK`; UI `/wallet` terkunci. |
 | 2026-10-24 | Gate tersisa: chargeback asli tidak dapat dipicu dari merchant sandbox (ditutup unit test), cron rekonsiliasi terjadwal, Midtrans production, operasional refund/chargeback, sign-off. |
+
+## 10. Checklist production (belum dijalankan)
+
+Semua item di bawah ini **rencana**; belum ada aksi terhadap production.
+
+### Pre-flight
+
+- [ ] Review dan merge branch `feat/ctf-midtrans` setelah sign-off eksplisit.
+- [ ] Backup database production dan terapkan migrasi additive (`prisma migrate deploy`) sebelum deploy kode.
+- [ ] Isi env production: `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false`, `MIDTRANS_IS_PRODUCTION=true`, production server/client/merchant key, `PAYMENT_RECONCILE_SECRET` kuat, DB URL, JWT, storage, email.
+- [ ] Pastikan tidak ada key sandbox di project production dan tidak ada key production di frontend.
+- [ ] Set Midtrans production notification URL ke `https://<domain-production>/api/payments/midtrans/notification`; aktifkan metode pembayaran dan izin refund yang disetujui.
+- [ ] Set `ALLOWED_ORIGINS` hanya ke domain production; verifikasi CORS dari origin asing ditolak.
+- [ ] Siapkan monitoring: error rate webhook, pembayaran pending menua, saldo negatif, amount mismatch, refund/chargeback, dan alert ke on-call.
+- [ ] Siapkan cron rekonsiliasi (mis. tiap 5-10 menit) yang memanggil endpoint reconcile dengan secret; uji dry-run.
+- [ ] Siapkan runbook refund/chargeback manual: verifikasi order, keputusan Super Admin, audit, dan komunikasi ke user.
+
+### Canary
+
+- [ ] Deploy production dengan flag pembayaran `false`; verifikasi health, login, publikasi fess FnC-only, dan `/wallet` terkunci.
+- [ ] Aktifkan `PAYMENTS_ENABLED=true` hanya untuk jendela canary singkat.
+- [ ] Satu top-up internal sekecil mungkin: verifikasi notifikasi asli, saldo naik tepat sekali, satu `CtfLedgerEntry`, dan audit.
+- [ ] Satu fess berbayar: verifikasi debit 1 CTF, idempotency replay, `FessCharge`, dan `BaseRevenueEntry` Rp80 `PENDING`.
+- [ ] Verifikasi order expire dan retry/reconcile tidak mengubah saldo.
+- [ ] Pantau minimal satu siklus rekonsiliasi terjadwal dan satu webhook retry.
+- [ ] Rollback: set `PAYMENTS_ENABLED=false`, deploy ulang, verifikasi `/wallet` terkunci dan saldo/riwayat tetap terbaca.
+
+### Sign-off
+
+- [ ] Product owner menyetujui canary dan hasil monitoring.
+- [ ] Tidak ada duplicate credit, amount/currency mismatch, saldo negatif, atau kebocoran key.
+- [ ] Baru setelah itu pertimbangkan membuka pembayaran untuk semua user.

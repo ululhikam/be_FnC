@@ -76,8 +76,8 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 | Migrasi dev | ✅ Sampai `20261024030000_fess_published_at` | Termasuk reserved payout dan `Fess.publishedAt` |
 | Midtrans sandbox keys | ✅ Aktif di dev | `MIDTRANS_SERVER_KEY` / `MIDTRANS_CLIENT_KEY` terpasang sebagai Vercel Sensitive env di `be-fnc-dev`; key sandbox valid walau tanpa prefix `SB-Mid-` |
 | Midtrans notification URL | ✅ Terverifikasi | `https://be-fnc-dev.vercel.app/api/payments/midtrans/notification`; notifikasi asli QRIS dan BCA VA diterima dan diproses |
-| Dev backend deployment terbaru | Selesai | `dpl_3yFf4JFHtXxoRzvMNG6snmxMu5GA` -> https://be-fnc-dev.vercel.app |
-| Dev frontend deployment terbaru | Selesai | `dpl_DdJibWBB2QHzRCqHfvB952kzuSNj` -> https://fessncurious-dev.vercel.app |
+| Dev backend deployment terbaru | Selesai | `dpl_7DkTGmqcWVXTCugUn8AwKMrW9yad` -> https://be-fnc-dev.vercel.app |
+| Dev frontend deployment terbaru | Selesai | `dpl_BAAeh6V3KC6j4aWB7R2enYdMEHUA` -> https://fessncurious-dev.vercel.app |
 | Flag dev | ✅ Aman | `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false` setelah jendela test |
 | Dev callback / OAuth | ✅ Berfungsi | Midtrans ✅; Google dilaporkan selesai; Meta/Instagram OAuth + callback berfungsi dan tetap opsional untuk base FnC-only |
 | Production | ✅ Tidak disentuh | Tetap menunggu sign-off |
@@ -235,7 +235,7 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 - [x] CORS allowlist.
 - [x] Rate limit terdistribusi.
 - [x] E2E Midtrans sandbox (QRIS + BCA VA via simulator, notifikasi asli; duplicate/invalid signature/amount mismatch/unknown order diuji).
-- [x] Deploy dev terbaru (backend `dpl_3yFf4JFHtXxoRzvMNG6snmxMu5GA`, frontend `dpl_DdJibWBB2QHzRCqHfvB952kzuSNj`).
+- [x] Deploy dev terbaru (backend `dpl_7DkTGmqcWVXTCugUn8AwKMrW9yad`, frontend `dpl_BAAeh6V3KC6j4aWB7R2enYdMEHUA`).
 - [ ] Sign-off.
 - [ ] Production canary.
 
@@ -291,6 +291,7 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 - Idempotency order: request ulang dengan `Idempotency-Key` yang sama mengembalikan 200 dan order ID yang sama.
 - Setelah pengujian, `PAYMENTS_ENABLED=false` dan `BASE_PAYOUTS_ENABLED=false`; backend dev dideploy ulang dan `GET /payments/packages` mengembalikan `enabled:false`, `configured:true`.
 - Test backend terakhir: 306/306 lulus; build backend & frontend lulus.
+- Smoke API dev setelah deploy: `GET /api/bases` mengembalikan objek `billing`; detail `@testbase` mengembalikan `billing.reason=trial` dan `instagram_connected=true`; `GET /api/payments/packages` tetap `enabled:false`, `configured:true`.
 
 ## 9. Log perubahan
 
@@ -314,4 +315,5 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 | 2026-10-24 | Meta/Instagram dinyatakan berfungsi (OAuth + callback); tetap opsional dan bukan gate. Base tanpa sosmed tetap FnC-only. |
 | 2026-10-24 | Fase 4 selesai: badge billing composer, modal saldo kurang + CTA top-up, badge publik, status koneksi Instagram nyata, serta audit copy legal/help/FAQ/landing. |
 | 2026-10-24 | Backend full suite 306 test lulus; build backend & frontend lulus. |
+| 2026-10-24 | Deploy dev: backend `dpl_7DkTGmqcWVXTCugUn8AwKMrW9yad`, frontend `dpl_BAAeh6V3KC6j4aWB7R2enYdMEHUA`; smoke API billing/Instagram lulus, flag pembayaran tetap mati. |
 | 2026-10-24 | Gate tersisa: manual UI smoke, skenario pending/expire/refund, Midtrans production, sign-off. |

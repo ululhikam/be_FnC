@@ -1,11 +1,13 @@
 import { prisma } from '../config/prisma.js';
-import { BASE_TRIAL_DAYS } from '../constants/payments.js';
+import { BASE_TRIAL_DAYS, CTF_PER_PAID_FESS } from '../constants/payments.js';
 import {
   HANDLE_CHANGE_COOLDOWN_DAYS,
   getHandleChangeAvailableAt,
 } from '../constants/user.js';
 import { formatMembers, getInitials, normalizeHandle } from '../utils/format.util.js';
 import { getOrSet, invalidateCache } from '../utils/cache.util.js';
+import { getBaseBillingState } from './fess-billing.service.js';
+import { InstagramService } from './instagram.service.js';
 
 const handleChangeDateFormatter = new Intl.DateTimeFormat('id-ID', {
   dateStyle: 'long',
@@ -213,8 +215,15 @@ export class BaseService {
           ))
     );
 
+    // The public profile must not claim auto-post is active based only on the
+    // stored @handle: the Meta connection can be disconnected at any time.
+    const instagramConnected = await InstagramService.hasActiveInstagramConnection({
+      creatorId: base.creatorId,
+    });
+
     return this.serializeBase(base, isFollowing, {
       includeHandleCooldown: canManage,
+      instagramConnected,
     });
   }
 
@@ -583,9 +592,10 @@ export class BaseService {
   static serializeBase(
     base: any,
     isFollowing = false,
-    options: { includeHandleCooldown?: boolean } = {}
+    options: { includeHandleCooldown?: boolean; instagramConnected?: boolean } = {}
   ) {
     const handleChangeAvailableAt = getHandleChangeAvailableAt(base.handleChangedAt);
+    const billing = getBaseBillingState(base);
     return {
       id: base.id,
       name: base.name,
@@ -599,6 +609,16 @@ export class BaseService {
       is_following: isFollowing,
       bio: base.bio || '',
       ig_account: base.igAccount || '',
+      billing: {
+        requires_payment: billing.requiresPayment,
+        reason: billing.reason,
+        free_forever: billing.freeForever,
+        trial_active: billing.trialActive,
+        ctf_cost: billing.requiresPayment ? CTF_PER_PAID_FESS : 0,
+      },
+      ...(options.instagramConnected !== undefined
+        ? { instagram_connected: Boolean(options.instagramConnected) }
+        : {}),
       rules: base.rules || [],
       followers_count: base.membersCount ?? 0,
       following_count: 0,

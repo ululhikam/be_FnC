@@ -5,7 +5,7 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 - Repo backend: `ululhikam/be_FnC`
 - Repo frontend: `ululhikam/con.fess_WebApp`
 - Branch kerja: `feat/ctf-midtrans` (backend & frontend)
-- Status: **Fase 2 & 3 selesai; E2E Midtrans sandbox (QRIS + BCA VA dengan notifikasi asli) selesai; publikasi FnC-only untuk base tanpa sosmed selesai; sign-off production belum**
+- Status: **Fase 2, 3, dan 4 selesai; E2E Midtrans sandbox (QRIS + BCA VA dengan notifikasi asli) selesai; Meta/Instagram berfungsi dan opsional; publikasi FnC-only untuk base tanpa sosmed selesai; sign-off production belum**
 - Jangan merge ke `main` atau deploy ke production sampai sign-off eksplisit.
 
 ## 1. Keputusan yang sudah dikunci
@@ -30,10 +30,11 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 
 ### Publikasi FnC-only & sosial media
 
-- Integrasi Meta/Instagram **ditunda** untuk saat ini.
-- Base Admin yang belum menghubungkan Instagram/sosmed tetap dapat menerbitkan fess secara normal di FnC.
+- Integrasi Meta/Instagram **sudah berfungsi** untuk OAuth dan publikasi otomatis.
+- Menghubungkan Instagram tetap **opsional**; base yang belum menghubungkannya tetap dapat menerbitkan fess secara normal di FnC.
 - Tanpa koneksi sosmed, fess tidak menjalankan render/upload canvas maupun auto-post Instagram; `Fess.igStatus` bernilai `skipped` (bukan `failed`) dan tidak ada error yang ditampilkan ke admin/pengguna.
-- Menghubungkan Instagram bersifat opsional dan bisa dilakukan kapan saja dari dashboard; setelah terhubung, auto-post kembali berjalan untuk fess berikutnya.
+- Setelah Instagram terhubung, auto-post berjalan untuk fess berikutnya. Jika koneksi diputus, base kembali ke mode FnC-only tanpa mengganggu publikasi fess.
+- Status koneksi Instagram yang ditampilkan ke publik dibaca dari koneksi Meta yang aktif, bukan hanya dari kolom `igAccount`.
 
 ### Paket CTF
 
@@ -78,7 +79,7 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 | Dev backend deployment terbaru | Selesai | `dpl_3yFf4JFHtXxoRzvMNG6snmxMu5GA` -> https://be-fnc-dev.vercel.app |
 | Dev frontend deployment terbaru | Selesai | `dpl_DdJibWBB2QHzRCqHfvB952kzuSNj` -> https://fessncurious-dev.vercel.app |
 | Flag dev | ✅ Aman | `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false` setelah jendela test |
-| Dev callback / OAuth | ⚠️ Sebagian | Midtrans ✅; Google dilaporkan selesai; Instagram/Meta sengaja ditunda dan bukan blocker karena base mendukung FnC-only |
+| Dev callback / OAuth | ✅ Berfungsi | Midtrans ✅; Google dilaporkan selesai; Meta/Instagram OAuth + callback berfungsi dan tetap opsional untuk base FnC-only |
 | Production | ✅ Tidak disentuh | Tetap menunggu sign-off |
 
 > Isolasi dev memakai **project Vercel terpisah**. Subdomain `dev.fessncurious.vercel.app` tidak bisa dibuat karena `fessncurious.vercel.app` adalah domain milik Vercel.
@@ -204,10 +205,10 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 - [x] Composer menampilkan biaya CTF dan saldo setelah publish.
 - [x] Base dashboard: saldo IDR, revenue, hold, payout, rekening, KYC read-only.
 - [x] Super Admin: review payout, KYC, freeForever, re-auth.
-- [ ] Badge trial/gratis/1 CTF di composer sebelum publish.
-- [ ] Modal saldo kurang dengan CTA top-up.
-- [ ] Public base badge.
-- [ ] Audit copy legal/help lama yang masih menyebut treasury $CLUB/85%.
+- [x] Badge trial/gratis/1 CTF di composer sebelum publish.
+- [x] Modal saldo kurang dengan CTA top-up.
+- [x] Public base badge (trial/gratis/1 CTF + status koneksi Instagram nyata).
+- [x] Audit copy legal/help lama yang masih menyebut treasury $CLUB/85%, Threads/X, dan klaim gratis tanpa batas.
 
 ### Fase 5 — Base revenue, payout, freeForever
 
@@ -278,7 +279,7 @@ Approve dan mark-paid mewajibkan password re-auth. Semua aksi menolak self-appro
 4. **Sign-off** — `PAYMENTS_ENABLED` dan `BASE_PAYOUTS_ENABLED` tetap `false` sampai disetujui.
 5. **Production** — jangan deploy/merge sebelum sign-off; production env dan deployment belum disentuh.
 
-Catatan: Meta/Instagram **ditunda** dan tidak menjadi gate. Base tanpa koneksi sosmed tetap beroperasi penuh sebagai base FnC-only.
+Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasinya tetap opsional; base tanpa koneksi sosmed beroperasi penuh sebagai base FnC-only.
 
 ## 8. Bukti E2E dev (2026-10-24)
 
@@ -289,7 +290,7 @@ Catatan: Meta/Instagram **ditunda** dan tidak menjadi gate. Base tanpa koneksi s
 - Synthetic webhook: duplicate replay `already_processed`; signature salah 401 tanpa DB write; unknown order 200 `unknown_order`; amount mismatch 400 `PAYMENT_AMOUNT_MISMATCH`.
 - Idempotency order: request ulang dengan `Idempotency-Key` yang sama mengembalikan 200 dan order ID yang sama.
 - Setelah pengujian, `PAYMENTS_ENABLED=false` dan `BASE_PAYOUTS_ENABLED=false`; backend dev dideploy ulang dan `GET /payments/packages` mengembalikan `enabled:false`, `configured:true`.
-- Test backend terakhir: 304/304 lulus; build backend & frontend lulus.
+- Test backend terakhir: 306/306 lulus; build backend & frontend lulus.
 
 ## 9. Log perubahan
 
@@ -309,5 +310,8 @@ Catatan: Meta/Instagram **ditunda** dan tidak menjadi gate. Base tanpa koneksi s
 | 2026-10-24 | Vercel dev `be-fnc-dev` diisi `MIDTRANS_SERVER_KEY` / `MIDTRANS_CLIENT_KEY` (sensitive), `MIDTRANS_IS_PRODUCTION=false`; `GET /payments/packages` mengembalikan `configured:true`. |
 | 2026-10-24 | E2E sandbox asli lulus: QRIS Rp5.000 + BCA VA Rp10.000 dibayar via simulator, notifikasi asli masuk, saldo test naik 80 -> 160 CTF; replay/signature/amount/idempotency diuji. |
 | 2026-10-24 | Jendela test ditutup: `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false`; backend dev dideploy ulang `dpl_3yFf4JFHtXxoRzvMNG6snmxMu5GA`. |
-| 2026-10-24 | Publikasi FnC-only: base tanpa koneksi Instagram tidak lagi render/auto-post atau mencatat `failed`; fess terbit normal dengan `igStatus=skipped`. Copy registrasi/onboarding sosial media dijadikan opsional. Meta/Instagram ditunda dan bukan gate. |
+| 2026-10-24 | Publikasi FnC-only: base tanpa koneksi Instagram tidak lagi render/auto-post atau mencatat `failed`; fess terbit normal dengan `igStatus=skipped`. Copy registrasi/onboarding sosial media dijadikan opsional. |
+| 2026-10-24 | Meta/Instagram dinyatakan berfungsi (OAuth + callback); tetap opsional dan bukan gate. Base tanpa sosmed tetap FnC-only. |
+| 2026-10-24 | Fase 4 selesai: badge billing composer, modal saldo kurang + CTA top-up, badge publik, status koneksi Instagram nyata, serta audit copy legal/help/FAQ/landing. |
+| 2026-10-24 | Backend full suite 306 test lulus; build backend & frontend lulus. |
 | 2026-10-24 | Gate tersisa: manual UI smoke, skenario pending/expire/refund, Midtrans production, sign-off. |

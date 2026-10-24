@@ -25,6 +25,9 @@ vi.mock('../src/config/prisma.js', () => ({
       findFirst: vi.fn(),
       update: vi.fn(),
     },
+    platformConnection: {
+      findUnique: vi.fn(),
+    },
     $transaction: vi.fn(),
   },
 }));
@@ -102,6 +105,54 @@ describe('BaseService Unit Tests', () => {
       expect(base.handle_change_cooldown_days).toBe(7);
       expect(base.can_change_handle).toBe(false);
       expect(base.handle_change_available_at).toEqual(expect.any(Number));
+    });
+
+    it('exposes trial billing state so the composer can show a free badge', async () => {
+      vi.mocked(prisma.base.findUnique).mockResolvedValueOnce({
+        id: 'base_1',
+        name: 'Trial Base',
+        handle: '@trialbase',
+        trialEndsAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        freeForever: false,
+        membersCount: 10,
+      } as any);
+
+      const base = await BaseService.getBaseByHandle('@trialbase');
+
+      expect(base.billing).toEqual({
+        requires_payment: false,
+        reason: 'trial',
+        free_forever: false,
+        trial_active: true,
+        ctf_cost: 0,
+      });
+    });
+
+    it('exposes paid billing and real Instagram connection status', async () => {
+      vi.mocked(prisma.base.findUnique).mockResolvedValueOnce({
+        id: 'base_1',
+        name: 'Paid Base',
+        handle: '@paidbase',
+        creatorId: 'usr_1',
+        trialEndsAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+        freeForever: false,
+        membersCount: 10,
+      } as any);
+      vi.mocked(prisma.platformConnection.findUnique).mockResolvedValueOnce({
+        connected: true,
+        accessToken: 'ig-token',
+      } as any);
+
+      const base = await BaseService.getBaseByHandle('@paidbase');
+
+      expect(base.billing).toEqual({
+        requires_payment: true,
+        reason: 'paid',
+        free_forever: false,
+        trial_active: false,
+        ctf_cost: 1,
+      });
+      expect(base.instagram_connected).toBe(true);
     });
   });
 

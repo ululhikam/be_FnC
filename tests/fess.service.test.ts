@@ -589,6 +589,10 @@ describe('FessService Unit Tests', () => {
         }),
         prisma
       );
+      expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+        maxWait: 10_000,
+        timeout: 30_000,
+      });
     });
 
     it('rejects a paid fess without a verified email or enough CTF', async () => {

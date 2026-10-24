@@ -326,60 +326,67 @@ export class FessService {
 
     let transactionResult: { fess: any; charge: any };
     try {
-      transactionResult = await prisma.$transaction(async (tx) => {
-        const created = await tx.fess.create({
-          data: {
-            baseHandle: cleanHandle,
-            baseId: base.id,
-            userId: actor?.id || null,
-            content: payload.content.trim(),
-            media: payload.media && payload.media.length > 0 ? payload.media : undefined,
-            carouselOrder:
-              payload.carousel_order && payload.carousel_order.length > 0
-                ? payload.carousel_order
-                : undefined,
-            topic: payload.topic || null,
-            scheduledAt: scheduledDate,
-            song: payload.song || undefined,
-            template: payload.template || 'default',
-            quotedFess: payload.quoted_fess || undefined,
-            tag: payload.tag || null,
-            status: initialStatus,
-            autoFlagged,
-            flagReason,
-            igStatus:
-              initialStatus === 'published'
-                ? autoPostToInstagram
-                  ? 'processing'
-                  : 'skipped'
-                : 'idle',
-            igUpdatedAt: initialStatus === 'published' ? new Date() : null,
-            publishedAt: initialStatus === 'published' ? new Date() : null,
-            idempotencyKey: requestKey || undefined,
-          },
-        });
-
-        let charged: any = null;
-        if (billing.requiresPayment && actor) {
-          charged = await FessBillingService.chargeForFess(tx, {
-            fessId: created.id,
-            userId: actor.id,
-            base,
+      // Fess paid menyentuh beberapa tabel (fess, wallet, ledger, charge,
+      // revenue) dalam satu transaksi. Beri ruang lebih dari default 5 detik:
+      // pada jaringan serverless ↔ database yang lambat, transaksi bisa
+      // kehabisan waktu sebelum debit CTF selesai dan seluruh posting gagal.
+      transactionResult = await prisma.$transaction(
+        async (tx) => {
+          const created = await tx.fess.create({
+            data: {
+              baseHandle: cleanHandle,
+              baseId: base.id,
+              userId: actor?.id || null,
+              content: payload.content.trim(),
+              media: payload.media && payload.media.length > 0 ? payload.media : undefined,
+              carouselOrder:
+                payload.carousel_order && payload.carousel_order.length > 0
+                  ? payload.carousel_order
+                  : undefined,
+              topic: payload.topic || null,
+              scheduledAt: scheduledDate,
+              song: payload.song || undefined,
+              template: payload.template || 'default',
+              quotedFess: payload.quoted_fess || undefined,
+              tag: payload.tag || null,
+              status: initialStatus,
+              autoFlagged,
+              flagReason,
+              igStatus:
+                initialStatus === 'published'
+                  ? autoPostToInstagram
+                    ? 'processing'
+                    : 'skipped'
+                  : 'idle',
+              igUpdatedAt: initialStatus === 'published' ? new Date() : null,
+              publishedAt: initialStatus === 'published' ? new Date() : null,
+              idempotencyKey: requestKey || undefined,
+            },
           });
-        }
 
-        // Auto-published paid fess earns base revenue immediately. Free-trial
-        // and free-forever fesses pass charge=null and never accrue revenue.
-        if (initialStatus === 'published') {
-          await BaseRevenueService.accrueForPublishedFess(tx, {
-            fess: created,
-            base,
-            charge: charged ? { status: 'CHARGED', amount: charged.amount } : null,
-          });
-        }
+          let charged: any = null;
+          if (billing.requiresPayment && actor) {
+            charged = await FessBillingService.chargeForFess(tx, {
+              fessId: created.id,
+              userId: actor.id,
+              base,
+            });
+          }
 
-        return { fess: created, charge: charged };
-      });
+          // Auto-published paid fess earns base revenue immediately. Free-trial
+          // and free-forever fesses pass charge=null and never accrue revenue.
+          if (initialStatus === 'published') {
+            await BaseRevenueService.accrueForPublishedFess(tx, {
+              fess: created,
+              base,
+              charge: charged ? { status: 'CHARGED', amount: charged.amount } : null,
+            });
+          }
+
+          return { fess: created, charge: charged };
+        },
+        { maxWait: 10_000, timeout: 30_000 }
+      );
     } catch (error) {
       // Two concurrent retries can both miss the idempotency lookup. The
       // unique key makes one transaction fail before any charge is committed;

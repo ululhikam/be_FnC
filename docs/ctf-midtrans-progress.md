@@ -5,7 +5,7 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 - Repo backend: `ululhikam/be_FnC`
 - Repo frontend: `ululhikam/con.fess_WebApp`
 - Branch kerja: `feat/ctf-midtrans` (backend & frontend)
-- Status: **Fase 2, 3, dan 4 selesai; E2E Midtrans sandbox (QRIS + BCA VA dengan notifikasi asli) selesai; Meta/Instagram berfungsi dan opsional; publikasi FnC-only untuk base tanpa sosmed selesai; sign-off production belum**
+- Status: **Fase 2, 3, dan 4 selesai; E2E Midtrans sandbox (QRIS + BCA VA dengan notifikasi asli) selesai; E2E fess berbayar 1 CTF di dev selesai; Meta/Instagram berfungsi dan opsional; publikasi FnC-only untuk base tanpa sosmed selesai; sign-off production belum**
 - Jangan merge ke `main` atau deploy ke production sampai sign-off eksplisit.
 
 ## 1. Keputusan yang sudah dikunci
@@ -76,8 +76,8 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 | Migrasi dev | ✅ Sampai `20261024030000_fess_published_at` | Termasuk reserved payout dan `Fess.publishedAt` |
 | Midtrans sandbox keys | ✅ Aktif di dev | `MIDTRANS_SERVER_KEY` / `MIDTRANS_CLIENT_KEY` terpasang sebagai Vercel Sensitive env di `be-fnc-dev`; key sandbox valid walau tanpa prefix `SB-Mid-` |
 | Midtrans notification URL | ✅ Terverifikasi | `https://be-fnc-dev.vercel.app/api/payments/midtrans/notification`; notifikasi asli QRIS dan BCA VA diterima dan diproses |
-| Dev backend deployment terbaru | Selesai | `dpl_7DkTGmqcWVXTCugUn8AwKMrW9yad` -> https://be-fnc-dev.vercel.app |
-| Dev frontend deployment terbaru | Selesai | `dpl_BAAeh6V3KC6j4aWB7R2enYdMEHUA` -> https://fessncurious-dev.vercel.app |
+| Dev backend deployment terbaru | Selesai | `dpl_8aq64xBqhV9RQBgzFesWYvGAyepS` -> https://be-fnc-dev.vercel.app |
+| Dev frontend deployment terbaru | Selesai | `dpl_65MisBby2gDw9QTunSUtHYurvCyL` -> https://fessncurious-dev.vercel.app |
 | Flag dev | ✅ Aman | `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false` setelah jendela test |
 | Dev callback / OAuth | ✅ Berfungsi | Midtrans ✅; Google dilaporkan selesai; Meta/Instagram OAuth + callback berfungsi dan tetap opsional untuk base FnC-only |
 | Production | ✅ Tidak disentuh | Tetap menunggu sign-off |
@@ -194,6 +194,7 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 - [x] Error `402 INSUFFICIENT_CTF`.
 - [x] Error `401 PAID_FESS_AUTH_REQUIRED` / `403 EMAIL_NOT_VERIFIED`.
 - [x] Charge CTF dan saldo baru ditampilkan di composer/toast.
+- [x] Harga 1 CTF terlihat sebelum publish: label tombol, catatan composer, modal biaya, saldo sebelum → sesudah, dan tombol konfirmasi eksplisit.
 - [x] Re-approve fess yang charge-nya sudah direfund diblokir `FESS_CHARGE_REFUNDED`.
 
 ### Fase 4 — Frontend
@@ -203,11 +204,13 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 - [x] Riwayat transaksi.
 - [x] Update saldo setelah top-up.
 - [x] Composer menampilkan biaya CTF dan saldo setelah publish.
+- [x] Tombol publish menampilkan `Posting · 1 CTF` / `Jadwalkan · 1 CTF` saat base berbayar.
 - [x] Base dashboard: saldo IDR, revenue, hold, payout, rekening, KYC read-only.
 - [x] Super Admin: review payout, KYC, freeForever, re-auth.
 - [x] Badge trial/gratis/1 CTF di composer sebelum publish.
+- [x] Modal konfirmasi menampilkan `Biaya posting 1 CTF`, `Saldo CTF 159 → 158`, dan tombol `Posting & Potong 1 CTF`.
 - [x] Modal saldo kurang dengan CTA top-up.
-- [x] Public base badge (trial/gratis/1 CTF + status koneksi Instagram nyata).
+- [x] Public base badge (`Berbayar · 1 CTF/fess` + status koneksi Instagram nyata).
 - [x] Audit copy legal/help lama yang masih menyebut treasury $CLUB/85%, Threads/X, dan klaim gratis tanpa batas.
 
 ### Fase 5 — Base revenue, payout, freeForever
@@ -235,7 +238,8 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 - [x] CORS allowlist.
 - [x] Rate limit terdistribusi.
 - [x] E2E Midtrans sandbox (QRIS + BCA VA via simulator, notifikasi asli; duplicate/invalid signature/amount mismatch/unknown order diuji).
-- [x] Deploy dev terbaru (backend `dpl_7DkTGmqcWVXTCugUn8AwKMrW9yad`, frontend `dpl_BAAeh6V3KC6j4aWB7R2enYdMEHUA`).
+- [x] E2E fess berbayar dev: debit 1 CTF, idempotency replay tanpa double charge, revenue base Rp80 `PENDING`, dan verifikasi UI sebelum submit.
+- [x] Deploy dev terbaru (backend `dpl_8aq64xBqhV9RQBgzFesWYvGAyepS`, frontend `dpl_65MisBby2gDw9QTunSUtHYurvCyL`).
 - [ ] Sign-off.
 - [ ] Production canary.
 
@@ -273,7 +277,7 @@ Approve dan mark-paid mewajibkan password re-auth. Semua aksi menolak self-appro
 
 ## 7. Gate yang masih terbuka
 
-1. **Manual UI smoke (dev)** — flow top-up dari browser belum diuji manual setelah key sandbox aktif; jalur backend + notifikasi asli sudah lulus.
+1. **Manual UI smoke top-up (dev)** — flow top-up dari browser belum diuji manual setelah key sandbox aktif; jalur backend + notifikasi asli sudah lulus. UI fess berbayar sudah diuji dengan Playwright.
 2. **Skenario Midtrans lanjutan** — pending/expire, refund/chargeback, dan rekonsiliasi terjadwal belum diuji dengan transaksi sandbox asli.
 3. **Midtrans production** — production key/environment belum diisi dan tidak boleh memakai key sandbox.
 4. **Sign-off** — `PAYMENTS_ENABLED` dan `BASE_PAYOUTS_ENABLED` tetap `false` sampai disetujui.
@@ -292,6 +296,22 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 - Setelah pengujian, `PAYMENTS_ENABLED=false` dan `BASE_PAYOUTS_ENABLED=false`; backend dev dideploy ulang dan `GET /payments/packages` mengembalikan `enabled:false`, `configured:true`.
 - Test backend terakhir: 306/306 lulus; build backend & frontend lulus.
 - Smoke API dev setelah deploy: `GET /api/bases` mengembalikan objek `billing`; detail `@testbase` mengembalikan `billing.reason=trial` dan `instagram_connected=true`; `GET /api/payments/packages` tetap `enabled:false`, `configured:true`.
+
+### 8.1 E2E fess berbayar (2026-10-24)
+
+- Fixture dev: `@paidtest` (`cmvlvkqo80001jw08e15ff7z5`), creator `@testbase`, `freeForever=false`, `trialEndsAt=null`, `postMode=auto`, tanpa koneksi Instagram level base. Base dibuat lewat API setelah `baseTrialUsedAt` creator di-set sementara; nilai creator dikembalikan ke `null` setelah base dibuat.
+- Sebelum submit: saldo `@pawarnash` **160 CTF**.
+- `POST /api/fesses` dengan `Idempotency-Key: paidtest-e2e-20261024-01` → `201`, `status=published`, `charged_ctf=1`, `ctf_balance=159`, `base_billing.requires_payment=true`.
+- Replay dengan key yang sama → fess ID sama, saldo tetap **159 CTF** (tidak ada double charge).
+- Verifikasi DB: tepat **1** `FessCharge` `CHARGED` nominal 1; tepat **1** `CtfLedgerEntry` `FESS_CHARGE` nominal `-1` dengan `balanceAfter=159`; tepat **1** `Fess` untuk idempotency key tersebut; `BaseRevenueEntry` Rp80 `PENDING`; `BaseRevenueWallet.pendingIdr=80`.
+- Insiden yang ditemukan: percobaan pertama gagal `P2028` pada `prisma.fessCharge.create()` karena transaksi fess berbayar melebihi timeout default 5 detik di DB dev yang lambat. Perbaikan: `prisma.$transaction(fn, { maxWait: 10_000, timeout: 30_000 })` di `fess.service.ts`, plus assertion regresi di `tests/fess.service.test.ts`. Setelah deploy dev `dpl_8aq64xBqhV9RQBgzFesWYvGAyepS`, retest lulus.
+- Verifikasi UI Playwright di dev:
+  - Tombol header: `Posting · 1 CTF`.
+  - Catatan composer: `Fess ini berbayar 1 CTF dan akan dipotong dari saldo kamu. Saldo kamu 159 CTF.`
+  - Modal: `Biaya posting 1 CTF`, `Saldo CTF 159 CTF → 158 CTF`, dan peringatan `1 CTF akan dipotong dari saldo kamu saat fess dikirim.`
+  - Tombol konfirmasi: `Posting & Potong 1 CTF`.
+  - Badge publik `@paidtest`: `Berbayar · 1 CTF/fess`.
+- Catatan fixture: creator `@testbase` memiliki koneksi Instagram level user `@2003.paw`, sehingga fess uji auto-post ke Instagram. Jangan submit fess uji lagi ke `@paidtest`/`@testbase` sebelum auto-post dimatikan.
 
 ## 9. Log perubahan
 
@@ -316,4 +336,7 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 | 2026-10-24 | Fase 4 selesai: badge billing composer, modal saldo kurang + CTA top-up, badge publik, status koneksi Instagram nyata, serta audit copy legal/help/FAQ/landing. |
 | 2026-10-24 | Backend full suite 306 test lulus; build backend & frontend lulus. |
 | 2026-10-24 | Deploy dev: backend `dpl_7DkTGmqcWVXTCugUn8AwKMrW9yad`, frontend `dpl_BAAeh6V3KC6j4aWB7R2enYdMEHUA`; smoke API billing/Instagram lulus, flag pembayaran tetap mati. |
-| 2026-10-24 | Gate tersisa: manual UI smoke, skenario pending/expire/refund, Midtrans production, sign-off. |
+| 2026-10-24 | E2E fess berbayar dev lulus: 1 CTF didebit (160 → 159), replay idempotent tidak double charge, revenue base Rp80 `PENDING`. Ditemukan dan diperbaiki timeout transaksi `P2028` dengan `maxWait=10s`/`timeout=30s`. |
+| 2026-10-24 | Copy UI biaya diperjelas: `Posting · 1 CTF`, saldo sebelum → sesudah di modal, dan tombol `Posting & Potong 1 CTF`; badge publik `Berbayar · 1 CTF/fess`. Diverifikasi Playwright di dev. |
+| 2026-10-24 | Deploy dev terbaru: backend `dpl_8aq64xBqhV9RQBgzFesWYvGAyepS`, frontend `dpl_65MisBby2gDw9QTunSUtHYurvCyL`; flag tetap `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false`. |
+| 2026-10-24 | Gate tersisa: manual UI smoke top-up, skenario pending/expire/refund, Midtrans production, sign-off. |

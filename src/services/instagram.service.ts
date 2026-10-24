@@ -1207,29 +1207,23 @@ export class InstagramService {
         : 'visual Feed card';
 
     try {
-      await InstagramService.updateFessIgState(fessId, {
-        igStatus: 'processing',
-        igError: null,
-        igAttempts: attempt + 1,
-      });
-
-      // Resolve koneksi Instagram kreator base (token nyata saja)
+      // Resolve koneksi Instagram kreator base (token nyata saja). Base yang
+      // belum menghubungkan sosmed adalah mode normal FnC-only, bukan error:
+      // jangan set processing/failed dan jangan mencoba memanggil Meta.
       const connection = await InstagramService.resolveInstagramConnection(baseHandle);
       baseIg = connection.baseIg;
       const token = connection.token;
 
       if (!token) {
-        const detail = `Akun Instagram ${baseIg} belum terhubung ke Meta. Hubungkan akun melalui menu Koneksi Platform.`;
+        const message = `Fess #${fessId} hanya terbit di FnC karena Instagram ${baseIg} belum terhubung.`;
         await InstagramService.updateFessIgState(fessId, {
-          igStatus: 'failed',
-          igError: InstagramService.truncateIgError(detail),
+          igStatus: 'skipped',
+          igError: null,
         });
-        await InstagramService.writeAudit(
-          `Fess #${fessId} tidak dipublikasikan ke ${baseIg} (${mediaLabel}): ${detail}`,
-          'error'
-        );
+        await InstagramService.writeAudit(message, 'info');
         return {
           success: true,
+          skipped: true,
           platform: 'instagram',
           meta_published: false,
           ig_pending: false,
@@ -1239,10 +1233,16 @@ export class InstagramService {
           is_carousel: isCarousel,
           fessId,
           base_ig: baseIg,
-          error: detail,
-          message: `Card fess #${fessId} berhasil di-render, tetapi Instagram ${baseIg} belum terhubung.`,
+          ig_status: 'skipped',
+          message,
         };
       }
+
+      await InstagramService.updateFessIgState(fessId, {
+        igStatus: 'processing',
+        igError: null,
+        igAttempts: attempt + 1,
+      });
 
       if (!items.length) {
         const detail = 'Tidak ada media publik yang bisa diposting ke Instagram.';
@@ -1940,6 +1940,55 @@ export class InstagramService {
     return { connections, users: unlink?.count || 0 };
   }
 
+  /**
+   * True bila kreator base punya koneksi Instagram aktif dengan token nyata.
+   * Dipakai untuk melewati render/auto-post ketika base beroperasi FnC-only.
+   */
+  static async hasActiveInstagramConnection(
+    base: string | { creatorId?: string | null }
+  ): Promise<boolean> {
+    try {
+      let creatorId: string | null = null;
+
+      if (typeof base === 'string') {
+        const row = prisma.base?.findUnique
+          ? await prisma.base.findUnique({
+              where: { handle: base },
+              select: { creatorId: true },
+            })
+          : null;
+        creatorId = row?.creatorId || null;
+      } else {
+        creatorId = base?.creatorId || null;
+      }
+
+      if (!creatorId || !prisma.platformConnection?.findUnique) return false;
+
+      const connection = await prisma.platformConnection.findUnique({
+        where: {
+          userId_platform: {
+            userId: creatorId,
+            platform: 'instagram',
+          },
+        },
+      });
+
+      return InstagramService.hasUsableInstagramToken(connection);
+    } catch (err: any) {
+      // Publikasi FnC tidak boleh gagal hanya karena pengecekan sosmed error.
+      console.warn('[Instagram] Gagal mengecek koneksi aktif:', err?.message || err);
+      return false;
+    }
+  }
+
+  /** Token mock/legacy tidak dianggap koneksi aktif untuk auto-post. */
+  private static hasUsableInstagramToken(
+    connection: { connected?: boolean | null; accessToken?: string | null } | null
+  ): boolean {
+    const token = connection?.accessToken;
+    return Boolean(connection?.connected && token && !token.startsWith('mock_'));
+  }
+
   /** Cari koneksi Instagram (token nyata) milik kreator base. */
   private static async resolveInstagramConnection(
     baseHandle: string
@@ -1963,8 +2012,8 @@ export class InstagramService {
           },
         },
       });
-      if (connection?.connected && connection.accessToken && !connection.accessToken.startsWith('mock_')) {
-        token = connection.accessToken;
+      if (InstagramService.hasUsableInstagramToken(connection)) {
+        token = connection!.accessToken!;
       }
     }
 
@@ -2240,7 +2289,16 @@ export class InstagramService {
 
       const { baseIg, token } = await InstagramService.resolveInstagramConnection(payload.baseHandle);
       if (!token) {
-        await InstagramService.auditFinalize(payload, baseIg, false, 'Koneksi Instagram tidak aktif.');
+        // Koneksi dicabut saat worker berjalan: jangan tandai gagal. Fess tetap
+        // terbit di FnC dan auto-post sosial dilewati.
+        await InstagramService.updateFessIgState(payload.fessId, {
+          igStatus: 'skipped',
+          igError: null,
+        });
+        await InstagramService.writeAudit(
+          `Fess #${payload.fessId} hanya terbit di FnC karena koneksi Instagram ${baseIg} tidak aktif.`,
+          'info'
+        );
         return;
       }
 

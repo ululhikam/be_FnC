@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { FessService } from '../src/services/fess.service.js';
 import { InstagramService } from '../src/services/instagram.service.js';
+import { CanvasService } from '../src/services/canvas.service.js';
 import { CtfWalletService } from '../src/services/ctf-wallet.service.js';
 import { prisma } from '../src/config/prisma.js';
 
@@ -58,6 +59,9 @@ vi.mock('../src/config/prisma.js', () => ({
     systemLog: {
       create: vi.fn(),
     },
+    platformConnection: {
+      findUnique: vi.fn(),
+    },
     fessCharge: {
       findUnique: vi.fn(),
       create: vi.fn(),
@@ -81,6 +85,12 @@ vi.mock('../src/config/prisma.js', () => ({
 vi.mock('../src/services/storage.service.js', () => ({
   StorageService: {
     uploadMedia: vi.fn().mockResolvedValue({ url: 'https://storage/canvas.svg' }),
+  },
+}));
+
+vi.mock('../src/services/canvas.service.js', () => ({
+  CanvasService: {
+    exportFessCanvas: vi.fn().mockResolvedValue({}),
   },
 }));
 
@@ -410,13 +420,23 @@ describe('FessService Unit Tests', () => {
       } as any);
 
       vi.mocked(prisma.follow.findUnique).mockResolvedValueOnce({ id: 'follow_1' } as any);
+      vi.mocked(prisma.platformConnection.findUnique).mockResolvedValueOnce(null);
 
+      const onBackground = vi.fn();
       const fess = await FessService.createFess(
         { base_handle: '@codememfess', content: 'Confession bersih tanpa kata kasar' },
-        'usr_1'
+        'usr_1',
+        onBackground
       );
 
       expect(fess.status).toBe('published');
+      expect(prisma.fess.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ igStatus: 'skipped' }),
+        })
+      );
+      expect(onBackground).not.toHaveBeenCalled();
+      expect(CanvasService.exportFessCanvas).not.toHaveBeenCalled();
       expect(prisma.base.updateMany).toHaveBeenCalledWith({
         where: { id: 'base_1' },
         data: { fessCount: { increment: 1 } },
@@ -426,6 +446,56 @@ describe('FessService Unit Tests', () => {
         data: { fessCount: { increment: 1 } },
       });
       expect(prisma.notification.create).toHaveBeenCalled();
+    });
+
+    it('keeps Instagram processing + schedules canvas only when the base has an active connection', async () => {
+      vi.mocked(prisma.base.findUnique).mockResolvedValueOnce({
+        id: 'base_1',
+        handle: '@codememfess',
+        creatorId: 'mod_1',
+        trialEndsAt: ACTIVE_TRIAL,
+        postMode: 'auto',
+      } as any);
+
+      vi.mocked(prisma.fess.create).mockResolvedValueOnce({
+        id: 'fess_ig_connected',
+        baseHandle: '@codememfess',
+        baseId: 'base_1',
+        userId: 'usr_1',
+        content: 'Confession dengan sosmed terhubung',
+        status: 'published',
+        template: 'default',
+        upvotes: 0,
+        downvotes: 0,
+        createdAt: new Date(),
+        comments: [],
+      } as any);
+
+      vi.mocked(prisma.platformConnection.findUnique).mockResolvedValueOnce({
+        connected: true,
+        accessToken: 'ig_real_token',
+      } as any);
+      vi.mocked(prisma.follow.findUnique).mockResolvedValueOnce({ id: 'follow_1' } as any);
+
+      const onBackground = vi.fn();
+      await FessService.createFess(
+        { base_handle: '@codememfess', content: 'Confession dengan sosmed terhubung' },
+        'usr_1',
+        onBackground
+      );
+
+      expect(prisma.fess.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ igStatus: 'processing' }),
+        })
+      );
+      expect(onBackground).toHaveBeenCalledTimes(1);
+      await onBackground.mock.calls[0][0];
+      expect(CanvasService.exportFessCanvas).toHaveBeenCalledWith(
+        'fess_ig_connected',
+        'default',
+        'portrait'
+      );
     });
 
     it('should keep fess pending + flag it when NLP detects negative content in mode "auto"', async () => {
@@ -874,14 +944,27 @@ describe('FessService Unit Tests', () => {
         createdAt: new Date(),
         comments: [],
       } as any);
+      vi.mocked(prisma.platformConnection.findUnique).mockResolvedValueOnce(null);
 
-      const approved = await FessService.approveFess('fess_1', {
-        id: 'mod_owner',
-        role: 'Base Admin',
-        managedBases: ['@codememfess'],
-      });
+      const onBackground = vi.fn();
+      const approved = await FessService.approveFess(
+        'fess_1',
+        {
+          id: 'mod_owner',
+          role: 'Base Admin',
+          managedBases: ['@codememfess'],
+        },
+        onBackground
+      );
 
       expect(approved.status).toBe('published');
+      expect(prisma.fess.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ igStatus: 'skipped', igError: null }),
+        })
+      );
+      expect(onBackground).not.toHaveBeenCalled();
+      expect(CanvasService.exportFessCanvas).not.toHaveBeenCalled();
       expect(prisma.base.updateMany).toHaveBeenCalledWith({
         where: { id: 'base_1' },
         data: { fessCount: { increment: 1 } },

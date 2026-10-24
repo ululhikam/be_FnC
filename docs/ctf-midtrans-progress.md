@@ -5,7 +5,7 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 - Repo backend: `ululhikam/be_FnC`
 - Repo frontend: `ululhikam/con.fess_WebApp`
 - Branch kerja: `feat/ctf-midtrans` (backend & frontend)
-- Status: **Fase 2 & 3 selesai; E2E Midtrans sandbox (QRIS + BCA VA dengan notifikasi asli) selesai; sign-off production belum**
+- Status: **Fase 2 & 3 selesai; E2E Midtrans sandbox (QRIS + BCA VA dengan notifikasi asli) selesai; publikasi FnC-only untuk base tanpa sosmed selesai; sign-off production belum**
 - Jangan merge ke `main` atau deploy ke production sampai sign-off eksplisit.
 
 ## 1. Keputusan yang sudah dikunci
@@ -27,6 +27,13 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 - Biaya transfer payout default **Rp6.500**, dapat disesuaikan saat approval.
 - Super Admin dapat menetapkan base **gratis selamanya** (`freeForever`).
 - Base gratis selamanya: user tidak membayar, base tidak mendapat revenue.
+
+### Publikasi FnC-only & sosial media
+
+- Integrasi Meta/Instagram **ditunda** untuk saat ini.
+- Base Admin yang belum menghubungkan Instagram/sosmed tetap dapat menerbitkan fess secara normal di FnC.
+- Tanpa koneksi sosmed, fess tidak menjalankan render/upload canvas maupun auto-post Instagram; `Fess.igStatus` bernilai `skipped` (bukan `failed`) dan tidak ada error yang ditampilkan ke admin/pengguna.
+- Menghubungkan Instagram bersifat opsional dan bisa dilakukan kapan saja dari dashboard; setelah terhubung, auto-post kembali berjalan untuk fess berikutnya.
 
 ### Paket CTF
 
@@ -71,7 +78,7 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 | Dev backend deployment terbaru | Selesai | `dpl_3yFf4JFHtXxoRzvMNG6snmxMu5GA` -> https://be-fnc-dev.vercel.app |
 | Dev frontend deployment terbaru | Selesai | `dpl_DdJibWBB2QHzRCqHfvB952kzuSNj` -> https://fessncurious-dev.vercel.app |
 | Flag dev | ✅ Aman | `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false` setelah jendela test |
-| Dev callback / OAuth | ⚠️ Sebagian | Midtrans ✅; Google dilaporkan selesai; Instagram/Meta masih tertahan callback production |
+| Dev callback / OAuth | ⚠️ Sebagian | Midtrans ✅; Google dilaporkan selesai; Instagram/Meta sengaja ditunda dan bukan blocker karena base mendukung FnC-only |
 | Production | ✅ Tidak disentuh | Tetap menunggu sign-off |
 
 > Isolasi dev memakai **project Vercel terpisah**. Subdomain `dev.fessncurious.vercel.app` tidak bisa dibuat karena `fessncurious.vercel.app` adalah domain milik Vercel.
@@ -266,11 +273,12 @@ Approve dan mark-paid mewajibkan password re-auth. Semua aksi menolak self-appro
 ## 7. Gate yang masih terbuka
 
 1. **Manual UI smoke (dev)** — flow top-up dari browser belum diuji manual setelah key sandbox aktif; jalur backend + notifikasi asli sudah lulus.
-2. **Meta Instagram callback** — app Meta saat ini hanya punya satu callback URL dan sudah dipakai production. Opsi: app dev terpisah (disarankan), tukar callback sementara (berisiko), atau skip Instagram E2E di dev. Google callback dilaporkan sudah selesai.
-3. **Skenario Midtrans lanjutan** — pending/expire, refund/chargeback, dan rekonsiliasi terjadwal belum diuji dengan transaksi sandbox asli.
-4. **Midtrans production** — production key/environment belum diisi dan tidak boleh memakai key sandbox.
-5. **Sign-off** — `PAYMENTS_ENABLED` dan `BASE_PAYOUTS_ENABLED` tetap `false` sampai disetujui.
-6. **Production** — jangan deploy/merge sebelum sign-off; production env dan deployment belum disentuh.
+2. **Skenario Midtrans lanjutan** — pending/expire, refund/chargeback, dan rekonsiliasi terjadwal belum diuji dengan transaksi sandbox asli.
+3. **Midtrans production** — production key/environment belum diisi dan tidak boleh memakai key sandbox.
+4. **Sign-off** — `PAYMENTS_ENABLED` dan `BASE_PAYOUTS_ENABLED` tetap `false` sampai disetujui.
+5. **Production** — jangan deploy/merge sebelum sign-off; production env dan deployment belum disentuh.
+
+Catatan: Meta/Instagram **ditunda** dan tidak menjadi gate. Base tanpa koneksi sosmed tetap beroperasi penuh sebagai base FnC-only.
 
 ## 8. Bukti E2E dev (2026-10-24)
 
@@ -281,7 +289,7 @@ Approve dan mark-paid mewajibkan password re-auth. Semua aksi menolak self-appro
 - Synthetic webhook: duplicate replay `already_processed`; signature salah 401 tanpa DB write; unknown order 200 `unknown_order`; amount mismatch 400 `PAYMENT_AMOUNT_MISMATCH`.
 - Idempotency order: request ulang dengan `Idempotency-Key` yang sama mengembalikan 200 dan order ID yang sama.
 - Setelah pengujian, `PAYMENTS_ENABLED=false` dan `BASE_PAYOUTS_ENABLED=false`; backend dev dideploy ulang dan `GET /payments/packages` mengembalikan `enabled:false`, `configured:true`.
-- Test backend terakhir: 303/303 lulus; build backend & frontend lulus.
+- Test backend terakhir: 304/304 lulus; build backend & frontend lulus.
 
 ## 9. Log perubahan
 
@@ -301,4 +309,5 @@ Approve dan mark-paid mewajibkan password re-auth. Semua aksi menolak self-appro
 | 2026-10-24 | Vercel dev `be-fnc-dev` diisi `MIDTRANS_SERVER_KEY` / `MIDTRANS_CLIENT_KEY` (sensitive), `MIDTRANS_IS_PRODUCTION=false`; `GET /payments/packages` mengembalikan `configured:true`. |
 | 2026-10-24 | E2E sandbox asli lulus: QRIS Rp5.000 + BCA VA Rp10.000 dibayar via simulator, notifikasi asli masuk, saldo test naik 80 -> 160 CTF; replay/signature/amount/idempotency diuji. |
 | 2026-10-24 | Jendela test ditutup: `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false`; backend dev dideploy ulang `dpl_3yFf4JFHtXxoRzvMNG6snmxMu5GA`. |
-| 2026-10-24 | Gate tersisa: manual UI smoke, Meta Instagram callback dev, skenario pending/expire/refund, Midtrans production, sign-off. |
+| 2026-10-24 | Publikasi FnC-only: base tanpa koneksi Instagram tidak lagi render/auto-post atau mencatat `failed`; fess terbit normal dengan `igStatus=skipped`. Copy registrasi/onboarding sosial media dijadikan opsional. Meta/Instagram ditunda dan bukan gate. |
+| 2026-10-24 | Gate tersisa: manual UI smoke, skenario pending/expire/refund, Midtrans production, sign-off. |

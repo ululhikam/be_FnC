@@ -317,6 +317,13 @@ export class FessService {
       }
     }
 
+    // Base tanpa koneksi Instagram tetap menerbitkan fess secara normal di
+    // FnC. Jangan set status processing atau menjadwalkan render canvas.
+    const autoPostToInstagram =
+      initialStatus === 'published'
+        ? await InstagramService.hasActiveInstagramConnection(base)
+        : false;
+
     let transactionResult: { fess: any; charge: any };
     try {
       transactionResult = await prisma.$transaction(async (tx) => {
@@ -340,7 +347,12 @@ export class FessService {
             status: initialStatus,
             autoFlagged,
             flagReason,
-            igStatus: initialStatus === 'published' ? 'processing' : 'idle',
+            igStatus:
+              initialStatus === 'published'
+                ? autoPostToInstagram
+                  ? 'processing'
+                  : 'skipped'
+                : 'idle',
             igUpdatedAt: initialStatus === 'published' ? new Date() : null,
             publishedAt: initialStatus === 'published' ? new Date() : null,
             idempotencyKey: requestKey || undefined,
@@ -398,16 +410,19 @@ export class FessService {
       invalidateCache('bases:');
       invalidateCache('fesses:');
 
-      // Efek publikasi yang sama dengan approveFess (auto-post sosmed).
-      // Non-blocking background task agar respon HTTP tidak tertahan render/upload canvas.
-      // onBackground dipakai controller untuk waitUntil() di runtime Vercel supaya
-      // task tidak dipotong saat response selesai.
-      const autoPostTask = exportFessCanvasForAutoPost(fess.id, fess.template).catch(
-        (err) => {
-          console.error(`[AutoPost] Gagal export canvas fess ${fess.id}:`, err);
-        }
-      );
-      if (onBackground) onBackground(autoPostTask);
+      // Efek publikasi yang sama dengan approveFess (auto-post sosmed) hanya
+      // saat base punya koneksi Instagram aktif. Tanpa koneksi, fess cukup
+      // terbit di FnC dan tidak ada render/upload canvas.
+      // onBackground dipakai controller untuk waitUntil() di runtime Vercel
+      // supaya task tidak dipotong saat response selesai.
+      if (autoPostToInstagram) {
+        const autoPostTask = exportFessCanvasForAutoPost(fess.id, fess.template).catch(
+          (err) => {
+            console.error(`[AutoPost] Gagal export canvas fess ${fess.id}:`, err);
+          }
+        );
+        if (onBackground) onBackground(autoPostTask);
+      }
     }
 
     // Log audit agar admin bisa menelusuri kenapa sebuah fess tidak auto-terbit.
@@ -608,7 +623,7 @@ export class FessService {
   static async assertCanManageFess(
     id: string,
     currentUser: { id: string; role: string; managedBases?: string[] }
-  ): Promise<void> {
+  ): Promise<{ baseHandle: string; creatorId: string | null }> {
     const fess = await prisma.fess.findUnique({
       where: { id },
       select: {
@@ -646,6 +661,11 @@ export class FessService {
       err.code = 'FESS_ALREADY_POSTED';
       throw err;
     }
+
+    return {
+      baseHandle: fess.baseHandle,
+      creatorId: fess.base?.creatorId || null,
+    };
   }
 
   /**
@@ -852,6 +872,13 @@ export class FessService {
 
     const wasPublished = PUBLISHED_STATUSES.includes(fess.status);
 
+    // Hanya cek koneksi saat fess benar-benar akan terbit pertama kali dan
+    // belum pernah diposting ke IG. Base FnC-only melewati seluruh proses sosmed.
+    const autoPostToInstagram =
+      !wasPublished && !fess.postedToIg
+        ? await InstagramService.hasActiveInstagramConnection(fess.base || fess.baseHandle)
+        : false;
+
     const updated = await prisma.$transaction(async (tx) => {
       const row = await tx.fess.update({
         where: { id },
@@ -871,12 +898,20 @@ export class FessService {
                   igError: null,
                   igUpdatedAt: new Date(),
                 }
-              : {
-                  igStatus: 'processing',
-                  igError: null,
-                  igAttempts: 0,
-                  igUpdatedAt: new Date(),
-                }),
+              : autoPostToInstagram
+                ? {
+                    igStatus: 'processing',
+                    igError: null,
+                    igAttempts: 0,
+                    igUpdatedAt: new Date(),
+                  }
+                : {
+                    // Base belum menghubungkan sosmed — terbit normal di FnC.
+                    igStatus: 'skipped',
+                    igError: null,
+                    igAttempts: 0,
+                    igUpdatedAt: new Date(),
+                  }),
         },
         include: COMMENT_PREVIEW_INCLUDE,
       });
@@ -925,9 +960,9 @@ export class FessService {
       invalidateCache('fesses:');
     }
 
-    // Auto-post hanya saat transisi pending -> published; approve ulang pada
-    // fess yang sudah terbit tidak boleh membuat posting Instagram duplikat.
-    if (!wasPublished && !fess.postedToIg) {
+    // Auto-post hanya saat transisi pending -> published pada base yang punya
+    // koneksi Instagram aktif. Approve ulang tidak boleh membuat posting ganda.
+    if (autoPostToInstagram) {
       const autoPostTask = exportFessCanvasForAutoPost(id, fess.template).catch((err) => {
         console.error(`[AutoPost] Gagal export canvas fess ${id}:`, err);
       });

@@ -65,7 +65,13 @@ describe('InstagramService Unit Tests (Meta for Developers Graph API)', () => {
     expect(prisma.systemLog.create).toHaveBeenCalled();
   });
 
-  it('should auto-post confession to Instagram Feed via Graph API and log activity', async () => {
+  it('should treat a missing Instagram connection as a clean FnC-only skip', async () => {
+    vi.mocked(prisma.base.findUnique).mockResolvedValueOnce({
+      igAccount: '@codememfess',
+      creatorId: 'usr_mod',
+    } as any);
+    vi.mocked(prisma.platformConnection.findUnique).mockResolvedValueOnce(null);
+
     const result = await InstagramService.autoPostFess(
       '@codememfess',
       'fess_101',
@@ -73,9 +79,18 @@ describe('InstagramService Unit Tests (Meta for Developers Graph API)', () => {
       'Confession caption'
     );
 
-    expect(result.success).toBe(true);
-    expect(result.platform).toBe('instagram');
-    expect(prisma.systemLog.create).toHaveBeenCalled();
+    expect(result).toMatchObject({
+      success: true,
+      skipped: true,
+      meta_published: false,
+      ig_pending: false,
+      ig_status: 'skipped',
+      base_ig: '@codememfess',
+    });
+    expect((result as any).error).toBeUndefined();
+    expect(prisma.systemLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ tone: 'info' }),
+    });
   });
 
   it('should delete published media via the documented Graph API endpoint', async () => {

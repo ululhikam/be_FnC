@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { FessService } from '../services/fess.service.js';
+import { InstagramService } from '../services/instagram.service.js';
 import { prisma } from '../config/prisma.js';
 import { normalizeHandle } from '../utils/format.util.js';
 import { trackBackground } from '../utils/background.js';
@@ -187,7 +188,35 @@ export class FessController {
       if (!req.user) {
         return errorResponse(res, 'Autentikasi dibutuhkan', 401, 'UNAUTHORIZED');
       }
-      await FessService.assertCanManageFess(id, req.user);
+      const target = await FessService.assertCanManageFess(id, req.user);
+      if (!(await InstagramService.hasActiveInstagramConnection({ creatorId: target.creatorId }))) {
+        const message = `Fess #${id} hanya terbit di FnC karena Instagram ${target.baseHandle} belum terhubung.`;
+        await InstagramService.updateFessIgState(id, {
+          igStatus: 'skipped',
+          igError: null,
+        });
+        return successResponse(
+          res,
+          {
+            image_url: null,
+            imageUrl: null,
+            image_urls: [],
+            imageUrls: [],
+            card_count: 0,
+            media_count: 0,
+            ig_pending: false,
+            posted_to: [],
+            meta_published: false,
+            retry_scheduled: false,
+            skipped: true,
+            ig_status: 'skipped',
+            ig_error: null,
+            message,
+            base_ig: target.baseHandle,
+          },
+          200
+        );
+      }
 
       const { template } = req.body || {};
       // Semua posting Instagram selalu 4:5; jangan percayai aspect dari klien.

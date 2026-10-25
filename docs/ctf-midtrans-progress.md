@@ -85,7 +85,7 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 | Midtrans sandbox keys | ✅ Aktif di dev | `MIDTRANS_SERVER_KEY` / `MIDTRANS_CLIENT_KEY` terpasang sebagai Vercel Sensitive env di `be-fnc-dev`; key sandbox valid walau tanpa prefix `SB-Mid-` |
 | Midtrans notification URL | ✅ Terverifikasi | `https://be-fnc-dev.vercel.app/api/payments/midtrans/notification`; notifikasi asli QRIS dan BCA VA diterima dan diproses |
 | Dev backend deployment terbaru | Selesai | `dpl_4AdsNFxCAyEchyKvaQWSb9dap7SQ` -> https://be-fnc-dev.vercel.app (welcome bonus; flag off) |
-| Dev frontend deployment terbaru | Selesai | `dpl_9miwFrC66rNuFLqj3ZFbzM774PVv` -> https://fessncurious-dev.vercel.app (polish wallet/top-up; flag off) |
+| Dev frontend deployment terbaru | Selesai | `dpl_B1tkYEbzu3aEN6z2k2QLUAV1cUJf` -> https://fessncurious-dev.vercel.app (bank picker rekening payout; flag off) |
 | Flag dev | ✅ Aman | `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false` setelah jendela test |
 | Dev callback / OAuth | ✅ Berfungsi | Midtrans ✅; Google dilaporkan selesai; Meta/Instagram OAuth + callback berfungsi dan tetap opsional untuk base FnC-only |
 | Production | ✅ Tidak disentuh | Tetap menunggu sign-off |
@@ -256,7 +256,7 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 - [x] Refund QRIS asli lewat Midtrans refund API; status backend `refunded`, CTF tidak didebit otomatis.
 - [x] Idempotensi audit refund/chargeback: audit hanya ditulis saat transisi status; replay signed notification tidak menambah audit.
 - [x] Rekonsiliasi manual endpoint diuji: secret salah `401`, secret benar `200` (`checked=1, processed=1, failed=0`). Cron/rekonsiliasi terjadwal belum dikonfigurasi.
-- [x] Deploy dev terbaru (backend `dpl_4AdsNFxCAyEchyKvaQWSb9dap7SQ`, frontend `dpl_9miwFrC66rNuFLqj3ZFbzM774PVv`).
+- [x] Deploy dev terbaru (backend `dpl_4AdsNFxCAyEchyKvaQWSb9dap7SQ`, frontend `dpl_B1tkYEbzu3aEN6z2k2QLUAV1cUJf`).
 - [x] Polish UI wallet/top-up (frontend `a95807a`) dan verifikasi deployed light/dark desktop/mobile; flag pembayaran tetap mati.
 - [ ] Sign-off.
 - [ ] Production canary.
@@ -390,6 +390,17 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 - Aturan CTF tetap: 1 CTF = 1 fess, pendapatan base IDR, hold 7 hari, minimum payout Rp50.000, biaya default Rp6.500, KYC + rekening lengkap, kunci perubahan rekening 24 jam, dan approval manual Super Admin. `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false`, dan `MIDTRANS_IS_PRODUCTION=false` tidak diubah; production tidak disentuh.
 - `npm run build` frontend lulus; Prettier diterapkan pada tiga file yang berubah (`BaseRevenuePanel.vue`, `BaseAdminPanels.vue`, `BaseAdminProfileTab.vue`).
 
+### 8.7 Bank picker rekening payout (2026-10-25)
+
+- Revisi lanjutan 8.6: input teks `Nama bank` diganti picker bank searchable di form rekening payout. Frontend commit `8eb4381` (`feat(base-admin): add searchable bank picker to payout form`); deploy dev frontend `dpl_B1tkYEbzu3aEN6z2k2QLUAV1cUJf` -> https://fessncurious-dev.vercel.app. Backend dev tetap `dpl_4AdsNFxCAyEchyKvaQWSb9dap7SQ`; tidak ada perubahan API, schema, atau backend.
+- Picker memuat 22 bank umum: BCA, BNI, BRI, Mandiri, Permata, BSI, CIMB Niaga, Danamon, BTN, Mega, BJB, DKI, Jago, SeaBank, Neo Commerce, OCBC, UOB, Panin, Sinarmas, Bukopin, Muamalat, dan Maybank. BCA/BNI/BRI/Mandiri/Permata memakai aset logo resmi yang sudah ada; bank lain memakai initials dengan warna brand.
+- Interaksi: tombol trigger menampilkan logo/nama bank terpilih, pencarian nama/kode/alias, status terpilih, fallback `Bank lainnya` dengan input nama manual, serta logo bank aktif di kartu rekening dan saldo. Keyboard `ArrowDown`/`Enter`, `Escape` untuk menutup dan mengembalikan fokus, klik luar untuk menutup, dan `Enter` di pencarian tidak memicu submit form.
+- Nilai yang dikirim tetap `bank_name` berupa string. Nama bank legacy yang dikenali dinormalisasi ke label pendek (mis. `Bank Mandiri` -> `Mandiri`) saat form dibuka; bank di luar daftar tetap tersimpan sebagai teks manual.
+- Verifikasi lokal Playwright: **244 checks, 0 failures** (light/dark 1440/430 px, plus 360 px light). Cakupan baru: 22 opsi bank, fokus pencarian, filter Mandiri, logo resmi, keyboard focus/Enter, Escape + focus return, outside click, fallback `Bank lainnya`, validasi bank belum dipilih tanpa request, payload `bank_name`, logo pada kartu rekening, dan containment menu di 360/430/1440 px.
+- Verifikasi deployed pada bundle dev: 22 opsi, pencarian fokus, filter Mandiri, logo BCA/Mandiri, pilihan tersimpan di form, menu tanpa overflow, dan tanpa console error. `GET /payments/packages` dev tetap `enabled:false`, `configured:true`.
+- Aturan CTF dan payout tidak berubah: 1 CTF = 1 fess, pendapatan base IDR, hold 7 hari, minimum Rp50.000, fee default Rp6.500, KYC + rekening lengkap, kunci 24 jam, dan approval manual Super Admin. `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false`, dan `MIDTRANS_IS_PRODUCTION=false` tetap; production tidak disentuh.
+- `npm run build` frontend dan Prettier check lulus.
+
 ## 9. Log perubahan
 
 | Tanggal | Perubahan |
@@ -427,6 +438,7 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 | 2026-10-24 | UI wallet/top-up dipoles (frontend `a95807a`): layout dua kolom + checkout sticky, CTA mobile, kartu paket/featured, metode berkelompok, state pembayaran dan riwayat, scroll ke panel, error inline + toast, serta perbaikan ARIA. Verifikasi lokal dan deployed light/dark desktop/mobile lulus; frontend dev `dpl_9miwFrC66rNuFLqj3ZFbzM774PVv`; flag pembayaran tetap mati. |
 | 2026-10-24 | Gate tersisa: chargeback asli tidak dapat dipicu dari merchant sandbox (ditutup unit test), cron rekonsiliasi terjadwal, Midtrans production, operasional refund/chargeback, sign-off. |
 | 2026-10-25 | UI keuangan Base Admin dipoles (frontend `3dbf55f`): tab Saldo/Pendapatan/Payout, hero navy/lime, komposisi saldo, filter dan riwayat, checklist payout, form payout/rekening, state KYC/locked/error, serta aksesibilitas form. 209 checks Playwright lulus; frontend dev `dpl_DTkKU4r17jeHiVpcWLQN6yhPY55z`; backend dan production tidak disentuh. |
+| 2026-10-25 | Input rekening payout direvisi (frontend `8eb4381`): picker 22 bank dengan pencarian, logo resmi, initials brand, fallback `Bank lainnya`, keyboard/outside-click, dan logo rekening aktif. 244 checks lokal + verifikasi deployed lulus; frontend dev `dpl_B1tkYEbzu3aEN6z2k2QLUAV1cUJf`; backend/flags/production tidak berubah. |
 
 ## 10. Checklist production (belum dijalankan)
 

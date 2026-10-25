@@ -1,13 +1,16 @@
 import { Router } from 'express';
 import { AdminController } from '../controllers/admin.controller.js';
 import { BaseRevenueController } from '../controllers/base-revenue.controller.js';
-import { requireAuth, requireRole } from '../middlewares/auth.middleware.js';
+import { PlatformAdminController } from '../controllers/platform-admin.controller.js';
+import {
+  requireAuth,
+  requireRole,
+  requireBaseAdmin,
+} from '../middlewares/auth.middleware.js';
 import { validateBody, validateQuery } from '../middlewares/validate.middleware.js';
 import { paymentRateLimit } from '../services/rate-limit.service.js';
 import {
   CanvasExportSchema,
-  BanUserSchema,
-  SecurityControlsSchema,
   PlatformConnectionSchema,
   TreasuryPayoutSchema,
   BasePayoutRequestSchema,
@@ -18,6 +21,12 @@ import {
   BasePayoutQueueQuerySchema,
   ModerationQueueQuerySchema,
   SystemLogsQuerySchema,
+  AdminAuditLogsQuerySchema,
+  AdminUsersQuerySchema,
+  AdminBanUserSchema,
+  AdminUnbanUserSchema,
+  AdminPaymentOrdersQuerySchema,
+  AdminPaymentEventsQuerySchema,
 } from '../validators/admin.validator.js';
 
 const router = Router();
@@ -26,14 +35,14 @@ const router = Router();
 router.get(
   '/stats',
   requireAuth,
-  requireRole('Base Admin', 'Super Admin'),
+  requireBaseAdmin,
   AdminController.getStats
 );
 
 router.get(
   '/moderation',
   requireAuth,
-  requireRole('Base Admin', 'Super Admin'),
+  requireBaseAdmin,
   validateQuery(ModerationQueueQuerySchema),
   AdminController.getModerationQueue
 );
@@ -41,7 +50,7 @@ router.get(
 router.post(
   '/canvas/export',
   requireAuth,
-  requireRole('Base Admin', 'Super Admin'),
+  requireBaseAdmin,
   validateBody(CanvasExportSchema),
   AdminController.exportCanvas
 );
@@ -50,7 +59,7 @@ router.post(
 router.get(
   '/connections',
   requireAuth,
-  requireRole('Base Admin', 'Super Admin'),
+  requireBaseAdmin,
   AdminController.getPlatformConnections
 );
 
@@ -58,21 +67,21 @@ router.get(
 router.get(
   '/instagram-insights',
   requireAuth,
-  requireRole('Base Admin', 'Super Admin'),
+  requireBaseAdmin,
   AdminController.getInstagramInsights
 );
 
 router.get(
   '/instagram-media-insights',
   requireAuth,
-  requireRole('Base Admin', 'Super Admin'),
+  requireBaseAdmin,
   AdminController.getInstagramMediaInsights
 );
 
 router.post(
   '/connections/:platform',
   requireAuth,
-  requireRole('Base Admin', 'Super Admin'),
+  requireBaseAdmin,
   validateBody(PlatformConnectionSchema),
   AdminController.togglePlatformConnection
 );
@@ -81,7 +90,7 @@ router.post(
 router.get(
   '/treasury',
   requireAuth,
-  requireRole('Base Admin', 'Super Admin'),
+  requireBaseAdmin,
   AdminController.getTreasury
 );
 
@@ -104,7 +113,7 @@ router.get(
 router.post(
   '/base-revenue/payouts',
   requireAuth,
-  requireRole('Base Admin', 'Super Admin'),
+  requireBaseAdmin,
   paymentRateLimit({
     name: 'payout-request',
     limit: 5,
@@ -134,7 +143,7 @@ router.post(
 router.put(
   '/base-revenue/bank',
   requireAuth,
-  requireRole('Base Admin', 'Super Admin'),
+  requireBaseAdmin,
   paymentRateLimit({
     name: 'payout-bank',
     limit: 10,
@@ -179,9 +188,102 @@ router.post(
 router.post(
   '/treasury/payout',
   requireAuth,
-  requireRole('Base Admin', 'Super Admin'),
+  requireBaseAdmin,
   validateBody(TreasuryPayoutSchema),
   AdminController.requestPayout
+);
+
+// ---------------------------------------------------------------------------
+// Super Admin platform console (read models + guarded account actions)
+// ---------------------------------------------------------------------------
+router.get(
+  '/ops/summary',
+  requireAuth,
+  requireRole('Super Admin'),
+  PlatformAdminController.getSummary
+);
+
+router.get(
+  '/audit-logs',
+  requireAuth,
+  requireRole('Super Admin'),
+  validateQuery(AdminAuditLogsQuerySchema),
+  PlatformAdminController.getAuditLogs
+);
+
+router.get(
+  '/users',
+  requireAuth,
+  requireRole('Super Admin'),
+  validateQuery(AdminUsersQuerySchema),
+  PlatformAdminController.getUsers
+);
+
+router.post(
+  '/users/:id/ban',
+  requireAuth,
+  requireRole('Super Admin'),
+  paymentRateLimit({
+    name: 'admin-user-ban',
+    limit: 20,
+    windowSeconds: 60,
+    message: 'Terlalu banyak aksi ban. Coba lagi beberapa saat.',
+    code: 'ADMIN_BAN_RATE_LIMITED',
+  }),
+  validateBody(AdminBanUserSchema),
+  PlatformAdminController.banUser
+);
+
+router.post(
+  '/users/:id/unban',
+  requireAuth,
+  requireRole('Super Admin'),
+  paymentRateLimit({
+    name: 'admin-user-unban',
+    limit: 20,
+    windowSeconds: 60,
+    message: 'Terlalu banyak aksi unban. Coba lagi beberapa saat.',
+    code: 'ADMIN_UNBAN_RATE_LIMITED',
+  }),
+  validateBody(AdminUnbanUserSchema),
+  PlatformAdminController.unbanUser
+);
+
+router.get(
+  '/bases/:handle/support',
+  requireAuth,
+  requireRole('Super Admin'),
+  PlatformAdminController.getBaseSupport
+);
+
+router.get(
+  '/payments/orders',
+  requireAuth,
+  requireRole('Super Admin'),
+  validateQuery(AdminPaymentOrdersQuerySchema),
+  PlatformAdminController.getPaymentOrders
+);
+
+router.get(
+  '/payments/orders/:id',
+  requireAuth,
+  requireRole('Super Admin'),
+  PlatformAdminController.getPaymentOrder
+);
+
+router.get(
+  '/payments/events',
+  requireAuth,
+  requireRole('Super Admin'),
+  validateQuery(AdminPaymentEventsQuerySchema),
+  PlatformAdminController.getPaymentEvents
+);
+
+router.get(
+  '/system/settings',
+  requireAuth,
+  requireRole('Super Admin'),
+  PlatformAdminController.getSystemSettings
 );
 
 // Super Admin System Monitoring & Security Controls
@@ -192,28 +294,12 @@ router.get(
   AdminController.getSystemHealth
 );
 
-router.patch(
-  '/system/security',
-  requireAuth,
-  requireRole('Super Admin'),
-  validateBody(SecurityControlsSchema),
-  AdminController.updateSecurityControls
-);
-
 router.get(
   '/system/logs',
   requireAuth,
   requireRole('Super Admin'),
   validateQuery(SystemLogsQuerySchema),
   AdminController.getEngineLogs
-);
-
-router.post(
-  '/users/ban',
-  requireAuth,
-  requireRole('Super Admin'),
-  validateBody(BanUserSchema),
-  AdminController.banUser
 );
 
 export default router;

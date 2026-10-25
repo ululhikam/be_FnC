@@ -526,41 +526,71 @@ export class BaseRevenueService {
 
   static async listPayouts(
     currentUser: RevenueCurrentUser,
-    options: { status?: string; limit?: number } = {}
+    options: {
+      status?: string;
+      baseHandle?: string;
+      q?: string;
+      page?: number;
+      limit?: number;
+    } = {}
   ) {
-    const limit = Math.min(Math.max(options.limit ?? 50, 1), 100);
+    const page = Math.max(1, Number(options.page) || 1);
+    const limit = Math.min(Math.max(Number(options.limit) || 20, 1), 100);
     const status = options.status?.toUpperCase();
-    const where: Prisma.BasePayoutWhereInput = {
-      ...(status ? { status: status as any } : {}),
-      ...(currentUser.role === 'Super Admin'
-        ? {}
-        : {
-            base: {
-              OR: [
-                { creatorId: currentUser.id },
-                ...((currentUser.managedBases || []).length > 0
-                  ? [{ handle: { in: currentUser.managedBases } }]
-                  : []),
-              ],
-            },
-          }),
-    };
+    const baseHandle = options.baseHandle ? normalizeHandle(options.baseHandle) : undefined;
+    const search = String(options.q || '').trim();
 
-    const payouts = await prisma.basePayout.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-      include: {
-        base: { select: { handle: true, name: true } },
-        requestedBy: { select: { handle: true } },
-        reviewedBy: { select: { handle: true } },
-      },
-    });
+    const and: Prisma.BasePayoutWhereInput[] = [];
+    if (status) and.push({ status: status as any });
+    if (baseHandle) and.push({ base: { handle: baseHandle } });
+    if (search) {
+      and.push({
+        OR: [
+          { reference: { contains: search, mode: 'insensitive' } },
+          { requestKey: { contains: search, mode: 'insensitive' } },
+          { base: { handle: { contains: search, mode: 'insensitive' } } },
+          { base: { name: { contains: search, mode: 'insensitive' } } },
+        ],
+      });
+    }
+    if (currentUser.role !== 'Super Admin') {
+      and.push({
+        base: {
+          OR: [
+            { creatorId: currentUser.id },
+            ...((currentUser.managedBases || []).length > 0
+              ? [{ handle: { in: currentUser.managedBases } }]
+              : []),
+          ],
+        },
+      });
+    }
+
+    const where: Prisma.BasePayoutWhereInput = and.length ? { AND: and } : {};
+
+    const [total, payouts] = await Promise.all([
+      prisma.basePayout.count({ where }),
+      prisma.basePayout.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+        include: {
+          base: { select: { handle: true, name: true } },
+          requestedBy: { select: { handle: true } },
+          reviewedBy: { select: { handle: true } },
+        },
+      }),
+    ]);
 
     return {
       data: payouts.map((payout) =>
         this.serializePayout(payout, currentUser.role === 'Super Admin')
       ),
+      total,
+      page,
+      limit,
+      total_pages: Math.ceil(total / limit) || 1,
     };
   }
 
@@ -574,6 +604,13 @@ export class BaseRevenueService {
     },
     meta: RequestMeta = {}
   ) {
+    if (currentUser.role === 'Super Admin') {
+      fail(
+        403,
+        'BASE_ADMIN_ONLY',
+        'Pengajuan payout adalah aksi Base Admin. Super Admin hanya meninjau payout.'
+      );
+    }
     if (!ENV.BASE_PAYOUTS_ENABLED) {
       fail(503, 'PAYOUTS_DISABLED', 'Payout base sedang dinonaktifkan');
     }
@@ -758,10 +795,9 @@ export class BaseRevenueService {
       fail(403, 'PAYOUT_SELF_APPROVAL', 'Pengaju payout tidak boleh menyetujui payout sendiri');
     }
 
-    const needsReauth = action === 'approve' || action === 'mark_paid';
-    if (needsReauth) {
-      await AdminSecurityService.assertReauth(currentUser.id, input.password);
-    }
+    // Every review action changes money or releases a reservation, so every
+    // action requires a fresh password proof and writes an audit row.
+    await AdminSecurityService.assertReauth(currentUser.id, input.password);
 
     let feeIdr = payout.feeIdr;
     let reference = payout.reference;
@@ -924,10 +960,14 @@ export class BaseRevenueService {
     },
     meta: RequestMeta = {}
   ) {
-    await AdminSecurityService.assertReauth(currentUser.id, input.password);
-    if (currentUser.role === 'Super Admin' && !input.baseHandle) {
-      fail(400, 'BASE_HANDLE_REQUIRED', 'Super Admin wajib memilih base untuk mengubah rekening');
+    if (currentUser.role === 'Super Admin') {
+      fail(
+        403,
+        'BASE_ADMIN_ONLY',
+        'Perubahan rekening adalah aksi Base Admin. Super Admin hanya dapat melihat data rekening untuk dukungan.'
+      );
     }
+    await AdminSecurityService.assertReauth(currentUser.id, input.password);
     const base = await this.resolveBase(currentUser, input.baseHandle);
     if (!base) fail(404, 'BASE_NOT_FOUND', 'Base tidak ditemukan');
 

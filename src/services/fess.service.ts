@@ -607,16 +607,14 @@ export class FessService {
   }
 
   /**
-   * True bila viewer adalah Super Admin atau admin pengelola base fess.
-   * Dipakai untuk detail error IG dan flag aksi di UI.
+   * True bila viewer adalah admin pengelola base fess.
+   * Base moderation is Base-Admin-only; Super Admin has no equivalent shortcut.
    */
   private static canManageBaseFess(
     fess: { baseHandle?: string | null; base?: { creatorId?: string | null } | null },
     viewer?: { id?: string; role?: string; managedBases?: string[] }
   ): boolean {
-    if (!viewer) return false;
-    if (viewer.role === 'Super Admin') return true;
-    if (!viewer.role?.includes('Admin')) return false;
+    if (!viewer || viewer.role !== 'Base Admin') return false;
 
     const postHandle = String(fess.baseHandle || '').replace(/^@/, '').toLowerCase();
     const managesBase = (viewer.managedBases || []).some(
@@ -856,12 +854,12 @@ export class FessService {
       throw err;
     }
 
-    const isSuperAdmin = currentUser.role === 'Super Admin';
     const isBaseAdmin =
-      currentUser.managedBases?.includes(fess.baseHandle) ||
-      fess.base?.creatorId === currentUser.id;
+      currentUser.role === 'Base Admin' &&
+      (currentUser.managedBases?.includes(fess.baseHandle) ||
+        fess.base?.creatorId === currentUser.id);
 
-    if (!isSuperAdmin && !isBaseAdmin) {
+    if (!isBaseAdmin) {
       const err: any = new Error('Anda tidak memiliki izin memoderasi fess ini');
       err.status = 403;
       err.code = 'FORBIDDEN';
@@ -998,12 +996,12 @@ export class FessService {
       throw err;
     }
 
-    const isSuperAdmin = currentUser.role === 'Super Admin';
     const isBaseAdmin =
-      currentUser.managedBases?.includes(fess.baseHandle) ||
-      fess.base?.creatorId === currentUser.id;
+      currentUser.role === 'Base Admin' &&
+      (currentUser.managedBases?.includes(fess.baseHandle) ||
+        fess.base?.creatorId === currentUser.id);
 
-    if (!isSuperAdmin && !isBaseAdmin) {
+    if (!isBaseAdmin) {
       const err: any = new Error('Anda tidak memiliki izin memoderasi fess ini');
       err.status = 403;
       err.code = 'FORBIDDEN';
@@ -1223,12 +1221,12 @@ export class FessService {
     }
 
     const isAuthor = fess.userId === currentUser.id;
-    const isSuperAdmin = currentUser.role === 'Super Admin';
     const isBaseAdmin =
-      fess.base?.creatorId === currentUser.id ||
-      currentUser.managedBases?.includes(fess.baseHandle);
+      currentUser.role === 'Base Admin' &&
+      (fess.base?.creatorId === currentUser.id ||
+        currentUser.managedBases?.includes(fess.baseHandle));
 
-    if (!isAuthor && !isSuperAdmin && !isBaseAdmin) {
+    if (!isAuthor && !isBaseAdmin) {
       const err: any = new Error('Anda tidak memiliki izin menghapus fess ini');
       err.status = 403;
       err.code = 'FORBIDDEN';

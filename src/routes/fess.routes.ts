@@ -1,7 +1,11 @@
 import { Router } from 'express';
 import { FessController } from '../controllers/fess.controller.js';
 import { CommentController } from '../controllers/comment.controller.js';
-import { optionalAuth, requireAuth, requireRole } from '../middlewares/auth.middleware.js';
+import {
+  optionalAuth,
+  requireAuth,
+  requireBaseAdmin,
+} from '../middlewares/auth.middleware.js';
 import { validateBody, validateQuery } from '../middlewares/validate.middleware.js';
 import {
   CanvasPreviewSchema,
@@ -31,13 +35,13 @@ router.delete('/:id/bookmark', requireAuth, FessController.unbookmarkFess);
 router.post(
   '/:id/approve',
   requireAuth,
-  requireRole('Base Admin', 'Super Admin'),
+  requireBaseAdmin,
   FessController.approveFess
 );
 router.post(
   '/:id/reject',
   requireAuth,
-  requireRole('Base Admin', 'Super Admin'),
+  requireBaseAdmin,
   FessController.rejectFess
 );
 router.post('/:id/report', optionalAuth, validateBody(ReportSchema), FessController.reportFess);
@@ -45,7 +49,7 @@ router.delete('/:id/delete', requireAuth, FessController.deleteFess);
 router.post(
   '/:id/instagram-post',
   requireAuth,
-  requireRole('Base Admin', 'Super Admin'),
+  requireBaseAdmin,
   FessController.postToInstagram
 );
 

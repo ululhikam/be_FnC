@@ -455,6 +455,11 @@ describe('BaseRevenueService payout workflow', () => {
 
   it('rejects a payout and returns the reserved balance', async () => {
     vi.mocked(prisma.basePayout.findUnique).mockResolvedValueOnce(payoutRow() as any);
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
+      password: 'hashed',
+      isBanned: false,
+    } as any);
+    vi.mocked(comparePassword).mockResolvedValueOnce(true);
     vi.mocked(prisma.basePayout.updateMany).mockResolvedValueOnce({ count: 1 } as any);
     vi.mocked(prisma.baseRevenueWallet.update).mockResolvedValueOnce({} as any);
     vi.mocked(prisma.basePayout.findUniqueOrThrow).mockResolvedValueOnce(
@@ -465,7 +470,7 @@ describe('BaseRevenueService payout workflow', () => {
       SUPER_ADMIN,
       'payout_1',
       'reject',
-      { reason: 'Rekening tidak valid' }
+      { reason: 'Rekening tidak valid', password: 'secret' }
     );
 
     expect(result.status).toBe('rejected');
@@ -510,6 +515,11 @@ describe('BaseRevenueService payout workflow', () => {
     vi.mocked(prisma.basePayout.findUnique).mockResolvedValueOnce(
       payoutRow({ status: 'APPROVED', reviewedAt: new Date() }) as any
     );
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
+      password: 'hashed',
+      isBanned: false,
+    } as any);
+    vi.mocked(comparePassword).mockResolvedValueOnce(true);
     vi.mocked(prisma.basePayout.updateMany).mockResolvedValueOnce({ count: 1 } as any);
     vi.mocked(prisma.baseRevenueWallet.update).mockResolvedValueOnce({} as any);
     vi.mocked(prisma.basePayout.findUniqueOrThrow).mockResolvedValueOnce(
@@ -520,7 +530,7 @@ describe('BaseRevenueService payout workflow', () => {
       SUPER_ADMIN,
       'payout_1',
       'mark_failed',
-      { reason: 'Bank menolak' }
+      { reason: 'Bank menolak', password: 'secret' }
     );
 
     expect(result.status).toBe('failed');

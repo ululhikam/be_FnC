@@ -103,8 +103,18 @@ export class BaseService {
       avatar?: string | null;
       ig_account?: string | null;
       rules?: string[];
-    }
+    },
+    role?: string
   ) {
+    if (role === 'Super Admin') {
+      const err: any = new Error(
+        'Pembuatan base adalah aksi Base Admin. Super Admin hanya memiliki akses dukungan baca.'
+      );
+      err.status = 403;
+      err.code = 'BASE_ADMIN_ONLY';
+      throw err;
+    }
+
     const cleanHandle = normalizeHandle(data.handle);
 
     const existing = await prisma.base.findUnique({ where: { handle: cleanHandle } });
@@ -326,12 +336,20 @@ export class BaseService {
       throw err;
     }
 
-    // Permission check
-    const isSuperAdmin = currentUser.role === 'Super Admin';
+    // Super Admin has platform read/support access, not base profile writes.
+    if (currentUser.role === 'Super Admin') {
+      const err: any = new Error(
+        'Pengaturan base adalah aksi Base Admin. Super Admin hanya memiliki akses dukungan baca.'
+      );
+      err.status = 403;
+      err.code = 'BASE_ADMIN_ONLY';
+      throw err;
+    }
+
     const isOwner = base.creatorId === currentUser.id;
     const isManager = currentUser.managedBases?.includes(cleanHandle);
 
-    if (!isSuperAdmin && !isOwner && !isManager) {
+    if (!isOwner && !isManager) {
       const err: any = new Error('Anda tidak memiliki izin mengelola base ini');
       err.status = 403;
       err.code = 'FORBIDDEN';

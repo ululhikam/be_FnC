@@ -28,7 +28,7 @@ export class BaseController {
       if (!req.user) {
         return res.status(401).json({ message: 'Autentikasi diperlukan', code: 'UNAUTHORIZED' });
       }
-      const base = await BaseService.createBase(req.user.id, req.body);
+      const base = await BaseService.createBase(req.user.id, req.body, req.user.role);
       return successResponse(res, base, 201);
     } catch (error) {
       next(error);

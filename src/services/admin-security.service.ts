@@ -44,10 +44,13 @@ export class AdminSecurityService {
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { password: true, isBanned: true },
+      select: { password: true, isBanned: true, banExpiresAt: true },
     });
 
-    if (!user || user.isBanned) {
+    const activeBan = Boolean(
+      user?.isBanned && (!user.banExpiresAt || user.banExpiresAt.getTime() > Date.now())
+    );
+    if (!user || activeBan) {
       throw new AdminSecurityError('UNAUTHORIZED', 'Akun admin tidak valid', 401);
     }
     if (!user.password) {

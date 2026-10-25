@@ -171,27 +171,51 @@ export class AdminService {
   /**
    * Get real-time engine logs
    */
-  static async getEngineLogs(source?: string, limit = 50) {
+  static async getEngineLogs(options: {
+    source?: string;
+    tone?: string;
+    q?: string;
+    page?: number;
+    limit?: number;
+  } = {}) {
+    const page = Math.max(1, Number(options.page) || 1);
+    const limit = Math.min(Math.max(Number(options.limit) || 50, 1), 100);
     const where: any = {};
-    if (source) {
-      where.source = source;
+    if (options.source) where.source = options.source;
+    if (options.tone) where.tone = options.tone;
+    if (options.q) {
+      where.OR = [
+        { message: { contains: options.q, mode: 'insensitive' } },
+        { source: { contains: options.q, mode: 'insensitive' } },
+      ];
     }
 
-    const logs = await prisma.systemLog.findMany({
-      where,
-      take: limit,
-      orderBy: { createdAt: 'desc' },
-    });
+    const [total, logs] = await Promise.all([
+      prisma.systemLog.count({ where }),
+      prisma.systemLog.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
 
     const data = logs.map((l) => ({
       id: l.id,
       time: new Date(l.createdAt).toLocaleTimeString('id-ID', { hour12: false }),
+      created_at: l.createdAt,
       source: l.source,
       message: l.message,
       tone: l.tone as 'ok' | 'info' | 'muted' | 'error',
     }));
 
-    return { data };
+    return {
+      data,
+      total,
+      page,
+      limit,
+      total_pages: Math.ceil(total / limit) || 1,
+    };
   }
 
   /**

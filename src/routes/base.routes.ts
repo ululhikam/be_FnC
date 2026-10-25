@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { BaseController } from '../controllers/base.controller.js';
-import { optionalAuth, requireAuth, requireRole } from '../middlewares/auth.middleware.js';
+import { optionalAuth, requireAuth, requireBaseAdmin } from '../middlewares/auth.middleware.js';
 import { validateBody, validateQuery } from '../middlewares/validate.middleware.js';
 import {
   GetBasesQuerySchema,
@@ -16,7 +16,7 @@ router.get('/', optionalAuth, validateQuery(GetBasesQuerySchema), BaseController
 router.post(
   '/',
   requireAuth,
-  requireRole('Base Admin', 'Super Admin'),
+  requireBaseAdmin,
   validateBody(CreateBaseSchema),
   BaseController.createBase
 );
@@ -32,7 +32,7 @@ router.get(
 router.patch(
   '/:handle/settings',
   requireAuth,
-  requireRole('Base Admin', 'Super Admin'),
+  requireBaseAdmin,
   validateBody(UpdateBaseSettingsSchema),
   BaseController.updateBaseSettings
 );

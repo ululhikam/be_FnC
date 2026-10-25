@@ -58,6 +58,7 @@ const AUTH_USER_SELECT = {
   createdAt: true,
   handleChangedAt: true,
   isBanned: true,
+  banExpiresAt: true,
   managedBases: { select: { handle: true } },
   ctfWallet: { select: { balance: true } },
 } as const;
@@ -70,6 +71,29 @@ function findAuthUser(userId: string) {
 }
 
 type AuthUserRecord = NonNullable<Awaited<ReturnType<typeof findAuthUser>>>;
+
+/** A timed ban stops blocking the account when its expiry passes. */
+function hasActiveBan(user: { isBanned: boolean; banExpiresAt: Date | null }) {
+  return Boolean(
+    user.isBanned && (!user.banExpiresAt || user.banExpiresAt.getTime() > Date.now())
+  );
+}
+
+async function clearExpiredBan(user: AuthUserRecord) {
+  if (!user.isBanned || !user.banExpiresAt || user.banExpiresAt.getTime() > Date.now()) {
+    return user;
+  }
+
+  await prisma.user
+    .update({
+      where: { id: user.id },
+      data: { isBanned: false, banReason: null, banExpiresAt: null },
+    })
+    .catch(() => undefined);
+
+  user.isBanned = false;
+  return user;
+}
 
 function toAuthenticatedUser(user: AuthUserRecord): AuthenticatedUser {
   return {
@@ -131,9 +155,10 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   const token = authHeader.split(' ')[1];
   try {
     const payload = verifyToken(token);
-    const user = await findAuthUser(payload.sub);
+    const found = await findAuthUser(payload.sub);
+    const user = found ? await clearExpiredBan(found) : null;
 
-    if (!user || user.isBanned) {
+    if (!user || hasActiveBan(user)) {
       return errorResponse(res, 'Sesi tidak valid atau akun telah dibekukan.', 401, 'UNAUTHORIZED');
     }
 
@@ -170,9 +195,10 @@ export async function optionalAuth(req: Request, res: Response, next: NextFuncti
   const token = authHeader.split(' ')[1];
   try {
     const payload = verifyToken(token);
-    const user = await findAuthUser(payload.sub);
+    const found = await findAuthUser(payload.sub);
+    const user = found ? await clearExpiredBan(found) : null;
 
-    if (user && !user.isBanned && (!user.email || user.emailVerifiedAt)) {
+    if (user && !hasActiveBan(user) && (!user.email || user.emailVerifiedAt)) {
       req.user = toAuthenticatedUser(user);
     }
   } catch {
@@ -199,4 +225,24 @@ export function requireRole(...allowedRoles: string[]) {
 
     next();
   };
+}
+
+/**
+ * Base ownership operations (create base, edit base settings, change bank,
+ * request payout) are Base Admin duties. Super Admin has god-mode access to
+ * read/support endpoints, but must not silently perform base-owned writes.
+ */
+export function requireBaseAdmin(req: Request, res: Response, next: NextFunction) {
+  if (!req.user) {
+    return errorResponse(res, 'Autentikasi dibutuhkan.', 401, 'UNAUTHORIZED');
+  }
+  if (req.user.role !== 'Base Admin') {
+    return errorResponse(
+      res,
+      'Aksi ini hanya dapat dilakukan oleh Base Admin. Super Admin memiliki akses baca untuk dukungan base.',
+      403,
+      'BASE_ADMIN_ONLY'
+    );
+  }
+  next();
 }

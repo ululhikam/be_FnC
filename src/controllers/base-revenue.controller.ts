@@ -30,8 +30,18 @@ export class BaseRevenueController {
         return errorResponse(res, 'Bukan admin', 403, 'FORBIDDEN');
       }
       const status = typeof req.query.status === 'string' ? req.query.status : undefined;
-      const limit = Number(req.query.limit ?? 50);
-      const result = await BaseRevenueService.listPayouts(req.user, { status, limit });
+      const baseHandle =
+        typeof req.query.base_handle === 'string' ? req.query.base_handle : undefined;
+      const q = typeof req.query.q === 'string' ? req.query.q : undefined;
+      const page = Number(req.query.page ?? 1);
+      const limit = Number(req.query.limit ?? 20);
+      const result = await BaseRevenueService.listPayouts(req.user, {
+        status,
+        baseHandle,
+        q,
+        page,
+        limit,
+      });
       return successResponse(res, result, 200);
     } catch (error) {
       next(error);

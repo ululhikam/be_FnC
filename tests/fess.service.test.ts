@@ -926,6 +926,22 @@ describe('FessService Unit Tests', () => {
       ).rejects.toThrow('tidak memiliki izin');
     });
 
+    it('should deny Super Admin from approving a fess for another base', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_1',
+        baseHandle: '@codememfess',
+        base: { creatorId: 'mod_owner' },
+      } as any);
+
+      await expect(
+        FessService.approveFess('fess_1', {
+          id: 'superadmin_1',
+          role: 'Super Admin',
+          managedBases: ['@codememfess'],
+        })
+      ).rejects.toThrow('tidak memiliki izin');
+    });
+
     it('should bump published counters when a pending fess is approved', async () => {
       vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
         id: 'fess_1',
@@ -1404,6 +1420,28 @@ describe('FessService Unit Tests', () => {
       expect(result.revenue_reversal).toBeUndefined();
       expect(CtfWalletService.credit).not.toHaveBeenCalled();
       expect(prisma.fessCharge.update).not.toHaveBeenCalled();
+    });
+
+    it('should deny Super Admin from deleting a fess even if listed in managed bases', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_was_live',
+        baseHandle: '@codememfess',
+        baseId: 'base_1',
+        userId: 'usr_author',
+        content: 'Pernah terbit',
+        status: 'rejected',
+        publishedAt: new Date('2026-10-20T00:00:00Z'),
+        base: { creatorId: 'mod_owner' },
+        charge: { id: 'charge_1', status: 'CHARGED', amount: 1 },
+      } as any);
+
+      await expect(
+        FessService.deleteFess('fess_was_live', {
+          id: 'superadmin_1',
+          role: 'Super Admin',
+          managedBases: ['@codememfess'],
+        })
+      ).rejects.toThrow('tidak memiliki izin');
     });
 
     it('refunds CTF when a never-published paid fess is deleted', async () => {

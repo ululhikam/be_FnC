@@ -16,6 +16,64 @@ export const BanUserSchema = z.object({
   duration_hours: z.number().int().min(0).default(0), // 0 = permanent
 });
 
+/** New path: actor comes from the session; password is a fresh re-auth proof. */
+export const AdminBanUserSchema = z.object({
+  reason: z.string().min(3, 'Alasan ban wajib diisi minimal 3 karakter').max(500),
+  duration_hours: z.number().int().min(0).max(24 * 365).default(0), // 0 = permanent
+  password: z.string().min(1, 'Konfirmasi kata sandi wajib diisi').max(200),
+});
+
+export const AdminUnbanUserSchema = z.object({
+  reason: z.string().max(500).optional().nullable(),
+  password: z.string().min(1, 'Konfirmasi kata sandi wajib diisi').max(200),
+});
+
+const BooleanQuerySchema = z
+  .enum(['true', 'false'])
+  .transform((value) => value === 'true')
+  .optional();
+
+export const AdminAuditLogsQuerySchema = z.object({
+  q: z.string().max(120).optional(),
+  action: z.string().max(80).optional(),
+  target_type: z.string().max(80).optional(),
+  actor: z.string().max(120).optional(),
+  from: z.string().max(40).optional(),
+  to: z.string().max(40).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+});
+
+export const AdminUsersQuerySchema = z.object({
+  q: z.string().max(120).optional(),
+  role: z.enum(['User', 'Base Admin', 'Super Admin']).optional(),
+  banned: BooleanQuerySchema,
+  email_verified: BooleanQuerySchema,
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+});
+
+export const AdminPaymentOrdersQuerySchema = z.object({
+  q: z.string().max(120).optional(),
+  status: z
+    .enum(['PENDING', 'PAID', 'EXPIRED', 'FAILED', 'REFUNDED', 'PARTIAL_REFUND', 'CHARGEBACK'])
+    .optional(),
+  method: z.string().max(40).optional(),
+  from: z.string().max(40).optional(),
+  to: z.string().max(40).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+});
+
+export const AdminPaymentEventsQuerySchema = z.object({
+  order_id: z.string().max(80).optional(),
+  status: z.enum(['RECEIVED', 'PROCESSED', 'IGNORED', 'INVALID_SIGNATURE', 'FAILED']).optional(),
+  from: z.string().max(40).optional(),
+  to: z.string().max(40).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+});
+
 export const SecurityControlsSchema = z.object({
   rate_limit_per_ip: z.number().int().min(1).max(60).optional(),
   ai_filter_active: z.boolean().optional(),
@@ -79,7 +137,10 @@ export const BasePayoutQueueQuerySchema = z.object({
   status: z
     .enum(['requested', 'approved', 'rejected', 'paid', 'failed', 'cancelled'])
     .optional(),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
+  base_handle: z.string().max(60).optional(),
+  q: z.string().max(120).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 
 export const ModerationQueueQuerySchema = z.object({
@@ -90,8 +151,20 @@ export const ModerationQueueQuerySchema = z.object({
 
 export const SystemLogsQuerySchema = z.object({
   source: z
-    .enum(['RATE_LIMITER', 'CANVAS_WORKER', 'AUTO_BASE', 'REDIS_CACHE', 'AI_FILTER', 'PAYOUT'])
+    .enum([
+      'RATE_LIMITER',
+      'CANVAS_WORKER',
+      'AUTO_BASE',
+      'REDIS_CACHE',
+      'AI_FILTER',
+      'PAYOUT',
+      'SECURITY',
+      'MODERATION',
+    ])
     .optional(),
+  tone: z.enum(['ok', 'info', 'muted', 'error']).optional(),
+  q: z.string().max(120).optional(),
+  page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 

@@ -376,6 +376,20 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 - Verifikasi deployed: state terkunci memakai respons asli `GET /payments/packages` dev (`enabled:false`, `configured:true`); preview `enabled:true` memakai intercept agar flag dev tidak diubah. Desktop/mobile light/dark memuat bundle `TopUpFlow-DaX10m_8.js`, 5 paket, 8 metode, 8 logo, tanpa overflow/error. `PAYMENTS_ENABLED=false` dan `BASE_PAYOUTS_ENABLED=false` tetap berlaku; production tidak disentuh.
 - Frontend build lulus; Prettier check lulus untuk dua file yang berubah (`TopUpFlow.vue`, `WalletPage.vue`).
 
+### 8.6 Polish UI keuangan Base Admin (2026-10-25)
+
+- Frontend commit `3dbf55f` (`feat(base-admin): polish finance saldo and payout experience`); deploy dev frontend `dpl_DTkKU4r17jeHiVpcWLQN6yhPY55z` -> https://fessncurious-dev.vercel.app. Backend dev tetap `dpl_4AdsNFxCAyEchyKvaQWSb9dap7SQ` dan tidak berubah pada pass ini.
+- Navigasi keuangan sekarang punya tiga tab (`Saldo`, `Pendapatan`, `Payout`) yang berpindah panel dan judul panel; menu Base Admin memakai label `Saldo Base (IDR)`, `Riwayat Pendapatan`, dan `Payout & Rekening`.
+- Saldo: hero navy/lime dengan saldo tersedia, status payout, aksi cepat, ringkasan hold/minimum/review, komposisi saldo (tersedia, menunggu hold, ditahan payout), kartu aturan, rekening/KYC, serta catatan batas IDR. Nominal fess memakai ID yang sudah dibersihkan (`Fess #9c41a2e8`).
+- Pendapatan: filter status dan bulan, jumlah entri per filter, status `Tersedia`/`Menunggu hold`/`Dibalik`/`Sudah dibayar`, tanggal masuk dan tanggal cair, alasan pembalikan, serta empty state.
+- Payout: checklist 5 syarat dengan progress, alasan penolakan yang spesifik (flag mati, KYC, rekening, masa tunggu 24 jam, saldo minimum), form dengan validasi minimum/saldo, chip nominal, catatan, estimasi biaya dan penerimaan, konfirmasi aplikasi, pesan sukses/gagal, filter riwayat, dan status pencairan.
+- Rekening: state kosong/aktif/masa tunggu, form tambah/ubah dengan sanitasi nomor rekening, password reveal, konfirmasi, serta pesan sukses/gagal. KYC memakai label Indonesia: `KYC terverifikasi`, `KYC belum diverifikasi`, `KYC ditolak`.
+- Form memakai asosiasi `<label for>` eksplisit, `aria-invalid`/`aria-describedby` untuk error, `role="status"` untuk sukses, `role="alert"` untuk gagal, dan `aria-current` tunggal pada tab aktif.
+- Verifikasi lokal Playwright: **209 checks, 0 failures** pada light/dark di lebar 1440 dan 430 px, plus 360 px light. Cakupan: semua tab/judul, filter pendapatan dan payout, validasi di bawah minimum dan melebihi saldo, receipt Rp100.000 - Rp6.500 = Rp93.500, dialog konfirmasi, payload + `Idempotency-Key`, refresh saldo/reserved, baris payout baru, error server, simpan rekening (sanitasi digit, password reveal, sukses, masa tunggu), payout terkunci, KYC belum/ditolak, rekening kosong, saldo rendah, error fetch + retry, tanpa overflow, tombol/input tanpa label, atau console error tak terduga.
+- Verifikasi deployed memakai bundle dev + intercept API: 3 tab pada tiga mode, saldo Rp1.280.000, readiness 5/5, rekening BCA, receipt Rp93.500, aset `BaseAdminDashboard-*.js` baru termuat, tanpa overflow/console error. `GET /payments/packages` dev tetap `enabled:false`, `configured:true`.
+- Aturan CTF tetap: 1 CTF = 1 fess, pendapatan base IDR, hold 7 hari, minimum payout Rp50.000, biaya default Rp6.500, KYC + rekening lengkap, kunci perubahan rekening 24 jam, dan approval manual Super Admin. `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false`, dan `MIDTRANS_IS_PRODUCTION=false` tidak diubah; production tidak disentuh.
+- `npm run build` frontend lulus; Prettier diterapkan pada tiga file yang berubah (`BaseRevenuePanel.vue`, `BaseAdminPanels.vue`, `BaseAdminProfileTab.vue`).
+
 ## 9. Log perubahan
 
 | Tanggal | Perubahan |
@@ -412,6 +426,7 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 | 2026-10-24 | Deploy dev: backend `dpl_4AdsNFxCAyEchyKvaQWSb9dap7SQ`, frontend `dpl_DVKgcZ1VuLdCeHzwsLeB6bRPR2F3`; flag pembayaran tetap mati. E2E API welcome bonus lulus (1 CTF, replay 1 CTF, ledger tunggal), dan verifikasi visual 8 logo pembayaran lulus. |
 | 2026-10-24 | UI wallet/top-up dipoles (frontend `a95807a`): layout dua kolom + checkout sticky, CTA mobile, kartu paket/featured, metode berkelompok, state pembayaran dan riwayat, scroll ke panel, error inline + toast, serta perbaikan ARIA. Verifikasi lokal dan deployed light/dark desktop/mobile lulus; frontend dev `dpl_9miwFrC66rNuFLqj3ZFbzM774PVv`; flag pembayaran tetap mati. |
 | 2026-10-24 | Gate tersisa: chargeback asli tidak dapat dipicu dari merchant sandbox (ditutup unit test), cron rekonsiliasi terjadwal, Midtrans production, operasional refund/chargeback, sign-off. |
+| 2026-10-25 | UI keuangan Base Admin dipoles (frontend `3dbf55f`): tab Saldo/Pendapatan/Payout, hero navy/lime, komposisi saldo, filter dan riwayat, checklist payout, form payout/rekening, state KYC/locked/error, serta aksesibilitas form. 209 checks Playwright lulus; frontend dev `dpl_DTkKU4r17jeHiVpcWLQN6yhPY55z`; backend dan production tidak disentuh. |
 
 ## 10. Checklist production (belum dijalankan)
 

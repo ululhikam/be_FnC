@@ -297,4 +297,53 @@ describe('AdminService — getFessAnalytics', () => {
 
     expect(res.range).toBe('day');
   });
+
+  it('returns hourly distribution in 24 buckets', async () => {
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValueOnce([
+      { period: '2026-10-27', count: 3 },
+    ] as any);
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValueOnce([
+      { hour: 9, count: 2 },
+      { hour: 20, count: 1 },
+    ] as any);
+
+    const res = await AdminService.getFessAnalytics(
+      { id: 'usr_admin', role: 'Base Admin', managedBases: ['@codememfess'] },
+      { range: 'day', baseHandle: '@codememfess', days: 30 }
+    );
+
+    expect(res.hours).toHaveLength(24);
+    expect(res.hours[9]).toEqual({ hour: 9, count: 2 });
+    expect(res.hours[20]).toEqual({ hour: 20, count: 1 });
+    expect(res.hours[0]).toEqual({ hour: 0, count: 0 });
+  });
+
+  it('applies days window and reports range boundaries', async () => {
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValueOnce([]);
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValueOnce([]);
+
+    const res = await AdminService.getFessAnalytics(
+      { id: 'usr_admin', role: 'Base Admin', managedBases: ['@codememfess'] },
+      { range: 'day', baseHandle: '@codememfess', days: '7' }
+    );
+
+    expect(res.days).toBe(7);
+    expect(res.timezone).toBe('Asia/Jakarta');
+    expect(String(res.from)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(String(res.to)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(String(res.from) < String(res.to)).toBe(true);
+  });
+
+  it('ignores days window for non-daily ranges', async () => {
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValueOnce([]);
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValueOnce([]);
+
+    const res = await AdminService.getFessAnalytics(
+      { id: 'usr_super', role: 'Super Admin' },
+      { range: 'month', days: 30 }
+    );
+
+    expect(res.days).toBeNull();
+    expect(res.from).toBeNull();
+  });
 });

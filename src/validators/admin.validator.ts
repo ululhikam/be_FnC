@@ -152,6 +152,8 @@ export const ModerationQueueQuerySchema = z.object({
 export const FessAnalyticsQuerySchema = z.object({
   range: z.enum(['day', 'month', 'year']).default('day'),
   baseHandle: z.string().optional(),
+  /** Rentang N hari terakhir untuk grafik tren harian & distribusi jam. */
+  days: z.coerce.number().int().min(1).max(365).optional(),
 });
 
 export const SystemLogsQuerySchema = z.object({

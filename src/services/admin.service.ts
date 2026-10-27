@@ -51,56 +51,130 @@ export class AdminService {
   }
 
   /**
-   * Agregasi jumlah fess per periode (hari/bulan/tahun) untuk analitik base.
-   * Hanya hitung fess dengan status published / approved.
+   * Agregasi jumlah fess per periode (hari/bulan/tahun) + distribusi per jam
+   * untuk analitik base. Hanya hitung fess dengan status published / approved.
    * Filter base sesuai managedBases user (kecuali Super Admin).
+   *
+   * `days` (opsional, 1-365) membatasi rentang ke N hari terakhir — dipakai
+   * grafik tren harian & distribusi jam. Tanpa `days`, seluruh riwayat dihitung
+   * (perilaku lama tetap kompatibel).
+   *
+   * Pengelompokan tanggal/jam memakai zona Asia/Jakarta supaya angka yang
+   * dilihat admin sesuai waktu lokal (kolom DateTime disimpan Prisma dalam UTC).
    */
   static async getFessAnalytics(
     currentUser: { id: string; role: string; managedBases?: string[] },
-    params: { range?: string; baseHandle?: string }
+    params: { range?: string; baseHandle?: string; days?: number | string }
   ) {
     const isSuperAdmin = currentUser.role === 'Super Admin';
     const range = params.range === 'month' ? 'month' : params.range === 'year' ? 'year' : 'day';
 
+    const requestedDays = Number(params.days);
+    const days =
+      range === 'day' && Number.isFinite(requestedDays) && requestedDays > 0
+        ? Math.min(Math.floor(requestedDays), 365)
+        : null;
+
+    /** Tanggal kalender Asia/Jakarta (YYYY-MM-DD) untuk sebuah instant. */
+    const jakartaDate = (instant: Date) =>
+      new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Jakarta',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(instant);
+
+    const now = new Date();
+    const to = jakartaDate(now);
+    const from = days ? jakartaDate(new Date(now.getTime() - (days - 1) * 86400000)) : null;
+    // Batas bawah = tengah malam Asia/Jakarta pada tanggal `from`.
+    const since = from ? new Date(`${from}T00:00:00+07:00`) : null;
+
     const dateFormat =
       range === 'month' ? 'YYYY-MM' : range === 'year' ? 'YYYY' : 'YYYY-MM-DD';
+    // Konversi timestamp UTC tersimpan → waktu dinding Asia/Jakarta.
+    const localTimestamp = `("createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta')`;
 
-    const queryParams: any[] = [dateFormat];
-    let baseCondition = '';
+    /**
+     * Bangun kondisi filter + parameter segar untuk tiap query.
+     * `offset` = jumlah placeholder yang sudah dipakai query pemanggil
+     * (nomor placeholder tidak boleh dipakai ulang antar query).
+     */
+    const buildFilters = (offset = 0) => {
+      const values: any[] = [];
+      let sql = '';
+      const placeholder = (value: any) => {
+        values.push(value);
+        return `$${values.length + offset}`;
+      };
 
-    if (!isSuperAdmin && currentUser.managedBases && currentUser.managedBases.length > 0) {
-      const baseList = currentUser.managedBases
-        .map((b) => {
-          queryParams.push(b);
-          return `$${queryParams.length}`;
-        })
-        .join(', ');
-      baseCondition = `AND "baseHandle" IN (${baseList})`;
-    }
+      const managedBases = !isSuperAdmin ? currentUser.managedBases || [] : [];
+      if (managedBases.length > 0) {
+        const placeholders = managedBases.map((base) => placeholder(base)).join(', ');
+        sql += ` AND "baseHandle" IN (${placeholders})`;
+      }
 
-    if (params.baseHandle) {
-      queryParams.push(params.baseHandle);
-      baseCondition += ` AND "baseHandle" = $${queryParams.length}`;
-    }
+      if (params.baseHandle) {
+        sql += ` AND "baseHandle" = ${placeholder(params.baseHandle)}`;
+      }
 
+      if (since) {
+        // Parameter Date dikirim Prisma sebagai text → cast eksplisit.
+        sql += ` AND "createdAt" >= ${placeholder(since)}::timestamptz`;
+      }
+
+      return { sql, values };
+    };
+
+    const dailyFilters = buildFilters(1); // $1 dipakai format tanggal
     const rows = await prisma.$queryRawUnsafe<Array<{ period: string; count: number }>>(
       `
         SELECT
-          to_char("createdAt", $1) as period,
+          to_char(${localTimestamp}, $1) as period,
           COUNT(*)::int as count
         FROM "Fess"
         WHERE "status" IN ('published', 'approved')
-        ${baseCondition}
+        ${dailyFilters.sql}
         GROUP BY period
         ORDER BY period ASC
       `,
-      ...queryParams
+      dateFormat,
+      ...dailyFilters.values
     );
+
+    // Distribusi jam pembuatan fess (0-23) pada rentang yang sama.
+    const hourFilters = buildFilters();
+    const hourRows = await prisma.$queryRawUnsafe<Array<{ hour: number; count: number }>>(
+      `
+        SELECT
+          EXTRACT(HOUR FROM ${localTimestamp})::int as hour,
+          COUNT(*)::int as count
+        FROM "Fess"
+        WHERE "status" IN ('published', 'approved')
+        ${hourFilters.sql}
+        GROUP BY hour
+        ORDER BY hour ASC
+      `,
+      ...hourFilters.values
+    );
+
+    const hourMap = new Map(
+      (hourRows || []).map((row) => [Number(row.hour), Number(row.count) || 0])
+    );
+    const hours = Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      count: hourMap.get(hour) || 0,
+    }));
 
     return {
       range,
       baseHandle: params.baseHandle || null,
+      days,
+      from,
+      to,
+      timezone: 'Asia/Jakarta',
       data: rows,
+      hours,
     };
   }
 

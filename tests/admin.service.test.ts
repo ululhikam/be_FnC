@@ -51,6 +51,7 @@ vi.mock('../src/config/prisma.js', () => ({
       create: vi.fn(),
       updateMany: vi.fn(),
     },
+    $queryRawUnsafe: vi.fn(),
     $transaction: vi.fn((items) => (typeof items === 'function' ? items(prisma) : Promise.all(items))),
   },
 }));
@@ -229,5 +230,71 @@ describe('AdminService Unit Tests', () => {
         })
       );
     });
+  });
+});
+
+/* ================================================================
+ * FESS ANALYTICS — Fase 4
+ * ================================================================ */
+describe('AdminService — getFessAnalytics', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([]);
+  });
+
+  it('aggregates published fess per day for base admin', async () => {
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValueOnce([
+      { period: '2025-01-01', count: 5 },
+      { period: '2025-01-02', count: 3 },
+    ] as any);
+
+    const res = await AdminService.getFessAnalytics(
+      { id: 'usr_admin', role: 'Base Admin', managedBases: ['@codememfess'] },
+      { range: 'day', baseHandle: '@codememfess' }
+    );
+
+    expect(res.range).toBe('day');
+    expect(res.data).toHaveLength(2);
+    expect(res.data[0]).toEqual({ period: '2025-01-01', count: 5 });
+    expect(prisma.$queryRawUnsafe).toHaveBeenCalled();
+  });
+
+  it('filters by baseHandle for super admin', async () => {
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValueOnce([
+      { period: '2025-01', count: 12 },
+    ] as any);
+
+    const res = await AdminService.getFessAnalytics(
+      { id: 'usr_super', role: 'Super Admin' },
+      { range: 'month', baseHandle: '@otherbase' }
+    );
+
+    expect(res.range).toBe('month');
+    expect(res.baseHandle).toBe('@otherbase');
+  });
+
+  it('super admin sees all bases when no baseHandle filter', async () => {
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValueOnce([
+      { period: '2025', count: 100 },
+    ] as any);
+
+    const res = await AdminService.getFessAnalytics(
+      { id: 'usr_super', role: 'Super Admin' },
+      { range: 'year' }
+    );
+
+    expect(res.range).toBe('year');
+    expect(res.baseHandle).toBeNull();
+  });
+
+  it('defaults range to day when invalid', async () => {
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValueOnce([]);
+
+    const res = await AdminService.getFessAnalytics(
+      { id: 'usr_admin', role: 'Base Admin', managedBases: ['@codememfess'] },
+      { range: 'invalid' as any }
+    );
+
+    expect(res.range).toBe('day');
   });
 });

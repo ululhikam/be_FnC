@@ -1088,7 +1088,7 @@ export class FessService {
     return result;
   }
 
-  static async reportFess(fessId: string, reason: string, note?: string | null, userId?: string) {
+  static async reportFess(fessId: string, reason: string, userId: string, note?: string | null) {
     const fess = await prisma.fess.findUnique({ where: { id: fessId } });
     if (!fess) {
       const err: any = new Error('Fess tidak ditemukan');
@@ -1097,16 +1097,201 @@ export class FessService {
       throw err;
     }
 
+    // Cegah duplikasi: satu user hanya boleh melaporkan satu fess sekali
+    const existing = await prisma.report.findFirst({ where: { fessId, userId } });
+    if (existing) {
+      const err: any = new Error('Anda sudah melaporkan fess ini sebelumnya');
+      err.status = 409;
+      err.code = 'DUPLICATE_REPORT';
+      throw err;
+    }
+
     await prisma.report.create({
       data: {
         fessId,
         reason,
         note: note || null,
-        userId: userId || null,
+        userId,
+      },
+    });
+
+    await prisma.systemLog.create({
+      data: {
+        source: 'MODERATION',
+        message: `Laporan fess ${fessId} dari ${fess.baseHandle} oleh user ${userId} (${reason})`,
+        tone: 'info',
       },
     });
 
     return { ok: true, message: 'Laporan berhasil dikirim dan akan ditinjau oleh tim moderasi.' };
+  }
+
+  /**
+   * Daftar laporan pada satu fess + jumlah pelapor unik.
+   * Hanya Base Admin yang mengelola base fess tersebut (atau Super Admin read-only).
+   */
+  static async getFessReports(
+    fessId: string,
+    currentUser: { id: string; role: string; managedBases?: string[] }
+  ) {
+    const fess = await prisma.fess.findUnique({
+      where: { id: fessId },
+      select: {
+        id: true,
+        baseHandle: true,
+        base: { select: { creatorId: true } },
+      },
+    });
+
+    if (!fess) {
+      const err: any = new Error('Fess tidak ditemukan');
+      err.status = 404;
+      err.code = 'NOT_FOUND';
+      throw err;
+    }
+
+    if (!this.canManageBaseFess(fess, currentUser)) {
+      const err: any = new Error('Anda tidak memiliki izin melihat laporan fess ini');
+      err.status = 403;
+      err.code = 'FORBIDDEN';
+      throw err;
+    }
+
+    const reports = await prisma.report.findMany({
+      where: { fessId },
+      include: {
+        user: { select: { id: true, username: true, handle: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const uniqueReporters = new Set(reports.map((r) => r.userId).filter(Boolean));
+
+    return {
+      fessId,
+      totalReports: reports.length,
+      uniqueReporters: uniqueReporters.size,
+      reports: reports.map((r) => ({
+        id: r.id,
+        reason: r.reason,
+        note: r.note,
+        status: r.status,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+        user: r.user
+          ? { id: r.user.id, username: r.user.username, handle: r.user.handle }
+          : null,
+      })),
+    };
+  }
+
+  static async dismissFessReport(
+    fessId: string,
+    currentUser: { id: string; role: string; managedBases?: string[] },
+    reason?: string | null
+  ) {
+    return this.updateReportStatus(fessId, 'dismissed', currentUser, reason);
+  }
+
+  static async resolveFessReport(
+    fessId: string,
+    currentUser: { id: string; role: string; managedBases?: string[] },
+    reason?: string | null
+  ) {
+    return this.updateReportStatus(fessId, 'resolved', currentUser, reason);
+  }
+
+  private static async updateReportStatus(
+    fessId: string,
+    targetStatus: 'dismissed' | 'resolved',
+    currentUser: { id: string; role: string; managedBases?: string[] },
+    reason?: string | null
+  ) {
+    const fess = await prisma.fess.findUnique({
+      where: { id: fessId },
+      select: {
+        id: true,
+        baseHandle: true,
+        base: { select: { creatorId: true } },
+      },
+    });
+
+    if (!fess) {
+      const err: any = new Error('Fess tidak ditemukan');
+      err.status = 404;
+      err.code = 'NOT_FOUND';
+      throw err;
+    }
+
+    if (!this.canManageBaseFess(fess, currentUser)) {
+      const err: any = new Error('Anda tidak memiliki izin mengelola laporan fess ini');
+      err.status = 403;
+      err.code = 'FORBIDDEN';
+      throw err;
+    }
+
+    const updated = await prisma.report.updateMany({
+      where: { fessId, status: 'pending' },
+      data: { status: targetStatus },
+    });
+
+    await prisma.systemLog.create({
+      data: {
+        source: 'MODERATION',
+        message: `${targetStatus.toUpperCase()} laporan fess ${fessId} dari ${fess.baseHandle} oleh ${currentUser.role} (${currentUser.id})${reason ? ` — alasan: ${reason}` : ''}`,
+        tone: 'info',
+      },
+    });
+
+    return {
+      ok: true,
+      message: `Laporan berhasil ditandai sebagai ${targetStatus}.`,
+      updatedCount: updated.count,
+    };
+  }
+
+  /**
+   * Tandai fess sebagai post manual ke Instagram. Admin base menyimpan URL
+   * postingan Instagram hasil post manual untuk tracking. Tidak memicu Meta API,
+   * dan igMediaId tetap kosong (shortcode bukan Graph API media ID).
+   */
+  static async manualIgPost(
+    fessId: string,
+    igPostUrl: string,
+    currentUser: { id: string; role: string; managedBases?: string[] },
+    note?: string | null
+  ) {
+    // assertCanManageFess sudah memvalidasi: fess ada, base admin, published, belum postedToIg
+    const target = await this.assertCanManageFess(fessId, currentUser);
+
+    const updated = await prisma.fess.update({
+      where: { id: fessId },
+      data: {
+        postedToIg: true,
+        igStatus: 'published',
+        igUpdatedAt: new Date(),
+        igPostUrl,
+        igPostMethod: 'manual',
+        igPostedAt: new Date(),
+        // igMediaId sengaja tetap null untuk post manual (shortcode bukan media ID Graph API)
+      },
+    });
+
+    await prisma.systemLog.create({
+      data: {
+        source: 'MODERATION',
+        message: `Manual IG post fess ${fessId} dari ${target.baseHandle} oleh ${currentUser.role} (${currentUser.id}) — URL: ${igPostUrl}${note ? ` — catatan: ${note}` : ''}`,
+        tone: 'info',
+      },
+    });
+
+    return {
+      ok: true,
+      message: 'Fess ditandai sebagai post manual ke Instagram.',
+      ig_post_url: updated.igPostUrl,
+      ig_post_method: updated.igPostMethod,
+      ig_posted_at: updated.igPostedAt,
+    };
   }
 
   /**

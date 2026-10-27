@@ -55,6 +55,9 @@ vi.mock('../src/config/prisma.js', () => ({
     },
     report: {
       create: vi.fn(),
+      findFirst: vi.fn(),
+      findMany: vi.fn(),
+      updateMany: vi.fn(),
     },
     systemLog: {
       create: vi.fn(),
@@ -1649,5 +1652,192 @@ describe('Serialisasi status Instagram', () => {
     });
     expect(ownerView.ig_error).toContain('rasio tidak sama');
     expect(ownerView.can_manage_instagram).toBe(true);
+  });
+});
+
+/* ================================================================
+ * REPORT & MANUAL IG POST — new features (Fase 2 & 3)
+ * ================================================================ */
+describe('FessService — Report & Manual IG Post', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.report.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.report.create).mockResolvedValue({ id: 'rpt_1' } as any);
+    vi.mocked(prisma.report.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.report.updateMany).mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.systemLog.create).mockResolvedValue({} as any);
+  });
+
+  describe('reportFess', () => {
+    it('requires login (throws if userId missing)', async () => {
+      // userId is now required by signature; test that it's passed through
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_1',
+        baseHandle: '@codememfess',
+      } as any);
+
+      const res = await FessService.reportFess('fess_1', 'spam', 'usr_1', 'note');
+      expect(res.ok).toBe(true);
+      expect(prisma.report.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ userId: 'usr_1', reason: 'spam' }),
+        })
+      );
+      expect(prisma.systemLog.create).toHaveBeenCalled();
+    });
+
+    it('prevents duplicate report by same user on same fess', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_1',
+        baseHandle: '@codememfess',
+      } as any);
+      vi.mocked(prisma.report.findFirst).mockResolvedValueOnce({ id: 'rpt_exist' } as any);
+
+      await expect(FessService.reportFess('fess_1', 'spam', 'usr_1', null)).rejects.toMatchObject({
+        code: 'DUPLICATE_REPORT',
+        status: 409,
+      });
+    });
+
+    it('writes SystemLog on successful report', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_1',
+        baseHandle: '@codememfess',
+      } as any);
+
+      await FessService.reportFess('fess_1', 'sara', 'usr_1', 'catatan');
+      expect(prisma.systemLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            source: 'MODERATION',
+            message: expect.stringContaining('sara'),
+          }),
+        })
+      );
+    });
+  });
+
+  describe('getFessReports', () => {
+    it('returns reports + uniqueReporters count for base admin', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_1',
+        baseHandle: '@codememfess',
+        base: { creatorId: 'usr_admin' },
+      } as any);
+      vi.mocked(prisma.report.findMany).mockResolvedValueOnce([
+        { id: 'r1', reason: 'spam', note: null, status: 'pending', createdAt: new Date(), updatedAt: new Date(), userId: 'usr_a', user: { id: 'usr_a', username: 'a', handle: '@a' } },
+        { id: 'r2', reason: 'sara', note: 'catatan', status: 'resolved', createdAt: new Date(), updatedAt: new Date(), userId: 'usr_b', user: { id: 'usr_b', username: 'b', handle: '@b' } },
+        { id: 'r3', reason: 'spam', note: null, status: 'pending', createdAt: new Date(), updatedAt: new Date(), userId: 'usr_a', user: { id: 'usr_a', username: 'a', handle: '@a' } },
+      ] as any);
+
+      const res = await FessService.getFessReports('fess_1', {
+        id: 'usr_admin',
+        role: 'Base Admin',
+        managedBases: ['@codememfess'],
+      });
+      expect(res.totalReports).toBe(3);
+      expect(res.uniqueReporters).toBe(2);
+      expect(res.reports).toHaveLength(3);
+    });
+
+    it('forbids non-managing admin', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_1',
+        baseHandle: '@codememfess',
+        base: { creatorId: 'usr_owner' },
+      } as any);
+
+      await expect(
+        FessService.getFessReports('fess_1', { id: 'usr_other', role: 'Base Admin', managedBases: ['@other'] })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
+    });
+  });
+
+  describe('dismissFessReport / resolveFessReport', () => {
+    it('dismisses pending reports and logs', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_1',
+        baseHandle: '@codememfess',
+        base: { creatorId: 'usr_admin' },
+      } as any);
+      vi.mocked(prisma.report.updateMany).mockResolvedValueOnce({ count: 2 });
+
+      const res = await FessService.dismissFessReport('fess_1', { id: 'usr_admin', role: 'Base Admin', managedBases: ['@codememfess'] }, 'bukan spam');
+      expect(res.updatedCount).toBe(2);
+      expect(prisma.systemLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            message: expect.stringContaining('DISMISSED'),
+          }),
+        })
+      );
+    });
+
+    it('resolves pending reports and logs', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_1',
+        baseHandle: '@codememfess',
+        base: { creatorId: 'usr_admin' },
+      } as any);
+      vi.mocked(prisma.report.updateMany).mockResolvedValueOnce({ count: 1 });
+
+      const res = await FessService.resolveFessReport('fess_1', { id: 'usr_admin', role: 'Base Admin', managedBases: ['@codememfess'] }, 'tindakan diambil');
+      expect(res.updatedCount).toBe(1);
+      expect(prisma.systemLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            message: expect.stringContaining('RESOLVED'),
+          }),
+        })
+      );
+    });
+  });
+
+  describe('manualIgPost', () => {
+    it('requires base admin managing the fess', async () => {
+      // assertCanManageFess is private; test via manualIgPost throwing when canManage fails
+      // Simulate by making prisma.fess.findUnique return base with different creator
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_1',
+        baseHandle: '@codememfess',
+        status: 'published',
+        postedToIg: false,
+        base: { creatorId: 'usr_owner' },
+      } as any);
+
+      await expect(
+        FessService.manualIgPost('fess_1', 'https://instagram.com/p/ABC', { id: 'usr_other', role: 'Base Admin', managedBases: ['@other'] }, 'note')
+      ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
+    });
+
+    it('updates fess with manual IG fields and logs', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_1',
+        baseHandle: '@codememfess',
+        status: 'published',
+        postedToIg: false,
+        base: { creatorId: 'usr_admin' },
+      } as any);
+      vi.mocked(prisma.fess.update).mockResolvedValueOnce({
+        id: 'fess_1',
+        igPostUrl: 'https://instagram.com/p/ABC',
+        igPostMethod: 'manual',
+        igPostedAt: new Date(),
+        postedToIg: true,
+        igStatus: 'published',
+      } as any);
+
+      const res = await FessService.manualIgPost('fess_1', 'https://instagram.com/p/ABC', { id: 'usr_admin', role: 'Base Admin', managedBases: ['@codememfess'] }, 'manual post');
+      expect(res.ig_post_method).toBe('manual');
+      expect(res.ig_post_url).toBe('https://instagram.com/p/ABC');
+      expect(prisma.systemLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            source: 'MODERATION',
+            message: expect.stringContaining('Manual IG post'),
+          }),
+        })
+      );
+    });
   });
 });

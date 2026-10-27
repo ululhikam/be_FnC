@@ -156,7 +156,10 @@ model Fess {
   igError        String?
   igAttempts     Int       @default(0)
   igUpdatedAt    DateTime?
-  igMediaId      String? // ID media Instagram hasil publish, untuk take down
+  igMediaId      String? // ID media Instagram hasil publish (Graph API media ID, untuk take down)
+  igPostUrl      String? // URL postingan Instagram hasil post manual (untuk tracking & tampilan UI)
+  igPostMethod   String? // "auto" | "manual"
+  igPostedAt     DateTime? // timestamp kapan postingan IG terbit (manual atau auto)
   igPayload      Json? // item carousel + caption yang sudah dinormalisasi
   autoFlagged    Boolean   @default(false) // terindikasi konten negatif oleh filter NLP saat auto post
   flagReason     String? // alasan flag dari filter NLP (mis. "ujaran kebencian, ancaman")
@@ -286,13 +289,16 @@ model Report {
   userId    String?
   reason    String
   note      String?
-  status    String   @default("pending")
+  status    String   @default("pending") // "pending", "dismissed", "resolved"
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   fess Fess  @relation(fields: [fessId], references: [id], onDelete: Cascade)
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([fessId])
+  @@index([status])
+  @@index([fessId, status])
 }
 
 model Topic {

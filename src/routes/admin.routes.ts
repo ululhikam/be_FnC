@@ -27,6 +27,7 @@ import {
   AdminUnbanUserSchema,
   AdminPaymentOrdersQuerySchema,
   AdminPaymentEventsQuerySchema,
+  FessAnalyticsQuerySchema,
 } from '../validators/admin.validator.js';
 
 const router = Router();
@@ -37,6 +38,14 @@ router.get(
   requireAuth,
   requireBaseAdmin,
   AdminController.getStats
+);
+
+router.get(
+  '/stats/fess-analytics',
+  requireAuth,
+  requireBaseAdmin,
+  validateQuery(FessAnalyticsQuerySchema),
+  AdminController.getFessAnalytics
 );
 
 router.get(

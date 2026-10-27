@@ -161,8 +161,66 @@ export class FessController {
 
   static async reportFess(req: Request, res: Response, next: NextFunction) {
     try {
+      if (!req.user) {
+        return errorResponse(res, 'Autentikasi dibutuhkan', 401, 'UNAUTHORIZED');
+      }
       const { fess_id, reason, note } = req.body;
-      const result = await FessService.reportFess(fess_id, reason, note, req.user?.id);
+      const result = await FessService.reportFess(fess_id, reason, req.user.id, note);
+      return successResponse(res, result, 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async getFessReports(req: Request, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) {
+        return errorResponse(res, 'Autentikasi dibutuhkan', 401, 'UNAUTHORIZED');
+      }
+      const id = String(req.params.id);
+      const result = await FessService.getFessReports(id, req.user);
+      return successResponse(res, result, 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async dismissFessReport(req: Request, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) {
+        return errorResponse(res, 'Autentikasi dibutuhkan', 401, 'UNAUTHORIZED');
+      }
+      const id = String(req.params.id);
+      const { reason } = req.body;
+      const result = await FessService.dismissFessReport(id, req.user, reason);
+      return successResponse(res, result, 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async resolveFessReport(req: Request, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) {
+        return errorResponse(res, 'Autentikasi dibutuhkan', 401, 'UNAUTHORIZED');
+      }
+      const id = String(req.params.id);
+      const { reason } = req.body;
+      const result = await FessService.resolveFessReport(id, req.user, reason);
+      return successResponse(res, result, 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async manualIgPost(req: Request, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) {
+        return errorResponse(res, 'Autentikasi dibutuhkan', 401, 'UNAUTHORIZED');
+      }
+      const id = String(req.params.id);
+      const { ig_post_url, note } = req.body;
+      const result = await FessService.manualIgPost(id, ig_post_url, req.user, note);
       return successResponse(res, result, 200);
     } catch (error) {
       next(error);

@@ -149,6 +149,11 @@ export const ModerationQueueQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 
+export const FessAnalyticsQuerySchema = z.object({
+  range: z.enum(['day', 'month', 'year']).default('day'),
+  baseHandle: z.string().optional(),
+});
+
 export const SystemLogsQuerySchema = z.object({
   source: z
     .enum([

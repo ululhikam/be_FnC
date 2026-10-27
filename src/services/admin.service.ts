@@ -51,6 +51,60 @@ export class AdminService {
   }
 
   /**
+   * Agregasi jumlah fess per periode (hari/bulan/tahun) untuk analitik base.
+   * Hanya hitung fess dengan status published / approved.
+   * Filter base sesuai managedBases user (kecuali Super Admin).
+   */
+  static async getFessAnalytics(
+    currentUser: { id: string; role: string; managedBases?: string[] },
+    params: { range?: string; baseHandle?: string }
+  ) {
+    const isSuperAdmin = currentUser.role === 'Super Admin';
+    const range = params.range === 'month' ? 'month' : params.range === 'year' ? 'year' : 'day';
+
+    const dateFormat =
+      range === 'month' ? 'YYYY-MM' : range === 'year' ? 'YYYY' : 'YYYY-MM-DD';
+
+    const queryParams: any[] = [dateFormat];
+    let baseCondition = '';
+
+    if (!isSuperAdmin && currentUser.managedBases && currentUser.managedBases.length > 0) {
+      const baseList = currentUser.managedBases
+        .map((b) => {
+          queryParams.push(b);
+          return `$${queryParams.length}`;
+        })
+        .join(', ');
+      baseCondition = `AND "baseHandle" IN (${baseList})`;
+    }
+
+    if (params.baseHandle) {
+      queryParams.push(params.baseHandle);
+      baseCondition += ` AND "baseHandle" = $${queryParams.length}`;
+    }
+
+    const rows = await prisma.$queryRawUnsafe<Array<{ period: string; count: number }>>(
+      `
+        SELECT
+          to_char("createdAt", $1) as period,
+          COUNT(*)::int as count
+        FROM "Fess"
+        WHERE "status" IN ('published', 'approved')
+        ${baseCondition}
+        GROUP BY period
+        ORDER BY period ASC
+      `,
+      ...queryParams
+    );
+
+    return {
+      range,
+      baseHandle: params.baseHandle || null,
+      data: rows,
+    };
+  }
+
+  /**
    * Get pending moderation queue
    */
   static async getModerationQueue(

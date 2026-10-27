@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { AdminService } from '../services/admin.service.js';
+import { FessService } from '../services/fess.service.js';
 import { successResponse, errorResponse } from '../utils/response.util.js';
 
 export class AdminController {
@@ -10,6 +11,18 @@ export class AdminController {
       }
       const stats = await AdminService.getStats(req.user);
       return successResponse(res, stats, 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async getFessAnalytics(req: Request, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) {
+        return errorResponse(res, 'Bukan admin', 403, 'FORBIDDEN');
+      }
+      const analytics = await AdminService.getFessAnalytics(req.user, req.query as any);
+      return successResponse(res, analytics, 200);
     } catch (error) {
       next(error);
     }
@@ -33,7 +46,12 @@ export class AdminController {
 
   static async exportCanvas(req: Request, res: Response, next: NextFunction) {
     try {
+      if (!req.user) {
+        return errorResponse(res, 'Autentikasi dibutuhkan', 401, 'UNAUTHORIZED');
+      }
       const { fess_id, template, aspect } = req.body;
+      // Pastikan user adalah Base Admin yang mengelola base fess ini.
+      await FessService.assertCanManageFess(fess_id, req.user);
       // Export admin hanya merender/mengunduh card — bukan trigger posting IG.
       const { CanvasService } = await import('../services/canvas.service.js');
       const result = await CanvasService.exportFessCanvas(fess_id, template, aspect, {

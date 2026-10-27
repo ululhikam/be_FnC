@@ -13,6 +13,8 @@ import {
   GetFessesQuerySchema,
   VoteSchema,
   ReportSchema,
+  ReportActionSchema,
+  ManualIgPostSchema,
 } from '../validators/fess.validator.js';
 import { AddCommentSchema, GetCommentsQuerySchema } from '../validators/comment.validator.js';
 
@@ -44,13 +46,40 @@ router.post(
   requireBaseAdmin,
   FessController.rejectFess
 );
-router.post('/:id/report', optionalAuth, validateBody(ReportSchema), FessController.reportFess);
+router.post('/:id/report', requireAuth, validateBody(ReportSchema), FessController.reportFess);
+router.get(
+  '/:id/reports',
+  requireAuth,
+  requireBaseAdmin,
+  FessController.getFessReports
+);
+router.post(
+  '/:id/reports/dismiss',
+  requireAuth,
+  requireBaseAdmin,
+  validateBody(ReportActionSchema),
+  FessController.dismissFessReport
+);
+router.post(
+  '/:id/reports/resolve',
+  requireAuth,
+  requireBaseAdmin,
+  validateBody(ReportActionSchema),
+  FessController.resolveFessReport
+);
 router.delete('/:id/delete', requireAuth, FessController.deleteFess);
 router.post(
   '/:id/instagram-post',
   requireAuth,
   requireBaseAdmin,
   FessController.postToInstagram
+);
+router.post(
+  '/:id/manual-ig-post',
+  requireAuth,
+  requireBaseAdmin,
+  validateBody(ManualIgPostSchema),
+  FessController.manualIgPost
 );
 
 // Nested Comments Endpoints

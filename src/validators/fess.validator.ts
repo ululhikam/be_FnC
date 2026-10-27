@@ -125,3 +125,12 @@ export const ReportSchema = z.object({
   reason: z.enum(['spam', 'sara', 'pelecehan', 'dewasa', 'hoaks']),
   note: z.string().max(250, 'Catatan maksimal 250 karakter').optional().nullable(),
 });
+
+export const ReportActionSchema = z.object({
+  reason: z.string().max(250, 'Catatan maksimal 250 karakter').optional().nullable(),
+});
+
+export const ManualIgPostSchema = z.object({
+  ig_post_url: z.string().url('URL postingan Instagram tidak valid'),
+  note: z.string().max(250, 'Catatan maksimal 250 karakter').optional().nullable(),
+});

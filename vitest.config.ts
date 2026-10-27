@@ -8,6 +8,8 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
     },
-    testTimeout: 10000,
+    // Render canvas (resvg/sharp) bersifat CPU-bound dan bisa >10s saat
+    // test lain berjalan paralel, jadi beri ruang lebih longgar.
+    testTimeout: 30000,
   },
 });

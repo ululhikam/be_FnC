@@ -59,7 +59,7 @@ const AUTH_USER_SELECT = {
   handleChangedAt: true,
   isBanned: true,
   banExpiresAt: true,
-  managedBases: { select: { handle: true } },
+  managedBases: { select: { handle: true }, orderBy: { createdAt: 'asc' } },
   ctfWallet: { select: { balance: true } },
 } as const;
 

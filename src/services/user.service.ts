@@ -19,7 +19,7 @@ export class UserService {
     const user = await prisma.user.findUnique({
       where: { id: userId },
       include: {
-        managedBases: { select: { handle: true } },
+        managedBases: { select: { handle: true }, orderBy: { createdAt: 'asc' } },
       },
     });
 
@@ -122,7 +122,7 @@ export class UserService {
           ...(data.avatar !== undefined ? { avatar: data.avatar } : {}),
         },
         include: {
-          managedBases: { select: { handle: true } },
+          managedBases: { select: { handle: true }, orderBy: { createdAt: 'asc' } },
         },
       });
     } catch (error: any) {

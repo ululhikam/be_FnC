@@ -51,6 +51,7 @@ export class AuthService {
       include: {
         managedBases: {
           select: { handle: true },
+          orderBy: { createdAt: 'asc' },
         },
       },
     });
@@ -191,7 +192,7 @@ export class AuthService {
         badges: ['NEW MEMBER', 'ANON SENDER'],
       },
       include: {
-        managedBases: { select: { handle: true } },
+        managedBases: { select: { handle: true }, orderBy: { createdAt: 'asc' } },
       },
     });
 
@@ -375,7 +376,7 @@ export class AuthService {
         ],
       },
       include: {
-        managedBases: { select: { handle: true } },
+        managedBases: { select: { handle: true }, orderBy: { createdAt: 'asc' } },
         ctfWallet: { select: { balance: true } },
       },
     });
@@ -412,7 +413,7 @@ export class AuthService {
               badges: ['GOOGLE VERIFIED', 'MEMBER'],
             },
             include: {
-              managedBases: { select: { handle: true } },
+              managedBases: { select: { handle: true }, orderBy: { createdAt: 'asc' } },
               ctfWallet: { select: { balance: true } },
             },
           });
@@ -586,7 +587,7 @@ export class AuthService {
     const user = await prisma.user.findUnique({
       where: { id: payload.sub },
       include: {
-        managedBases: { select: { handle: true } },
+        managedBases: { select: { handle: true }, orderBy: { createdAt: 'asc' } },
         ctfWallet: { select: { balance: true } },
       },
     });
@@ -689,7 +690,7 @@ export class AuthService {
     const payload = this.readVerificationTicket(ticket);
     const user = await prisma.user.findUnique({
       where: { id: payload.sub },
-      include: { managedBases: { select: { handle: true } } },
+      include: { managedBases: { select: { handle: true }, orderBy: { createdAt: 'asc' } } },
     });
 
     if (!user?.email || user.email.toLowerCase() !== payload.email.toLowerCase()) {
@@ -914,7 +915,7 @@ export class AuthService {
     const user = await prisma.user.findUnique({
       where: { id: userId },
       include: {
-        managedBases: { select: { handle: true } },
+        managedBases: { select: { handle: true }, orderBy: { createdAt: 'asc' } },
         ctfWallet: { select: { balance: true } },
       },
     });

@@ -169,6 +169,34 @@ describe('Renderer template SVG (database)', () => {
     expect(text.match(/@fess_kampus/g)).toHaveLength(1);
   });
 
+  it('renderTemplateThumbnail menghasilkan PNG 1080x1350', () => {
+    const png = CanvasService.renderTemplateThumbnail(realTemplate(0), {
+      frontendHost: 'contoh.test',
+    });
+    expect(png.subarray(0, 4).toString('hex')).toBe('89504e47');
+    expect(png.readUInt32BE(16)).toBe(1080);
+    expect(png.readUInt32BE(20)).toBe(1350);
+  });
+
+  it('thumbnail memakai contoh deterministik dan host footer bisa dioverride', () => {
+    let svg = '';
+    const spy = vi.spyOn(CanvasService, 'renderSvgToPng').mockImplementation((value) => {
+      svg = value;
+      return Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    });
+
+    try {
+      CanvasService.renderTemplateThumbnail(realTemplate(0), { frontendHost: 'contoh.test' });
+      const text = plain(svg);
+      expect(text).toContain('contoh.test');
+      expect(text).toContain('@fess_kampus');
+      expect(text).toContain('KUTIPAN');
+      expect(text).toContain('Ada yang mau belajar bareng');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('handle & waktu memakai data fess, bukan teks contoh desain', async () => {
     const pages = await render(realTemplate(0), 'Halo kampus.');
     expect(pages[0]).not.toContain('@ustfess');

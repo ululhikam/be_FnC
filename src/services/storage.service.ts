@@ -16,6 +16,19 @@ export interface SignedUploadResult {
   type: 'image' | 'video';
 }
 
+/** Unggah satu buffer ke path tetap (mis. thumbnail template yang deterministik). */
+export interface UploadBufferInput {
+  path: string;
+  buffer: Buffer;
+  contentType?: string;
+}
+
+export interface UploadBufferResult {
+  url: string;
+  path: string;
+  size: number;
+}
+
 /** Batas ukuran file yang boleh memakai fallback data-URI (dev tanpa storage). */
 const DATA_URI_MAX_BYTES = 2 * 1024 * 1024;
 
@@ -43,6 +56,72 @@ function withTimeout<T>(promise: Promise<T>, ms: number, errorMsg: string): Prom
 
 export class StorageService {
   /**
+   * Unggah satu objek ke bucket aktif dengan `upsert`. Path ditentukan pemanggil
+   * (bukan acak) supaya aset seperti thumbnail template bisa ditimpa di tempat.
+   */
+  private static async putObject(
+    objectPath: string,
+    buffer: Buffer,
+    contentType: string
+  ): Promise<{ url: string; path: string }> {
+    let lastError = 'penyebab tidak diketahui';
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const supabase = getSupabase();
+        const { data, error } = await withTimeout(
+          supabase.storage.from(ENV.SUPABASE_BUCKET).upload(objectPath, buffer, {
+            contentType,
+            upsert: true,
+          }),
+          120000,
+          'Batas waktu penyimpanan Supabase Storage terlampaui (120s)'
+        );
+
+        if (!error && data?.path) {
+          const { data: publicUrlData } = supabase.storage
+            .from(ENV.SUPABASE_BUCKET)
+            .getPublicUrl(data.path);
+
+          return { url: publicUrlData.publicUrl, path: data.path };
+        }
+
+        lastError = error?.message || 'respons storage tidak valid';
+      } catch (e: any) {
+        lastError = e?.message || String(e);
+      }
+
+      if (attempt < 2) await sleep(400);
+    }
+
+    console.error(
+      `[storage] Gagal mengunggah ${objectPath} ke Supabase Storage setelah 2 percobaan: ${lastError}`
+    );
+    throw new Error(
+      `Gagal mengunggah ${objectPath} ke storage (${lastError}). Coba lagi beberapa saat.`
+    );
+  }
+
+  /**
+   * Unggah buffer ke path tetap (mis. `templates/<key>-v<n>.png`).
+   * Berlaku `upsert`: isi lama di path yang sama diganti.
+   */
+  static async uploadBuffer(input: UploadBufferInput): Promise<UploadBufferResult> {
+    const objectPath = String(input.path || '').replace(/^\/+/, '').trim();
+    if (!objectPath) throw new Error('Path unggah buffer wajib diisi.');
+    if (!Buffer.isBuffer(input.buffer) || input.buffer.length === 0) {
+      throw new Error('Buffer unggah kosong.');
+    }
+    if (!isStorageConfigured()) {
+      throw new Error('Storage media belum dikonfigurasi (SUPABASE_URL/SUPABASE_KEY).');
+    }
+
+    const contentType = String(input.contentType || 'application/octet-stream').trim();
+    const uploaded = await StorageService.putObject(objectPath, input.buffer, contentType);
+    return { url: uploaded.url, path: uploaded.path, size: input.buffer.length };
+  }
+
+  /**
    * Upload file to Supabase Object Storage.
    *
    * - Storage terkonfigurasi: upload + 1x percobaan ulang dengan proteksi timeout 25s.
@@ -68,47 +147,13 @@ export class StorageService {
     }
 
     if (isStorageConfigured()) {
-      let lastError = 'penyebab tidak diketahui';
-
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-          const supabase = getSupabase();
-          const { data, error } = await withTimeout(
-            supabase.storage
-              .from(ENV.SUPABASE_BUCKET)
-              .upload(filename, file.buffer, {
-                contentType,
-                upsert: true,
-              }),
-            120000,
-            'Batas waktu penyimpanan Supabase Storage terlampaui (120s)'
-          );
-
-          if (!error && data?.path) {
-            const { data: publicUrlData } = supabase.storage
-              .from(ENV.SUPABASE_BUCKET)
-              .getPublicUrl(data.path);
-
-            return {
-              url: publicUrlData.publicUrl,
-              thumbnail: isVideo ? publicUrlData.publicUrl : undefined,
-              size: file.size,
-              type,
-            };
-          }
-
-          lastError = error?.message || 'respons storage tidak valid';
-        } catch (e: any) {
-          lastError = e?.message || String(e);
-        }
-
-        if (attempt < 2) await sleep(400);
-      }
-
-      console.error(
-        `[storage] Gagal mengunggah ${filename} ke Supabase Storage setelah 2 percobaan: ${lastError}`
-      );
-      throw new Error(`Gagal mengunggah file ke storage (${lastError}). Coba lagi beberapa saat.`);
+      const { url } = await StorageService.putObject(filename, file.buffer, contentType);
+      return {
+        url,
+        thumbnail: isVideo ? url : undefined,
+        size: file.size,
+        type,
+      };
     }
 
     // Dev/test tanpa kredensial storage: data-URI hanya untuk file kecil.

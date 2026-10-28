@@ -119,6 +119,16 @@ export interface FessLike {
   } | null;
 }
 
+/** Opsi render thumbnail katalog (tanpa membutuhkan baris DB). */
+export interface TemplateThumbnailOptions {
+  /** Host footer; default `FRONTEND_URL` environment saat ini. */
+  frontendHost?: string;
+  /** Sertakan kutipan contoh di halaman 1 (default true). */
+  withQuote?: boolean;
+  /** Ganti contoh isi kartu bila perlu (mis. copy kampanye tertentu). */
+  sample?: FessLike;
+}
+
 /** Satu potongan teks atau satu emoji dalam satu baris. */
 interface TextSegment {
   kind: 'text' | 'emoji';
@@ -807,7 +817,8 @@ export class CanvasService {
   private static buildSvgTemplatePages(
     fess: FessLike,
     template: TemplateRecord,
-    aspectKey = ''
+    aspectKey = '',
+    frontendHostOverride = ''
   ): string[] {
     const slots = template.slots as TemplateSlots;
     const m = slots.message;
@@ -896,7 +907,7 @@ export class CanvasService {
         // handle base sudah tampil di baris `@user`, jadi tidak diulang di sini.
         'editable-footer',
         fitTextToWidth(
-          frontendHostLabel(),
+          frontendHostLabel(frontendHostOverride),
           getMeasureFont('sans', 700),
           slots.footer?.fontSize || 22,
           footerMaxWidth(slots, template.width)
@@ -941,6 +952,40 @@ export class CanvasService {
         `\n  <!-- Fess n Curious: isi fess & kutipan -->\n  <g transform="${matrixAttr}">\n    ${quoteSvg}\n    ${textSvg}\n  </g>\n  ${pageBadge}\n</svg>`
       )}`;
     });
+  }
+
+  /**
+   * Render halaman 1 template → PNG untuk thumbnail katalog.
+   *
+   * Tidak menyentuh database: `template` bisa berasal dari baris DB, hasil
+   * ukur `scripts/measure-templates.mjs`, atau fixture test. Contoh isi kartu
+   * deterministik supaya thumbnail tidak berubah tiap kali dijalankan.
+   */
+  static renderTemplateThumbnail(
+    template: TemplateRecord,
+    options: TemplateThumbnailOptions = {}
+  ): Buffer {
+    const sample: FessLike = options.sample ?? {
+      content: 'Ada yang mau belajar bareng di perpustakaan sore ini?',
+      baseHandle: 'fess_kampus',
+      createdAt: '2026-10-28T07:00:00.000Z',
+      quotedFess:
+        options.withQuote === false
+          ? null
+          : {
+              handle: '@anonim',
+              content: 'Yang tadi bawa kopi dua gelas, makasih ya.',
+            },
+      base: { igAccount: 'fess_kampus' },
+    };
+
+    const [svg] = CanvasService.buildSvgTemplatePages(
+      sample,
+      template,
+      '',
+      options.frontendHost
+    );
+    return CanvasService.renderSvgToPng(svg);
   }
 
   /** Render SVG card → Buffer PNG memakai font bundled (identik lokal & Vercel). */
@@ -1581,8 +1626,8 @@ function quoteHandleLabel(fess: FessLike): string {
  * Mengikuti `FRONTEND_URL`, jadi kartu yang dirender di lokal/dev/produksi
  * menunjuk ke alamat aplikasi yang sedang dipakai.
  */
-function frontendHostLabel(): string {
-  const raw = String(ENV.FRONTEND_URL || '').trim();
+function frontendHostLabel(override?: string): string {
+  const raw = String(override || ENV.FRONTEND_URL || '').trim();
   if (!raw) return 'fessncurious.vercel.app';
   try {
     return new URL(raw).host || raw;

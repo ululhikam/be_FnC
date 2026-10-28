@@ -22,6 +22,9 @@
     "template:verify": "node scripts/verify-geometry.mjs --dir assets/templates",
     "template:import:dev": "node --env-file=.env.development scripts/import-templates.mjs",
     "template:import": "node --env-file=.env scripts/import-templates.mjs",
+    "template:thumbnails": "tsx scripts/template-thumbnails.ts",
+    "template:thumbnails:dev": "tsx scripts/template-thumbnails.ts --env dev",
+    "template:thumbnails:prod": "tsx scripts/template-thumbnails.ts --env prod",
     "test": "vitest run",
     "test:watch": "vitest"
   },

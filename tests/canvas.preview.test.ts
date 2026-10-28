@@ -20,12 +20,16 @@ vi.mock('../src/config/prisma.js', () => ({
           ),
       }),
     },
+    template: {
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
   },
 }));
 
 describe('POST /api/fesses/canvas/preview — pratinjau kartu composer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.template.findUnique).mockResolvedValue(null);
   });
 
   it('mengembalikan PNG data URI dari renderer yang sama dengan auto-post', async () => {
@@ -73,6 +77,100 @@ describe('POST /api/fesses/canvas/preview — pratinjau kartu composer', () => {
     expect(prisma.base.findUnique).toHaveBeenCalledWith({
       where: { handle: '@concern_fess' },
     });
+  });
+
+  it('menolak base yang tidak ditemukan', async () => {
+    vi.mocked(prisma.base.findUnique).mockResolvedValueOnce(null as any);
+
+    const res = await request(app).post('/api/fesses/canvas/preview').send({
+      base_handle: '@base_tidak_ada',
+      content: 'Pratinjau tanpa base harus ditolak.',
+      template: 'default',
+    });
+
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('NOT_FOUND');
+  });
+
+  it('menolak template milik base lain', async () => {
+    const key = 'uji-preview-milik-base-lain';
+    vi.mocked(prisma.template.findUnique).mockResolvedValueOnce({
+      id: 'tpl_other',
+      key,
+      status: 'active',
+      baseId: 'base_002',
+      renderer: 'generative',
+    } as any);
+
+    const res = await request(app).post('/api/fesses/canvas/preview').send({
+      base_handle: '@concern_fess',
+      content: 'Template eksklusif base lain tidak boleh dipratinjau.',
+      template: key,
+    });
+
+    expect(res.status).toBe(422);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+    expect(res.body.errors?.template).toContain('tidak tersedia untuk base ini');
+  });
+
+  it('menolak template draft milik base sendiri', async () => {
+    const key = 'uji-preview-template-draft';
+    vi.mocked(prisma.template.findUnique).mockResolvedValueOnce({
+      id: 'tpl_draft',
+      key,
+      status: 'draft',
+      baseId: 'base_001',
+      renderer: 'generative',
+    } as any);
+
+    const res = await request(app).post('/api/fesses/canvas/preview').send({
+      base_handle: '@concern_fess',
+      content: 'Template draft belum boleh dipakai.',
+      template: key,
+    });
+
+    expect(res.status).toBe(422);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('mengizinkan template aktif milik base sendiri', async () => {
+    const key = 'uji-preview-template-aktif';
+    vi.mocked(prisma.template.findUnique).mockResolvedValueOnce({
+      id: 'tpl_owned',
+      key,
+      status: 'active',
+      baseId: 'base_001',
+      renderer: 'generative',
+    } as any);
+
+    const res = await request(app).post('/api/fesses/canvas/preview').send({
+      base_handle: '@concern_fess',
+      content: 'Template aktif milik base ini boleh dipratinjau.',
+      template: key,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.images.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('mengizinkan template aktif dari katalog bersama', async () => {
+    const key = 'uji-preview-template-bersama';
+    vi.mocked(prisma.template.findUnique).mockResolvedValueOnce({
+      id: 'tpl_shared',
+      key,
+      status: 'active',
+      baseId: null,
+      renderer: 'generative',
+    } as any);
+
+    const res = await request(app).post('/api/fesses/canvas/preview').send({
+      base_handle: '@concern_fess',
+      content: 'Template katalog bersama boleh dipratinjau semua base.',
+      template: key,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.images.length).toBeGreaterThanOrEqual(1);
   });
 
   it('menolak konten kosong', async () => {

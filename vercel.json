@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "regions": ["syd1"],
+  "regions": ["bom1"],
   "builds": [
     {
       "src": "api/index.ts",

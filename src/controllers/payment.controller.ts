@@ -36,6 +36,7 @@ export class PaymentController {
         packageCode: String(req.body.package_code),
         method: String(req.body.payment_method) as PaymentMethodCode,
         requestKey,
+        couponCode: req.body.coupon_code ? String(req.body.coupon_code) : null,
       });
       return res.status(result.idempotent ? 200 : 201).json(result);
     } catch (error) {

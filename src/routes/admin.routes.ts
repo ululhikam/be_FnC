@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { AdminController } from '../controllers/admin.controller.js';
 import { BaseRevenueController } from '../controllers/base-revenue.controller.js';
+import { CouponController } from '../controllers/coupon.controller.js';
 import { PlatformAdminController } from '../controllers/platform-admin.controller.js';
 import { PaymentPackageController } from '../controllers/payment-package.controller.js';
 import { TemplateAdminController } from '../controllers/template-admin.controller.js';
@@ -32,6 +33,9 @@ import {
   AdminPaymentPackageCreateSchema,
   AdminPaymentPackageUpdateSchema,
   AdminPaymentPackageStatusSchema,
+  AdminCouponCreateSchema,
+  AdminCouponUpdateSchema,
+  AdminCouponStatusSchema,
   FessAnalyticsQuerySchema,
 } from '../validators/admin.validator.js';
 import {
@@ -420,6 +424,62 @@ router.post(
   }),
   validateBody(AdminPaymentPackageStatusSchema),
   PaymentPackageController.setStatus
+);
+
+// ---------------------------------------------------------------------------
+// Kupon promo top-up: mengubah uang yang ditagih, jadi setiap mutasi wajib
+// re-auth + alasan dan dicatat di audit.
+// ---------------------------------------------------------------------------
+router.get(
+  '/payments/coupons',
+  requireAuth,
+  requireRole('Super Admin'),
+  CouponController.list
+);
+
+router.post(
+  '/payments/coupons',
+  requireAuth,
+  requireRole('Super Admin'),
+  paymentRateLimit({
+    name: 'coupon-create',
+    limit: 20,
+    windowSeconds: 60,
+    message: 'Terlalu banyak perubahan kupon. Coba lagi beberapa saat.',
+    code: 'COUPON_RATE_LIMITED',
+  }),
+  validateBody(AdminCouponCreateSchema),
+  CouponController.create
+);
+
+router.patch(
+  '/payments/coupons/:code',
+  requireAuth,
+  requireRole('Super Admin'),
+  paymentRateLimit({
+    name: 'coupon-update',
+    limit: 20,
+    windowSeconds: 60,
+    message: 'Terlalu banyak perubahan kupon. Coba lagi beberapa saat.',
+    code: 'COUPON_RATE_LIMITED',
+  }),
+  validateBody(AdminCouponUpdateSchema),
+  CouponController.update
+);
+
+router.post(
+  '/payments/coupons/:code/status',
+  requireAuth,
+  requireRole('Super Admin'),
+  paymentRateLimit({
+    name: 'coupon-status',
+    limit: 20,
+    windowSeconds: 60,
+    message: 'Terlalu banyak perubahan status kupon. Coba lagi beberapa saat.',
+    code: 'COUPON_RATE_LIMITED',
+  }),
+  validateBody(AdminCouponStatusSchema),
+  CouponController.setStatus
 );
 
 router.get(

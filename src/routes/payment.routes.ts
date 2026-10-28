@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { CouponController } from '../controllers/coupon.controller.js';
 import { PaymentController } from '../controllers/payment.controller.js';
 import { requireAuth, requireVerifiedEmail } from '../middlewares/auth.middleware.js';
 import { paymentRateLimit } from '../services/rate-limit.service.js';
@@ -6,11 +7,23 @@ import { validateBody, validateQuery } from '../middlewares/validate.middleware.
 import {
   CreatePaymentOrderSchema,
   ListPaymentOrdersQuerySchema,
+  PreviewCouponSchema,
 } from '../validators/payment.validator.js';
 
 const router = Router();
 
 router.get('/packages', PaymentController.getPackages);
+
+// Pratinjau kupon: menghitung potongan tanpa mengunci kuota. Dibatasi ketat
+// supaya kode kupon tidak bisa dienumerasi dengan cepat.
+router.post(
+  '/coupons/preview',
+  requireAuth,
+  requireVerifiedEmail,
+  paymentRateLimit({ name: 'coupon-preview', limit: 20, windowSeconds: 60 }),
+  validateBody(PreviewCouponSchema),
+  CouponController.preview
+);
 
 router.post(
   '/orders',

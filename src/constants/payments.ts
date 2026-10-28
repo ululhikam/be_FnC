@@ -141,3 +141,20 @@ export function sanitizePackageCode(code: string | null | undefined): string {
     .toLowerCase();
   return PACKAGE_CODE_PATTERN.test(clean) ? clean : '';
 }
+
+/** Nominal terendah yang masih bisa ditagih Midtrans setelah potongan kupon. */
+export const MIN_CHARGEABLE_IDR = 1_000;
+
+/** Batas kode kupon: huruf besar, angka, garis bawah, dan strip. */
+export const COUPON_CODE_PATTERN = /^[A-Z0-9_-]{3,32}$/;
+
+/**
+ * Normalisasi kode kupon. Kupon diketik admin, jadi input huruf kecil dari
+ * pengguna tetap diterima: kode disimpan dan dicari dalam huruf besar.
+ */
+export function normalizeCouponCode(code: string | null | undefined): string {
+  const clean = String(code ?? '')
+    .trim()
+    .toUpperCase();
+  return COUPON_CODE_PATTERN.test(clean) ? clean : '';
+}

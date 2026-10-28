@@ -234,8 +234,11 @@ buildPages(fess, templateKey, aspectKey)
 Langkah `buildSvgTemplatePages`:
 1. `slots` dibaca dari baris DB (hasil ukur `scripts/measure-templates.mjs`).
 2. Ganti isi `#editable-user` / `#editable-meta` / `#editable-time` di tempat (transform
-   grup dipertahankan). `#editable-footer` diganti `Instagram Feed · @handle` — bukan
-   `dikirim lewat myfess.id` — dan dijepit `fitTextToWidth` sesuai `text-anchor` + lebar kartu.
+   grup dipertahankan). `#editable-footer` diganti **host frontend** dari `FRONTEND_URL`
+   (mis. `fessncurious.vercel.app`, `fessncurious-dev.vercel.app`, atau `localhost:5173`
+   saat lokal) — bukan `dikirim lewat myfess.id` — dan dijepit `fitTextToWidth` sesuai
+   `text-anchor` + lebar kartu. Handle base tidak diulang di footer karena sudah tampil
+   di slot `@user`.
 3. Paginasi memakai `layoutText` + `paginate` yang sudah ada. Kapasitas baris diturunkan
    dari `slots.message.bottom` dan (bila ada kutipan) `slots.quote.y − QUOTE_GAP`.
 4. Grup `#editable-message` **dibuang**, lalu teks hasil layout ditempel di akhir dokumen
@@ -570,7 +573,7 @@ Yang **tetap** di frontend: `videoNormalizer.js` (ffmpeg.wasm) dan `MediaUploade
 - Renderer di `CanvasService` (lihat §6), frame kutipan di `buildSvgQuoteFrame` (§6.2).
 - `tests/template-renderer.test.ts` — 10 test memakai SVG asli + `docs/template-geometry.json`:
   1 baris → 1 halaman, 30 baris → 5 halaman, 200 baris → 10 halaman + `…`, kutipan ber-frame,
-  footer/branding, handle+tanggal, dan seluruh 12 template.
+  footer/branding (host frontend), handle+tanggal, dan seluruh 12 template.
 - Render visual 12 template + halaman 2 diverifikasi manual sebelum artefak dibersihkan
   (`npm run template:verify` bisa membuatnya lagi).
 

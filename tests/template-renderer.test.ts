@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CanvasService } from '../src/services/canvas.service.js';
 import { prisma } from '../src/config/prisma.js';
+import { ENV } from '../src/config/env.js';
 
 vi.mock('../src/config/prisma.js', () => ({
   prisma: {
@@ -12,6 +13,7 @@ vi.mock('../src/config/prisma.js', () => ({
 }));
 
 const BACKEND_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const FRONTEND_HOST = new URL(ENV.FRONTEND_URL).host;
 const GEOMETRY: any[] = Object.values(
   JSON.parse(fs.readFileSync(path.join(BACKEND_ROOT, 'docs/template-geometry.json'), 'utf8'))
 );
@@ -157,10 +159,14 @@ describe('Renderer template SVG (database)', () => {
     expect(withQuote.length).toBeGreaterThan(withoutQuote.length);
   });
 
-  it('footer desain diganti branding base, bukan "dikirim lewat myfess.id"', async () => {
+  it('footer kartu hanya berisi host frontend, bukan "Instagram Feed" atau handle base', async () => {
     const pages = await render(realTemplate(0), 'Halo kampus.');
-    expect(plain(pages[0])).toContain('Instagram Feed \u00b7 @fess_kampus');
-    expect(pages[0]).not.toContain('myfess.id');
+    const text = plain(pages[0]);
+    expect(text).toContain(FRONTEND_HOST);
+    expect(text).not.toContain('Instagram Feed');
+    expect(text).not.toContain('myfess.id');
+    // Handle base cukup sekali di baris `@user`.
+    expect(text.match(/@fess_kampus/g)).toHaveLength(1);
   });
 
   it('handle & waktu memakai data fess, bukan teks contoh desain', async () => {
@@ -180,7 +186,8 @@ describe('Renderer template SVG (database)', () => {
       const text = plain(svg);
       expect(svg, template.key).toContain('<svg');
       expect(text, template.key).toContain('Curhat singkat untuk uji render.');
-      expect(text, template.key).toContain('Instagram Feed \u00b7 @fess_kampus');
+      expect(text, template.key).toContain(FRONTEND_HOST);
+      expect(text, template.key).not.toContain('Instagram Feed');
       expect(svg, template.key).not.toContain('myfess.id');
       expect(svg, template.key).not.toContain('@ustfess');
       expect(svg, template.key).not.toContain('id="editable-message"');

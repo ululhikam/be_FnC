@@ -891,11 +891,12 @@ export class CanvasService {
           'editable-time',
           formatFessStamp(fess)
         ),
-        // Desain asli menulis "dikirim lewat myfess.id". Footer kartu harus
-        // memakai identitas base yang sebenarnya, sama seperti renderer lama.
+        // Desain asli menulis "dikirim lewat myfess.id". Footer kartu hanya
+        // menampilkan host frontend (dev/produksi/lokal mengikuti FRONTEND_URL);
+        // handle base sudah tampil di baris `@user`, jadi tidak diulang di sini.
         'editable-footer',
         fitTextToWidth(
-          `Instagram Feed \u00b7 ${quoteHandleLabel(fess)}`,
+          frontendHostLabel(),
           getMeasureFont('sans', 700),
           slots.footer?.fontSize || 22,
           footerMaxWidth(slots, template.width)
@@ -1573,6 +1574,21 @@ function replaceMetaTexts(svg: string, handle: string | null, stamp: string | nu
 function quoteHandleLabel(fess: FessLike): string {
   const raw = fess.base?.igAccount || fess.baseHandle || '@fess';
   return raw.startsWith('@') ? raw : `@${raw}`;
+}
+
+/**
+ * Host frontend tanpa protokol untuk footer kartu, mis. `fessncurious.vercel.app`.
+ * Mengikuti `FRONTEND_URL`, jadi kartu yang dirender di lokal/dev/produksi
+ * menunjuk ke alamat aplikasi yang sedang dipakai.
+ */
+function frontendHostLabel(): string {
+  const raw = String(ENV.FRONTEND_URL || '').trim();
+  if (!raw) return 'fessncurious.vercel.app';
+  try {
+    return new URL(raw).host || raw;
+  } catch {
+    return raw.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+  }
 }
 
 /**

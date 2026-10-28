@@ -44,6 +44,18 @@ export class FessController {
       const handle = normalizeHandle(String(base_handle || ''));
       const base = await prisma.base.findUnique({ where: { handle } });
 
+      if (!base) {
+        const err: any = new Error(`Base ${base_handle} tidak ditemukan`);
+        err.status = 404;
+        err.code = 'NOT_FOUND';
+        throw err;
+      }
+
+      // Pratinjau wajib memakai resolver yang sama dengan pembuatan fess:
+      // template draft/arsip atau milik base lain tidak boleh dirender, meski
+      // endpoint ini hanya mengembalikan gambar dan tidak menyimpan data.
+      const templateKey = await FessService.resolveTemplateKey(template, base.id);
+
       // Canvas memuat resvg/sharp/opentype (native & berat). Import dinamis
       // memastikan endpoint baca biasa tidak menanggung biaya cold start-nya.
       const { CanvasService } = await import('../services/canvas.service.js');
@@ -51,21 +63,19 @@ export class FessController {
         {
           content,
           baseHandle: handle,
-          template,
+          template: templateKey,
           tag: tag || null,
           topic: topic || null,
           quotedFess: quoted_fess || null,
-          base: base
-            ? {
-                name: base.name,
-                initial: base.initial,
-                igAccount: base.igAccount,
-                avatar: base.avatar,
-                color: base.color,
-              }
-            : null,
+          base: {
+            name: base.name,
+            initial: base.initial,
+            igAccount: base.igAccount,
+            avatar: base.avatar,
+            color: base.color,
+          },
         },
-        template
+        templateKey
       );
 
       return successResponse(res, { images, page_count: images.length }, 200);

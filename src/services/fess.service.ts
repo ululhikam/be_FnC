@@ -223,17 +223,19 @@ export class FessService {
    * konstanta `TEMPLATES` (template generatif lama). Key yang tidak ada di
    * keduanya ditolak 422 supaya tidak ada fess dengan template tak bisa render.
    */
-  static async resolveTemplateKey(raw?: string | null): Promise<string> {
+  static async resolveTemplateKey(raw?: string | null, baseId?: string): Promise<string> {
     const key = String(raw || '').trim() || 'default';
     if (TEMPLATES.some((t) => t.key === key)) return key;
 
-    const record = await TemplateService.getActive(key);
+    const record = baseId
+      ? await TemplateService.getActiveForBase(key, baseId)
+      : await TemplateService.getActive(key);
     if (record) return record.key;
 
     const err: any = new Error(`Template ${key} tidak tersedia`);
     err.status = 422;
     err.code = 'VALIDATION_ERROR';
-    err.errors = { template: `Template ${key} tidak tersedia` };
+    err.errors = { template: `Template ${key} tidak tersedia untuk base ini` };
     throw err;
   }
 
@@ -301,7 +303,7 @@ export class FessService {
 
     // Key template divalidasi ke DB sebelum transaksi: fess tersimpan hanya
     // dengan template yang benar-benar bisa dirender.
-    const templateKey = await FessService.resolveTemplateKey(payload.template);
+    const templateKey = await FessService.resolveTemplateKey(payload.template, base.id);
 
     // Paid bases require a signed-in account with a verified email. During the
     // trial anonymous posting stays available; after the trial it does not.

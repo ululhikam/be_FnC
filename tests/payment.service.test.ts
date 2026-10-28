@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ENV } from '../src/config/env.js';
 import { prisma } from '../src/config/prisma.js';
+import { invalidateCache } from '../src/utils/cache.util.js';
 import { CtfWalletService } from '../src/services/ctf-wallet.service.js';
 import { MidtransService } from '../src/services/midtrans.service.js';
 import { PaymentService } from '../src/services/payment.service.js';
@@ -20,6 +21,23 @@ vi.mock('../src/config/prisma.js', () => {
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    paymentPackage: {
+      findUnique: vi.fn(),
+      findMany: vi.fn(),
+    },
+    coupon: {
+      findUnique: vi.fn(),
+      updateMany: vi.fn(),
+      update: vi.fn(),
+      findMany: vi.fn(),
+    },
+    couponRedemption: {
+      count: vi.fn(),
+      create: vi.fn(),
+      updateMany: vi.fn(),
+      findUnique: vi.fn(),
+      groupBy: vi.fn(),
+    },
     adminAuditLog: {
       create: vi.fn(),
     },
@@ -37,6 +55,8 @@ const order = {
   packageName: 'Coba Dulu',
   amountIdr: 5000,
   ctfAmount: 25,
+  couponCode: null,
+  discountIdr: 0,
   currency: 'IDR',
   status: 'PENDING',
   paymentMethod: 'qris',
@@ -82,12 +102,51 @@ const originalEnabled = ENV.PAYMENTS_ENABLED;
 const originalServerKey = ENV.MIDTRANS_SERVER_KEY;
 const originalProduction = ENV.MIDTRANS_IS_PRODUCTION;
 
+/** Baris tabel PaymentPackage yang dipakai oleh resolve paket di createOrder. */
+const packageRow = {
+  code: 'coba_dulu',
+  name: 'Coba Dulu',
+  amountIdr: 5000,
+  ctfAmount: 25,
+  description: 'Paket kecil untuk mencoba top-up dan publish.',
+  sortOrder: 10,
+  isActive: true,
+  updatedById: null,
+  updatedAt: new Date('2026-10-24T00:00:00.000Z'),
+};
+
+/** Kupon nominal Rp2.000 untuk paket Rp5.000. */
+const couponRow = {
+  code: 'HEMAT10',
+  label: 'Potongan Rp2.000',
+  discountType: 'FIXED',
+  discountValue: 2000,
+  maxDiscountIdr: null,
+  minAmountIdr: 0,
+  startsAt: null,
+  endsAt: null,
+  maxRedemptions: 100,
+  redemptionCount: 0,
+  maxPerUser: 1,
+  isActive: true,
+  createdById: null,
+  updatedById: null,
+  createdAt: new Date('2026-10-24T00:00:00.000Z'),
+  updatedAt: new Date('2026-10-24T00:00:00.000Z'),
+};
+
 describe('PaymentService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    invalidateCache('payment-packages:');
     ENV.PAYMENTS_ENABLED = true;
     ENV.MIDTRANS_SERVER_KEY = 'SB-Mid-server-test';
     ENV.MIDTRANS_IS_PRODUCTION = false;
+    vi.mocked(prisma.paymentPackage.findUnique).mockImplementation(
+      async (args: any) =>
+        (args?.where?.code === packageRow.code ? { ...packageRow } : null) as any
+    );
+    vi.mocked(prisma.paymentPackage.findMany).mockResolvedValue([{ ...packageRow }] as any);
     vi.mocked(prisma.paymentOrder.findUnique).mockResolvedValue(null);
     vi.mocked(prisma.paymentOrder.findMany).mockResolvedValue([]);
     vi.mocked(prisma.paymentOrder.count).mockResolvedValue(0);
@@ -96,6 +155,12 @@ describe('PaymentService', () => {
     vi.mocked(prisma.paymentEvent.update).mockResolvedValue(event as any);
     vi.mocked(prisma.paymentEvent.findUnique).mockResolvedValue(null);
     vi.mocked(prisma.adminAuditLog.create).mockResolvedValue({} as any);
+    vi.mocked(prisma.coupon.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.coupon.updateMany).mockResolvedValue({ count: 1 } as any);
+    vi.mocked(prisma.couponRedemption.count).mockResolvedValue(0);
+    vi.mocked(prisma.couponRedemption.create).mockResolvedValue({} as any);
+    vi.mocked(prisma.couponRedemption.updateMany).mockResolvedValue({ count: 1 } as any);
+    vi.mocked(prisma.couponRedemption.findUnique).mockResolvedValue(null);
     vi.spyOn(MidtransService, 'verifySignature').mockReturnValue(true);
     vi.spyOn(MidtransService, 'charge').mockResolvedValue({
       transactionId: 'tx-1',
@@ -126,12 +191,12 @@ describe('PaymentService', () => {
     ENV.MIDTRANS_IS_PRODUCTION = originalProduction;
   });
 
-  it('exposes packages and the payment kill switch', () => {
+  it('exposes packages and the payment kill switch', async () => {
     ENV.PAYMENTS_ENABLED = false;
-    const packages = PaymentService.getPackages();
+    const packages = await PaymentService.getPackages();
     expect(packages.enabled).toBe(false);
     expect(packages.ctf_per_paid_fess).toBe(1);
-    expect(packages.packages.map((pkg) => pkg.code)).toContain('bundling');
+    expect(packages.packages.map((pkg) => pkg.code)).toContain('coba_dulu');
     expect(packages.methods.map((method) => method.code)).toContain('qris');
   });
 
@@ -166,6 +231,163 @@ describe('PaymentService', () => {
     expect(result.order.status).toBe('pending');
     expect(MidtransService.charge).toHaveBeenCalledOnce();
     expect(prisma.paymentOrder.create).toHaveBeenCalledOnce();
+  });
+
+  it('applies a coupon discount and reserves the quota with the order', async () => {
+    vi.mocked(prisma.coupon.findUnique).mockResolvedValue(couponRow as any);
+    vi.mocked(prisma.paymentOrder.create).mockResolvedValue({
+      ...order,
+      amountIdr: 3000,
+      discountIdr: 2000,
+      couponCode: 'HEMAT10',
+    } as any);
+    vi.mocked(prisma.paymentOrder.update).mockResolvedValue({
+      ...order,
+      amountIdr: 3000,
+      discountIdr: 2000,
+      couponCode: 'HEMAT10',
+    } as any);
+
+    const result = await PaymentService.createOrder(
+      { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
+      {
+        packageCode: 'coba_dulu',
+        method: 'qris',
+        requestKey: 'req-12345678',
+        couponCode: 'hemat10',
+      }
+    );
+
+    expect(prisma.paymentOrder.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        amountIdr: 3000,
+        discountIdr: 2000,
+        couponCode: 'HEMAT10',
+        ctfAmount: 25,
+      }),
+    });
+    expect(prisma.coupon.updateMany).toHaveBeenCalledWith({
+      where: { code: 'HEMAT10', isActive: true, redemptionCount: { lt: 100 } },
+      data: { redemptionCount: { increment: 1 } },
+    });
+    expect(prisma.couponRedemption.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        couponCode: 'HEMAT10',
+        status: 'RESERVED',
+        amountIdr: 5000,
+        discountIdr: 2000,
+      }),
+    });
+    expect(MidtransService.charge).toHaveBeenCalledWith(
+      expect.objectContaining({ amountIdr: 3000 })
+    );
+    expect(result.order).toMatchObject({
+      amount_idr: 3000,
+      discount_idr: 2000,
+      coupon_code: 'HEMAT10',
+      original_amount_idr: 5000,
+    });
+  });
+
+  it('refuses an order when the coupon quota is exhausted', async () => {
+    vi.mocked(prisma.coupon.findUnique).mockResolvedValue({
+      ...couponRow,
+      maxRedemptions: 5,
+      redemptionCount: 5,
+    } as any);
+
+    await expect(
+      PaymentService.createOrder(
+        { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
+        {
+          packageCode: 'coba_dulu',
+          method: 'qris',
+          requestKey: 'req-12345678',
+          couponCode: 'HEMAT10',
+        }
+      )
+    ).rejects.toMatchObject({ code: 'COUPON_QUOTA_EXHAUSTED', status: 409 });
+
+    expect(prisma.paymentOrder.create).not.toHaveBeenCalled();
+    expect(prisma.couponRedemption.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects replaying an Idempotency-Key with a different coupon', async () => {
+    vi.mocked(prisma.paymentOrder.findUnique).mockResolvedValue({
+      ...order,
+      couponCode: 'HEMAT10',
+      discountIdr: 2000,
+      amountIdr: 3000,
+    } as any);
+
+    await expect(
+      PaymentService.createOrder(
+        { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
+        {
+          packageCode: 'coba_dulu',
+          method: 'qris',
+          requestKey: 'req-12345678',
+          couponCode: 'LAINNYA',
+        }
+      )
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT', status: 409 });
+  });
+
+  it('confirms the coupon reservation once the order is paid', async () => {
+    vi.mocked(prisma.paymentOrder.findUnique).mockResolvedValue({
+      ...order,
+      amountIdr: 3000,
+      discountIdr: 2000,
+      couponCode: 'HEMAT10',
+    } as any);
+
+    await PaymentService.handleNotification({
+      order_id: order.orderId,
+      transaction_id: 'tx-1',
+      transaction_status: 'settlement',
+      status_code: '200',
+      gross_amount: '3000.00',
+      currency: 'IDR',
+      fraud_status: 'accept',
+      signature_key: 'valid-signature',
+    });
+
+    expect(prisma.couponRedemption.updateMany).toHaveBeenCalledWith({
+      where: { orderId: order.orderId, status: 'RESERVED' },
+      data: expect.objectContaining({ status: 'CONFIRMED' }),
+    });
+  });
+
+  it('returns the coupon quota when the order fails', async () => {
+    vi.mocked(prisma.paymentOrder.findUnique).mockResolvedValue({
+      ...order,
+      amountIdr: 3000,
+      discountIdr: 2000,
+      couponCode: 'HEMAT10',
+    } as any);
+    vi.mocked(prisma.couponRedemption.findUnique).mockResolvedValue({
+      couponCode: 'HEMAT10',
+      status: 'RESERVED',
+    } as any);
+
+    await PaymentService.handleNotification({
+      order_id: order.orderId,
+      transaction_id: 'tx-1',
+      transaction_status: 'cancel',
+      status_code: '200',
+      gross_amount: '3000.00',
+      currency: 'IDR',
+      signature_key: 'valid-signature',
+    });
+
+    expect(prisma.couponRedemption.updateMany).toHaveBeenCalledWith({
+      where: { orderId: order.orderId, status: 'RESERVED' },
+      data: expect.objectContaining({ status: 'RELEASED' }),
+    });
+    expect(prisma.coupon.updateMany).toHaveBeenCalledWith({
+      where: { code: 'HEMAT10', redemptionCount: { gt: 0 } },
+      data: { redemptionCount: { decrement: 1 } },
+    });
   });
 
   it('rejects replaying the same Idempotency-Key for a different package', async () => {

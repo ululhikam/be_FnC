@@ -1,16 +1,25 @@
 # Rencana: Template Card SVG Berbasis Database (Single Source of Truth)
 
-Status: **Fase 0–3 selesai (backend), Fase 4 (frontend) berikutnya.**
+Status: **Fase 0–4 selesai dan sudah live di produksi. Kelola template berikutnya lewat
+konsol Super Admin, bukan script.**
 Target: mengganti 38 template hardcoded dengan 12 desain SVG di `template-card/`,
 disimpan di database, dengan satu sumber kebenaran untuk backend & frontend.
+
+> **Kelola template sekarang lewat UI.**
+> Import SVG, thumbnail otomatis, versi, arsip, dan kepemilikan per base dilakukan di
+> `/super-admin/templates`. Dokumentasi lengkap: [`template-admin-console.md`](./template-admin-console.md).
+> Dokumen ini tetap menjadi acuan renderer, geometri, dan normalisasi SVG.
 
 Implementasi saat ini:
 
 - 12 SVG ada di `backend/assets/templates/` (sudah dinormalisasi & diukur saat import).
-- Tabel `Template` + migration `20261028000000_template_model` sudah diterapkan di DB dev.
-- `scripts/import-templates.mjs` mengisi 12 baris (idempotent, `checksum` stabil).
+- Tabel `Template` + migration `20261028000000_template_model` sudah diterapkan di DB dev & produksi.
+- `scripts/import-templates.mjs` mengisi 12 baris (idempotent, `checksum` stabil). Script ini
+  hanya untuk bootstrap; import berikutnya lewat konsol admin.
+- `Template.baseId` (migration `20261028010000_template_base_ownership`) menandai template
+  eksklusif milik satu base; `null` = katalog bersama.
 - Renderer ada di `CanvasService.buildPages()` / `buildSvgTemplatePages()`.
-- `GET /api/templates` & `GET /api/templates/:key` sudah aktif.
+- `GET /api/templates` & `GET /api/templates/:key` sudah aktif, dengan scope `?base_handle=`.
 - Fallback ke renderer lama tetap hidup untuk 38 template lama & key tak dikenal.
 
 ---

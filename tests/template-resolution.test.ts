@@ -5,11 +5,14 @@ import { prisma } from '../src/config/prisma.js';
 
 vi.mock('../src/config/prisma.js', () => ({
   prisma: {
-    template: { findUnique: vi.fn() },
+    template: {
+      findUnique: vi.fn(),
+      findMany: vi.fn(),
+    },
   },
 }));
 
-function row(key: string) {
+function row(key: string, baseId: string | null = null) {
   return {
     key,
     label: key,
@@ -26,6 +29,7 @@ function row(key: string) {
     version: 1,
     status: 'active',
     sortOrder: 1,
+    baseId,
   };
 }
 
@@ -66,5 +70,91 @@ describe('FessService.resolveTemplateKey', () => {
       status: 422,
       code: 'VALIDATION_ERROR',
     });
+  });
+
+  it('menerima template milik base tujuan', async () => {
+    vi.mocked(prisma.template.findUnique).mockResolvedValue(
+      row('13-papan-kampus', 'base_a') as any
+    );
+    await expect(
+      FessService.resolveTemplateKey('13-papan-kampus', 'base_a')
+    ).resolves.toBe('13-papan-kampus');
+  });
+
+  it('menolak template milik base lain', async () => {
+    vi.mocked(prisma.template.findUnique).mockResolvedValue(
+      row('13-papan-kampus', 'base_b') as any
+    );
+    await expect(
+      FessService.resolveTemplateKey('13-papan-kampus', 'base_a')
+    ).rejects.toMatchObject({
+      status: 422,
+      code: 'VALIDATION_ERROR',
+      errors: { template: expect.stringContaining('tidak tersedia untuk base ini') },
+    });
+  });
+
+  it('template bersama tetap bisa dipakai base mana pun', async () => {
+    vi.mocked(prisma.template.findUnique).mockResolvedValue(row('13-papan-kampus') as any);
+    await expect(
+      FessService.resolveTemplateKey('13-papan-kampus', 'base_a')
+    ).resolves.toBe('13-papan-kampus');
+  });
+});
+
+describe('TemplateService scoping per base', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    TemplateService.invalidate();
+  });
+
+  it('getActiveForBase menolak template milik base lain', async () => {
+    vi.mocked(prisma.template.findUnique).mockResolvedValue(
+      row('13-papan-kampus', 'base_b') as any
+    );
+    await expect(
+      TemplateService.getActiveForBase('13-papan-kampus', 'base_a')
+    ).resolves.toBeNull();
+  });
+
+  it('listActive hanya mengambil katalog bersama', async () => {
+    vi.mocked(prisma.template.findMany).mockResolvedValue([row('01-bersama')] as any);
+
+    const rows = await TemplateService.listActive();
+
+    expect(prisma.template.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { status: 'active', baseId: null } })
+    );
+    expect(rows.map((item) => item.key)).toEqual(['01-bersama']);
+  });
+
+  it('listActiveForBase mengambil milik base + bersama dan menaruh milik base di depan', async () => {
+    vi.mocked(prisma.template.findMany).mockResolvedValue([
+      row('01-bersama'),
+      row('13-papan-kampus', 'base_a'),
+    ] as any);
+
+    const rows = await TemplateService.listActiveForBase('base_a');
+
+    expect(prisma.template.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          status: 'active',
+          OR: [{ baseId: 'base_a' }, { baseId: null }],
+        },
+      })
+    );
+    expect(rows.map((item) => item.key)).toEqual(['13-papan-kampus', '01-bersama']);
+  });
+
+  it('listActiveForBase tanpa base kembali ke katalog bersama', async () => {
+    vi.mocked(prisma.template.findMany).mockResolvedValue([row('01-bersama')] as any);
+
+    const rows = await TemplateService.listActiveForBase('');
+
+    expect(prisma.template.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { status: 'active', baseId: null } })
+    );
+    expect(rows).toHaveLength(1);
   });
 });

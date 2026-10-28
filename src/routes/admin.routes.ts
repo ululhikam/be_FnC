@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import { AdminController } from '../controllers/admin.controller.js';
 import { BaseRevenueController } from '../controllers/base-revenue.controller.js';
+import { CouponController } from '../controllers/coupon.controller.js';
 import { PlatformAdminController } from '../controllers/platform-admin.controller.js';
+import { PaymentPackageController } from '../controllers/payment-package.controller.js';
+import { TemplateAdminController } from '../controllers/template-admin.controller.js';
 import {
   requireAuth,
   requireRole,
@@ -27,8 +30,19 @@ import {
   AdminUnbanUserSchema,
   AdminPaymentOrdersQuerySchema,
   AdminPaymentEventsQuerySchema,
+  AdminPaymentPackageCreateSchema,
+  AdminPaymentPackageUpdateSchema,
+  AdminPaymentPackageStatusSchema,
+  AdminCouponCreateSchema,
+  AdminCouponUpdateSchema,
+  AdminCouponStatusSchema,
   FessAnalyticsQuerySchema,
 } from '../validators/admin.validator.js';
+import {
+  CreateTemplateSchema,
+  ReplaceTemplateSvgSchema,
+  UpdateTemplateSchema,
+} from '../validators/template-admin.validator.js';
 
 const router = Router();
 
@@ -205,6 +219,74 @@ router.post(
 // ---------------------------------------------------------------------------
 // Super Admin platform console (read models + guarded account actions)
 // ---------------------------------------------------------------------------
+
+// Template kartu: import SVG, thumbnail otomatis, metadata & pemilik base.
+router.get(
+  '/templates',
+  requireAuth,
+  requireRole('Super Admin'),
+  TemplateAdminController.list
+);
+
+router.post(
+  '/templates',
+  requireAuth,
+  requireRole('Super Admin'),
+  paymentRateLimit({
+    name: 'template-admin-create',
+    limit: 20,
+    windowSeconds: 60,
+    message: 'Terlalu banyak import template. Coba lagi beberapa saat.',
+    code: 'TEMPLATE_RATE_LIMITED',
+  }),
+  validateBody(CreateTemplateSchema),
+  TemplateAdminController.create
+);
+
+router.patch(
+  '/templates/:key',
+  requireAuth,
+  requireRole('Super Admin'),
+  validateBody(UpdateTemplateSchema),
+  TemplateAdminController.update
+);
+
+router.put(
+  '/templates/:key/svg',
+  requireAuth,
+  requireRole('Super Admin'),
+  paymentRateLimit({
+    name: 'template-admin-replace',
+    limit: 20,
+    windowSeconds: 60,
+    message: 'Terlalu banyak penggantian SVG. Coba lagi beberapa saat.',
+    code: 'TEMPLATE_RATE_LIMITED',
+  }),
+  validateBody(ReplaceTemplateSvgSchema),
+  TemplateAdminController.replaceSvg
+);
+
+router.post(
+  '/templates/:key/thumbnail',
+  requireAuth,
+  requireRole('Super Admin'),
+  paymentRateLimit({
+    name: 'template-admin-thumbnail',
+    limit: 20,
+    windowSeconds: 60,
+    message: 'Terlalu banyak render thumbnail. Coba lagi beberapa saat.',
+    code: 'TEMPLATE_RATE_LIMITED',
+  }),
+  TemplateAdminController.regenerateThumbnail
+);
+
+router.delete(
+  '/templates/:key',
+  requireAuth,
+  requireRole('Super Admin'),
+  TemplateAdminController.archive
+);
+
 router.get(
   '/ops/summary',
   requireAuth,
@@ -286,6 +368,118 @@ router.get(
   requireRole('Super Admin'),
   validateQuery(AdminPaymentEventsQuerySchema),
   PlatformAdminController.getPaymentEvents
+);
+
+// ---------------------------------------------------------------------------
+// Paket top-up CTF: satu-satunya bagian pembayaran yang bisa ditulis admin.
+// Nominal & CTF per paket aman diubah karena PaymentOrder menyimpan snapshot.
+// ---------------------------------------------------------------------------
+router.get(
+  '/payments/packages',
+  requireAuth,
+  requireRole('Super Admin'),
+  PaymentPackageController.list
+);
+
+router.post(
+  '/payments/packages',
+  requireAuth,
+  requireRole('Super Admin'),
+  paymentRateLimit({
+    name: 'payment-package-create',
+    limit: 20,
+    windowSeconds: 60,
+    message: 'Terlalu banyak perubahan paket top-up. Coba lagi beberapa saat.',
+    code: 'PAYMENT_PACKAGE_RATE_LIMITED',
+  }),
+  validateBody(AdminPaymentPackageCreateSchema),
+  PaymentPackageController.create
+);
+
+router.patch(
+  '/payments/packages/:code',
+  requireAuth,
+  requireRole('Super Admin'),
+  paymentRateLimit({
+    name: 'payment-package-update',
+    limit: 20,
+    windowSeconds: 60,
+    message: 'Terlalu banyak perubahan paket top-up. Coba lagi beberapa saat.',
+    code: 'PAYMENT_PACKAGE_RATE_LIMITED',
+  }),
+  validateBody(AdminPaymentPackageUpdateSchema),
+  PaymentPackageController.update
+);
+
+router.post(
+  '/payments/packages/:code/status',
+  requireAuth,
+  requireRole('Super Admin'),
+  paymentRateLimit({
+    name: 'payment-package-status',
+    limit: 20,
+    windowSeconds: 60,
+    message: 'Terlalu banyak perubahan status paket. Coba lagi beberapa saat.',
+    code: 'PAYMENT_PACKAGE_RATE_LIMITED',
+  }),
+  validateBody(AdminPaymentPackageStatusSchema),
+  PaymentPackageController.setStatus
+);
+
+// ---------------------------------------------------------------------------
+// Kupon promo top-up: mengubah uang yang ditagih, jadi setiap mutasi wajib
+// re-auth + alasan dan dicatat di audit.
+// ---------------------------------------------------------------------------
+router.get(
+  '/payments/coupons',
+  requireAuth,
+  requireRole('Super Admin'),
+  CouponController.list
+);
+
+router.post(
+  '/payments/coupons',
+  requireAuth,
+  requireRole('Super Admin'),
+  paymentRateLimit({
+    name: 'coupon-create',
+    limit: 20,
+    windowSeconds: 60,
+    message: 'Terlalu banyak perubahan kupon. Coba lagi beberapa saat.',
+    code: 'COUPON_RATE_LIMITED',
+  }),
+  validateBody(AdminCouponCreateSchema),
+  CouponController.create
+);
+
+router.patch(
+  '/payments/coupons/:code',
+  requireAuth,
+  requireRole('Super Admin'),
+  paymentRateLimit({
+    name: 'coupon-update',
+    limit: 20,
+    windowSeconds: 60,
+    message: 'Terlalu banyak perubahan kupon. Coba lagi beberapa saat.',
+    code: 'COUPON_RATE_LIMITED',
+  }),
+  validateBody(AdminCouponUpdateSchema),
+  CouponController.update
+);
+
+router.post(
+  '/payments/coupons/:code/status',
+  requireAuth,
+  requireRole('Super Admin'),
+  paymentRateLimit({
+    name: 'coupon-status',
+    limit: 20,
+    windowSeconds: 60,
+    message: 'Terlalu banyak perubahan status kupon. Coba lagi beberapa saat.',
+    code: 'COUPON_RATE_LIMITED',
+  }),
+  validateBody(AdminCouponStatusSchema),
+  CouponController.setStatus
 );
 
 router.get(

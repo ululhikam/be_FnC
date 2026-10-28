@@ -130,3 +130,31 @@ export const PAYMENT_PACKAGES: PaymentPackage[] = [
 export function findPaymentPackage(code: string): PaymentPackage | undefined {
   return PAYMENT_PACKAGES.find((pkg) => pkg.code === code);
 }
+
+/** Batas kode paket: huruf kecil, angka, garis bawah. Kode tidak bisa diubah. */
+export const PACKAGE_CODE_PATTERN = /^[a-z0-9_]{3,32}$/;
+
+/** Normalisasi kode paket dari input admin; string kosong bila tidak valid. */
+export function sanitizePackageCode(code: string | null | undefined): string {
+  const clean = String(code ?? '')
+    .trim()
+    .toLowerCase();
+  return PACKAGE_CODE_PATTERN.test(clean) ? clean : '';
+}
+
+/** Nominal terendah yang masih bisa ditagih Midtrans setelah potongan kupon. */
+export const MIN_CHARGEABLE_IDR = 1_000;
+
+/** Batas kode kupon: huruf besar, angka, garis bawah, dan strip. */
+export const COUPON_CODE_PATTERN = /^[A-Z0-9_-]{3,32}$/;
+
+/**
+ * Normalisasi kode kupon. Kupon diketik admin, jadi input huruf kecil dari
+ * pengguna tetap diterima: kode disimpan dan dicari dalam huruf besar.
+ */
+export function normalizeCouponCode(code: string | null | undefined): string {
+  const clean = String(code ?? '')
+    .trim()
+    .toUpperCase();
+  return COUPON_CODE_PATTERN.test(clean) ? clean : '';
+}

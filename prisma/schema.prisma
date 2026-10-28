@@ -105,6 +105,7 @@ model Base {
   creatorId                   String?
   creator                     User?     @relation("BaseCreator", fields: [creatorId], references: [id], onDelete: SetNull)
   freeForeverSetBy            User?     @relation("BaseFreeForeverSetBy", fields: [freeForeverSetById], references: [id], onDelete: SetNull)
+  templates                   Template[]
   createdAt                   DateTime  @default(now())
   updatedAt                   DateTime  @updatedAt
 
@@ -347,11 +348,15 @@ model Template {
 
   status      String   @default("active") // draft | active | archived
   sortOrder   Int      @default(0)
+  // null = katalog bersama (dipakai semua base); terisi = eksklusif milik base ini.
+  baseId      String?
+  base        Base?    @relation(fields: [baseId], references: [id], onDelete: SetNull)
   createdById String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@index([status, sortOrder])
+  @@index([baseId, status, sortOrder])
 }
 
 model PlatformConnection {
@@ -448,6 +453,17 @@ enum FessChargeStatus {
   REVERSED
 }
 
+enum CouponDiscountType {
+  FIXED
+  PERCENT
+}
+
+enum CouponRedemptionStatus {
+  RESERVED
+  CONFIRMED
+  RELEASED
+}
+
 enum BaseRevenueEntryType {
   EARNING
   ADJUSTMENT
@@ -512,6 +528,11 @@ model PaymentOrder {
   packageName           String
   amountIdr             Int
   ctfAmount             Int
+  /// Kode kupon yang dipakai (null bila tanpa kupon). Snapshot kode, bukan FK:
+  /// kupon tidak pernah dihapus, hanya dinonaktifkan.
+  couponCode            String?
+  /// Potongan rupiah saat order dibuat. `amountIdr` = harga setelah potongan.
+  discountIdr           Int                @default(0)
   currency              String             @default("IDR")
   status                PaymentOrderStatus @default(PENDING)
   paymentMethod         String?
@@ -563,6 +584,77 @@ model PaymentEvent {
 
   @@index([orderId, createdAt])
   @@index([status, createdAt])
+}
+
+/// Paket top-up CTF yang bisa diubah Super Admin tanpa deploy.
+/// `PaymentOrder` tetap menyimpan snapshot nama/nominal/CTF saat order dibuat,
+/// jadi mengubah paket tidak mengubah order lama.
+model PaymentPackage {
+  code        String   @id
+  name        String
+  amountIdr   Int
+  ctfAmount   Int
+  description String   @default("")
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isActive, sortOrder])
+}
+
+/// Kupon promo top-up CTF. Kode diketik Super Admin dan immutable.
+/// Diskon bisa nominal (FIXED) atau persen (PERCENT) dengan batas maksimum.
+model Coupon {
+  code            String             @id
+  label           String             @default("")
+  discountType    CouponDiscountType
+  /// FIXED: rupiah. PERCENT: 1-100.
+  discountValue   Int
+  /// Batas potongan untuk PERCENT (null = tanpa batas).
+  maxDiscountIdr  Int?
+  /// Minimum harga paket agar kupon bisa dipakai.
+  minAmountIdr    Int                @default(0)
+  startsAt        DateTime?
+  endsAt          DateTime?
+  /// null = kuota tak terbatas.
+  maxRedemptions  Int?
+  /// Pemakaian aktif (RESERVED + CONFIRMED). Dikembalikan saat order gagal.
+  redemptionCount Int                @default(0)
+  /// Batas pemakaian per user (v1 selalu 1).
+  maxPerUser      Int                @default(1)
+  isActive        Boolean            @default(true)
+  createdById     String?
+  updatedById     String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  redemptions CouponRedemption[]
+
+  @@index([isActive, endsAt])
+}
+
+/// Satu baris per order yang memakai kupon. `RESERVED` dikunci saat order
+/// dibuat, `CONFIRMED` saat pembayaran lunas, `RELEASED` bila order gagal.
+model CouponRedemption {
+  id          String                 @id @default(cuid())
+  couponCode  String
+  userId      String
+  orderId     String                 @unique
+  status      CouponRedemptionStatus @default(RESERVED)
+  amountIdr   Int
+  discountIdr Int
+  paidAt      DateTime?
+  releasedAt  DateTime?
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+
+  coupon Coupon @relation(fields: [couponCode], references: [code], onDelete: Restrict)
+
+  @@index([couponCode, status])
+  @@index([couponCode, userId])
+  @@index([userId, createdAt])
 }
 
 model FessCharge {

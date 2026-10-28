@@ -8,14 +8,15 @@ import {
   BASE_REVENUE_PER_FESS_IDR,
   CTF_PER_PAID_FESS,
   PAYMENT_METHODS,
-  PAYMENT_PACKAGES,
   findPaymentMethod,
-  findPaymentPackage,
+  normalizeCouponCode,
   type PaymentMethodCode,
 } from '../constants/payments.js';
 import { parseMidtransDate } from '../utils/midtrans-date.util.js';
+import { CouponService } from './coupon.service.js';
 import { CtfWalletService } from './ctf-wallet.service.js';
 import { MidtransError, MidtransService } from './midtrans.service.js';
+import { PaymentPackageService } from './payment-package.service.js';
 
 export type PaymentUser = {
   id: string;
@@ -29,6 +30,7 @@ export type CreatePaymentOrderInput = {
   packageCode: string;
   method: PaymentMethodCode;
   requestKey: string;
+  couponCode?: string | null;
 };
 
 export type PaymentApplyOptions = {
@@ -126,14 +128,14 @@ function eventKey(payload: Record<string, unknown>) {
 }
 
 export class PaymentService {
-  static getPackages() {
+  static async getPackages() {
     return {
       enabled: ENV.PAYMENTS_ENABLED,
       configured: MidtransService.isConfigured(),
       currency: 'IDR',
       ctf_per_paid_fess: CTF_PER_PAID_FESS,
       base_revenue_per_paid_fess_idr: BASE_REVENUE_PER_FESS_IDR,
-      packages: PAYMENT_PACKAGES,
+      packages: await PaymentPackageService.listActive(),
       methods: PAYMENT_METHODS,
     };
   }
@@ -155,16 +157,27 @@ export class PaymentService {
     }
 
     assertRequestKey(input.requestKey);
-    const pkg = findPaymentPackage(input.packageCode);
+    const pkg = await PaymentPackageService.findForOrder(input.packageCode);
     if (!pkg) throw paymentError('UNKNOWN_PACKAGE', 'Paket top-up tidak ditemukan', 400);
     const method = findPaymentMethod(input.method);
     if (!method) throw paymentError('UNKNOWN_PAYMENT_METHOD', 'Metode pembayaran tidak dikenal', 400);
+
+    const normalizedCoupon = input.couponCode ? normalizeCouponCode(input.couponCode) : '';
+    if (input.couponCode && !normalizedCoupon) {
+      throw paymentError('INVALID_COUPON_CODE', 'Format kode kupon tidak valid', 422);
+    }
 
     const existing = await prisma.paymentOrder.findUnique({
       where: { requestKey: input.requestKey },
     });
     if (existing) {
-      this.assertSameRequest(existing, user.id, pkg.code, method.code);
+      this.assertSameRequest(
+        existing,
+        user.id,
+        pkg.code,
+        method.code,
+        normalizedCoupon || null
+      );
       return { order: this.serializeOrder(existing), idempotent: true };
     }
 
@@ -177,21 +190,40 @@ export class PaymentService {
 
     let order: PaymentOrder;
     try {
-      order = await prisma.paymentOrder.create({
-        data: {
-          orderId,
-          requestKey: input.requestKey,
-          userId: user.id,
-          packageCode: pkg.code,
-          packageName: pkg.name,
-          amountIdr: pkg.amountIdr,
-          ctfAmount: pkg.ctfAmount,
-          currency: 'IDR',
-          status: PaymentOrderStatus.PENDING,
-          paymentMethod: method.code,
-          paymentChannel: paymentChannelFor(method.code),
-          expiresAt: initialExpiry,
-        },
+      // Order dan reservasi kupon dibuat dalam satu transaksi: kalau kupon
+      // ditolak (kuota habis / sudah dipakai), tidak ada order yang tertinggal.
+      order = await prisma.$transaction(async (tx) => {
+        let discountIdr = 0;
+        let couponCode: string | null = null;
+        if (normalizedCoupon) {
+          const reservation = await CouponService.reserve(tx, {
+            code: normalizedCoupon,
+            userId: user.id,
+            orderId,
+            amountIdr: pkg.amountIdr,
+          });
+          discountIdr = reservation.discountIdr;
+          couponCode = reservation.code;
+        }
+
+        return tx.paymentOrder.create({
+          data: {
+            orderId,
+            requestKey: input.requestKey,
+            userId: user.id,
+            packageCode: pkg.code,
+            packageName: pkg.name,
+            amountIdr: pkg.amountIdr - discountIdr,
+            ctfAmount: pkg.ctfAmount,
+            couponCode,
+            discountIdr,
+            currency: 'IDR',
+            status: PaymentOrderStatus.PENDING,
+            paymentMethod: method.code,
+            paymentChannel: paymentChannelFor(method.code),
+            expiresAt: initialExpiry,
+          },
+        });
       });
     } catch (error) {
       if (isUniqueConstraintError(error)) {
@@ -199,7 +231,13 @@ export class PaymentService {
           where: { requestKey: input.requestKey },
         });
         if (raced) {
-          this.assertSameRequest(raced, user.id, pkg.code, method.code);
+          this.assertSameRequest(
+            raced,
+            user.id,
+            pkg.code,
+            method.code,
+            normalizedCoupon || null
+          );
           return { order: this.serializeOrder(raced), idempotent: true };
         }
       }
@@ -525,12 +563,14 @@ export class PaymentService {
     order: PaymentOrder,
     userId: string,
     packageCode: string,
-    method: string
+    method: string,
+    couponCode: string | null = null
   ) {
     if (
       order.userId !== userId ||
       order.packageCode !== packageCode ||
-      order.paymentMethod !== method
+      order.paymentMethod !== method ||
+      (order.couponCode ?? null) !== couponCode
     ) {
       throw paymentError(
         'IDEMPOTENCY_CONFLICT',
@@ -573,18 +613,12 @@ export class PaymentService {
     }
 
     if (transactionStatus === 'capture' && fraudStatus === 'deny') {
-      await prisma.paymentOrder.updateMany({
-        where: { id: order.id, status: PaymentOrderStatus.PENDING },
-        data: { ...data, status: PaymentOrderStatus.FAILED, failedAt: new Date(), midtransStatus: 'deny' },
-      });
+      await this.failOrder(order, data, 'deny');
       return { status: 'failed' };
     }
 
     if (transactionStatus === 'deny' || transactionStatus === 'cancel' || transactionStatus === 'failure') {
-      await prisma.paymentOrder.updateMany({
-        where: { id: order.id, status: PaymentOrderStatus.PENDING },
-        data: { ...data, status: PaymentOrderStatus.FAILED, failedAt: new Date(), midtransStatus: transactionStatus },
-      });
+      await this.failOrder(order, data, transactionStatus);
       return { status: 'failed' };
     }
 
@@ -654,6 +688,33 @@ export class PaymentService {
     return { status: order.status.toLowerCase(), ignored: true };
   }
 
+  /**
+   * Order gagal (deny/cancel/failure). Kupon hanya dilepas bila status benar
+   * benar berubah jadi FAILED, supaya notifikasi duplikat tidak mengembalikan
+   * kuota dua kali.
+   */
+  private static async failOrder(
+    order: PaymentOrder,
+    data: Prisma.PaymentOrderUpdateManyMutationInput,
+    midtransStatus: string
+  ) {
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.paymentOrder.updateMany({
+        where: { id: order.id, status: PaymentOrderStatus.PENDING },
+        data: {
+          ...data,
+          status: PaymentOrderStatus.FAILED,
+          failedAt: new Date(),
+          midtransStatus,
+        },
+      });
+      if (updated.count > 0 && order.couponCode) {
+        await CouponService.release(tx, order.orderId);
+      }
+      return updated;
+    });
+  }
+
   private static async settleOrder(
     order: PaymentOrder,
     payload: Record<string, unknown>,
@@ -684,6 +745,11 @@ export class PaymentService {
         return { status: current?.status?.toLowerCase() || 'ignored', ignored: true };
       }
 
+      // Kupon baru dihitung terpakai setelah uang benar-benar masuk.
+      if (order.couponCode) {
+        await CouponService.confirm(tx, order.orderId);
+      }
+
       const credit = await CtfWalletService.credit(
         {
           userId: order.userId,
@@ -697,6 +763,8 @@ export class PaymentService {
             transaction_id: String(payload.transaction_id ?? ''),
             package_code: order.packageCode,
             amount_idr: order.amountIdr,
+            coupon_code: order.couponCode,
+            discount_idr: order.discountIdr,
           } as Prisma.InputJsonValue,
         },
         tx
@@ -811,6 +879,9 @@ export class PaymentService {
       package_name: order.packageName,
       amount_idr: order.amountIdr,
       ctf_amount: order.ctfAmount,
+      coupon_code: order.couponCode,
+      discount_idr: order.discountIdr,
+      original_amount_idr: order.amountIdr + order.discountIdr,
       currency: order.currency,
       status: order.status.toLowerCase(),
       payment_method: order.paymentMethod,

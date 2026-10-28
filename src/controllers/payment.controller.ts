@@ -12,8 +12,12 @@ function secretsMatch(expected: string, provided: string) {
 }
 
 export class PaymentController {
-  static getPackages(_req: Request, res: Response) {
-    return res.status(200).json(PaymentService.getPackages());
+  static async getPackages(_req: Request, res: Response, next: NextFunction) {
+    try {
+      return res.status(200).json(await PaymentService.getPackages());
+    } catch (error) {
+      next(error);
+    }
   }
 
   static async createOrder(req: Request, res: Response, next: NextFunction) {
@@ -32,6 +36,7 @@ export class PaymentController {
         packageCode: String(req.body.package_code),
         method: String(req.body.payment_method) as PaymentMethodCode,
         requestKey,
+        couponCode: req.body.coupon_code ? String(req.body.coupon_code) : null,
       });
       return res.status(result.idempotent ? 200 : 201).json(result);
     } catch (error) {

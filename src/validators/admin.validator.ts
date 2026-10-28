@@ -74,6 +74,143 @@ export const AdminPaymentEventsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 
+/**
+ * Paket top-up: Super Admin boleh mengubah nama, nominal, dan CTF tanpa deploy.
+ * Kode paket immutable (dipakai `PaymentOrder.packageCode`) dan divalidasi ketat.
+ */
+export const AdminPaymentPackageFieldsSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(2, 'Nama paket wajib diisi minimal 2 karakter')
+    .max(40, 'Nama paket maksimal 40 karakter'),
+  amount_idr: z
+    .number()
+    .int('Nominal harus bilangan bulat')
+    .min(1_000, 'Nominal minimal Rp1.000')
+    .max(10_000_000, 'Nominal maksimal Rp10.000.000'),
+  ctf_amount: z
+    .number()
+    .int('Jumlah CTF harus bilangan bulat')
+    .min(1, 'Jumlah CTF minimal 1')
+    .max(1_000_000, 'Jumlah CTF maksimal 1.000.000'),
+  description: z.string().trim().max(160, 'Deskripsi maksimal 160 karakter').default(''),
+  sort_order: z.number().int().min(0).max(999).default(0),
+  is_active: z.boolean().default(true),
+  reason: z
+    .string()
+    .trim()
+    .min(5, 'Alasan wajib diisi minimal 5 karakter')
+    .max(500, 'Alasan maksimal 500 karakter'),
+  password: z.string().min(1, 'Konfirmasi kata sandi wajib diisi').max(200),
+});
+
+export const AdminPaymentPackageCreateSchema = AdminPaymentPackageFieldsSchema.extend({
+  code: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(
+      /^[a-z0-9_]{3,32}$/,
+      'Kode paket 3-32 karakter: huruf kecil, angka, atau garis bawah'
+    ),
+});
+
+export const AdminPaymentPackageUpdateSchema = AdminPaymentPackageFieldsSchema;
+
+export const AdminPaymentPackageStatusSchema = z.object({
+  is_active: z.boolean(),
+  reason: z
+    .string()
+    .trim()
+    .min(5, 'Alasan wajib diisi minimal 5 karakter')
+    .max(500, 'Alasan maksimal 500 karakter'),
+  password: z.string().min(1, 'Konfirmasi kata sandi wajib diisi').max(200),
+});
+
+/** Tanggal kupon: ISO string dari UI, atau null bila tanpa batas. */
+const CouponDateSchema = z
+  .string()
+  .trim()
+  .max(40)
+  .refine((value) => value === '' || !Number.isNaN(Date.parse(value)), 'Tanggal tidak valid')
+  .nullable()
+  .optional();
+
+/**
+ * Kupon promo top-up. Diskon mengurangi harga bayar, bukan jumlah CTF.
+ * `max_discount_idr` hanya dipakai untuk diskon persen.
+ */
+export const AdminCouponFieldsSchema = z
+  .object({
+    label: z.string().trim().max(60, 'Label maksimal 60 karakter').default(''),
+    discount_type: z.enum(['FIXED', 'PERCENT']),
+    discount_value: z
+      .number()
+      .int('Nilai diskon harus bilangan bulat')
+      .min(1, 'Nilai diskon minimal 1')
+      .max(10_000_000, 'Nilai diskon maksimal 10.000.000'),
+    max_discount_idr: z
+      .number()
+      .int()
+      .min(1, 'Batas potongan minimal Rp1')
+      .max(10_000_000)
+      .nullable()
+      .optional(),
+    min_amount_idr: z
+      .number()
+      .int()
+      .min(0)
+      .max(10_000_000, 'Minimum pembelian maksimal Rp10.000.000')
+      .default(0),
+    starts_at: CouponDateSchema,
+    ends_at: CouponDateSchema,
+    max_redemptions: z.number().int().min(1).max(1_000_000).nullable().optional(),
+    is_active: z.boolean().default(true),
+    reason: z
+      .string()
+      .trim()
+      .min(5, 'Alasan wajib diisi minimal 5 karakter')
+      .max(500, 'Alasan maksimal 500 karakter'),
+    password: z.string().min(1, 'Konfirmasi kata sandi wajib diisi').max(200),
+  })
+  .refine(
+    (data) => data.discount_type !== 'PERCENT' || data.discount_value <= 100,
+    { path: ['discount_value'], message: 'Diskon persen maksimal 100' }
+  )
+  .refine(
+    (data) => {
+      if (!data.starts_at || !data.ends_at) return true;
+      return Date.parse(data.ends_at) > Date.parse(data.starts_at);
+    },
+    { path: ['ends_at'], message: 'Tanggal berakhir harus setelah tanggal mulai' }
+  );
+
+export const AdminCouponCreateSchema = AdminCouponFieldsSchema.and(
+  z.object({
+    code: z
+      .string()
+      .trim()
+      .toUpperCase()
+      .regex(
+        /^[A-Z0-9_-]{3,32}$/,
+        'Kode kupon 3-32 karakter: huruf, angka, garis bawah, atau strip'
+      ),
+  })
+);
+
+export const AdminCouponUpdateSchema = AdminCouponFieldsSchema;
+
+export const AdminCouponStatusSchema = z.object({
+  is_active: z.boolean(),
+  reason: z
+    .string()
+    .trim()
+    .min(5, 'Alasan wajib diisi minimal 5 karakter')
+    .max(500, 'Alasan maksimal 500 karakter'),
+  password: z.string().min(1, 'Konfirmasi kata sandi wajib diisi').max(200),
+});
+
 export const SecurityControlsSchema = z.object({
   rate_limit_per_ip: z.number().int().min(1).max(60).optional(),
   ai_filter_active: z.boolean().optional(),

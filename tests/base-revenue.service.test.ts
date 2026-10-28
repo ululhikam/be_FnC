@@ -602,6 +602,7 @@ describe('BaseRevenueService admin controls', () => {
     );
 
     expect(result.free_forever).toBe(true);
+    expect(result.fess_price_ctf).toBe(0);
     expect(prisma.base.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -621,6 +622,25 @@ describe('BaseRevenueService admin controls', () => {
       })
     );
     expect(prisma.systemLog.create).toHaveBeenCalled();
+  });
+
+  it('reports the platform fess price when a base is not free forever', async () => {
+    vi.mocked(prisma.base.findUnique).mockResolvedValueOnce(paidBase() as any);
+    vi.mocked(prisma.base.update).mockResolvedValueOnce(paidBase() as any);
+
+    const result = await BaseRevenueService.setFreeForever(
+      SUPER_ADMIN,
+      {
+        baseHandle: '@b',
+        freeForever: false,
+        reason: 'Kembali berbayar',
+        password: 'secret',
+      },
+      {}
+    );
+
+    expect(result.free_forever).toBe(false);
+    expect(result.fess_price_ctf).toBe(1);
   });
 
   it('requires re-auth before changing bank details and applies a 24h hold', async () => {

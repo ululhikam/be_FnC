@@ -25,7 +25,8 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 - Base revenue memiliki holding **7 hari** sebelum available.
 - Payout base minimal **Rp50.000**, manual, dengan approval Super Admin.
 - Biaya transfer payout default **Rp6.500**, dapat disesuaikan saat approval.
-- Super Admin dapat menetapkan base **gratis selamanya** (`freeForever`).
+- Super Admin dapat menetapkan base **gratis selamanya** (`freeForever`) lewat kontrol **Harga fess** di `/super-admin/keuangan` (tab KYC & Billing): `Gratis permanen (0 CTF)` atau `Normal (1 CTF)`.
+- Harga normal bukan angka arbitrer per base: nilainya tetap konstanta kode `CTF_PER_PAID_FESS` (1 CTF). Yang bisa diubah per base hanya status gratisnya.
 - Base gratis selamanya: user tidak membayar, base tidak mendapat revenue.
 
 ### Welcome bonus
@@ -439,6 +440,7 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 | 2026-10-24 | Gate tersisa: chargeback asli tidak dapat dipicu dari merchant sandbox (ditutup unit test), cron rekonsiliasi terjadwal, Midtrans production, operasional refund/chargeback, sign-off. |
 | 2026-10-25 | UI keuangan Base Admin dipoles (frontend `3dbf55f`): tab Saldo/Pendapatan/Payout, hero navy/lime, komposisi saldo, filter dan riwayat, checklist payout, form payout/rekening, state KYC/locked/error, serta aksesibilitas form. 209 checks Playwright lulus; frontend dev `dpl_DTkKU4r17jeHiVpcWLQN6yhPY55z`; backend dan production tidak disentuh. |
 | 2026-10-25 | Input rekening payout direvisi (frontend `8eb4381`): picker 22 bank dengan pencarian, logo resmi, initials brand, fallback `Bank lainnya`, keyboard/outside-click, dan logo rekening aktif. 244 checks lokal + verifikasi deployed lulus; frontend dev `dpl_B1tkYEbzu3aEN6z2k2QLUAV1cUJf`; backend/flags/production tidak berubah. |
+| 2026-10-28 | Kontrol Super Admin `freeForever` diberi muka **Harga fess**: tabel menampilkan `Gratis` atau `1 CTF / fess`, dialog memilih `Gratis permanen (0 CTF)` vs `Normal (1 CTF)` dengan alasan + re-auth. Skema tidak berubah; `freeForever` tetap satu-satunya sumber kebenaran dan harga normal tetap `CTF_PER_PAID_FESS`. Response admin kini menyertakan `fess_price_ctf` agar UI tidak hardcode. |
 
 ## 10. Checklist production (belum dijalankan)
 

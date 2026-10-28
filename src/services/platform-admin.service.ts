@@ -1,7 +1,7 @@
 import { prisma } from '../config/prisma.js';
 import { ENV } from '../config/env.js';
 import { rateLimitConfig } from '../middlewares/rateLimit.middleware.js';
-import { BASE_PAYOUT_MIN_IDR } from '../constants/payments.js';
+import { BASE_PAYOUT_MIN_IDR, CTF_PER_PAID_FESS } from '../constants/payments.js';
 import { normalizeHandle } from '../utils/format.util.js';
 import { AdminSecurityService } from './admin-security.service.js';
 import { BaseRevenueService, type RequestMeta } from './base-revenue.service.js';
@@ -643,6 +643,7 @@ export class PlatformAdminService {
         trial_ends_at: asIso(base.trialEndsAt),
         trial_source: base.trialSource,
         free_forever: base.freeForever,
+        fess_price_ctf: base.freeForever ? 0 : CTF_PER_PAID_FESS,
         free_forever_reason: base.freeForeverReason,
         free_forever_set_at: asIso(base.freeForeverSetAt),
       },

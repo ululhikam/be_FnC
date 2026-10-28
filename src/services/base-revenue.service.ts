@@ -6,8 +6,10 @@ import {
   BASE_PAYOUT_MIN_IDR,
   BASE_REVENUE_HOLD_DAYS,
   BASE_REVENUE_PER_FESS_IDR,
+  CTF_PER_PAID_FESS,
 } from '../constants/payments.js';
 import { normalizeHandle } from '../utils/format.util.js';
+import { invalidateCache } from '../utils/cache.util.js';
 import { AdminSecurityService } from './admin-security.service.js';
 
 type DbClient = Prisma.TransactionClient | typeof prisma;
@@ -32,6 +34,8 @@ export type BaseBillingSummary = {
   trial_ends_at: string | null;
   trial_source: string | null;
   free_forever: boolean;
+  /** Harga fess yang berlaku: 0 untuk base gratis permanen, selain itu harga platform. */
+  fess_price_ctf: number;
   free_forever_reason: string | null;
   free_forever_set_at: string | null;
   payout_kyc_status: string;
@@ -331,6 +335,7 @@ export class BaseRevenueService {
       trial_ends_at: asIso(base.trialEndsAt),
       trial_source: base.trialSource ?? null,
       free_forever: base.freeForever === true,
+      fess_price_ctf: base.freeForever === true ? 0 : CTF_PER_PAID_FESS,
       free_forever_reason: base.freeForeverReason ?? null,
       free_forever_set_at: asIso(base.freeForeverSetAt),
       payout_kyc_status: base.payoutKycStatus || 'unverified',
@@ -429,6 +434,7 @@ export class BaseRevenueService {
         min_payout_idr: BASE_PAYOUT_MIN_IDR,
         payout_fee_idr: ENV.BASE_PAYOUT_FEE_IDR,
         revenue_per_fess_idr: BASE_REVENUE_PER_FESS_IDR,
+        fess_price_ctf: CTF_PER_PAID_FESS,
         hold_days: BASE_REVENUE_HOLD_DAYS,
         totals: {
           pending_idr: totals.pendingIdr,
@@ -1151,9 +1157,15 @@ export class BaseRevenueService {
       return saved;
     });
 
+    // Direktori base menyimpan billing per base; tanpa invalidasi, composer dan
+    // badge publik bisa menampilkan harga lama sampai TTL 20 detik habis.
+    invalidateCache('bases:');
+
     await AdminSecurityService.writeAlert(
       'PAYOUT',
-      `Super Admin ${currentUser.id} mengubah freeForever base ${base.handle} menjadi ${input.freeForever}. Alasan: ${reason}`,
+      `Super Admin ${currentUser.id} mengubah harga fess base ${base.handle} menjadi ${
+        input.freeForever ? 'gratis permanen' : 'normal'
+      }. Alasan: ${reason}`,
       'error'
     );
 

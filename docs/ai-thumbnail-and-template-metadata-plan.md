@@ -8,12 +8,13 @@ Keputusan produk yang sudah dikunci:
 
 | Topik | Keputusan |
 |---|---|
-| Provider AI | **Google Gemini free tier**, di balik interface `AiProvider` generik (bisa diganti tanpa ubah pemanggil) |
-| Anggaran | Kuota permintaan (RPM/RPD), bukan dolar |
+| Provider AI | **Adapter generik "OpenAI-compatible"**; default dev: Gemini free tier lewat endpoint kompatibelnya. Bisa diganti ke OpenRouter (DeepSeek, dsb.), OpenAI, atau provider lain hanya dengan `AI_BASE_URL` + `AI_MODEL` + `AI_API_KEY` |
+| Anggaran | Kuota permintaan (RPM/RPD) milik provider yang aktif, bukan dolar |
 | Watermark | Handle **base** + host frontend aktif |
-| Judul | 3–5 kata, dibuat Gemini |
+| Judul | 3–5 kata, dibuat AI, **tidak bisa diedit** (final setelah dibuat) |
 | Cakupan | **Instagram saja** (bukan cover feed web) |
 | Opt-out | Per base: `auto` (default) / `no_ai` / `off` |
+| Urutan rilis | **P1 (thumbnail tanpa AI) lebih dulu**, baru P2 judul AI |
 
 ---
 
@@ -90,14 +91,15 @@ Konsekuensi penting:
 | D4 | Background = foto user (cover-crop + blur) + gradien dari **palet foto** | Putih polos, AI image generation | Murah, deterministik, on-brand, tanpa kirim foto ke pihak ketiga |
 | D5 | AI hanya untuk **teks** (judul + metadata), provider di balik interface | AI vision/gambar | Privasi, biaya, determinisme, audit lebih mudah |
 | D6 | AI selalu punya **fallback deterministik** | Blokir publish bila AI gagal | Publish tidak boleh gagal karena pihak ketiga |
-| D7 | Judul disimpan & bisa diedit manual | Selalu regenerasi | Base Admin butuh kontrol editorial |
+| D7 | Judul **final**, tidak bisa diedit; disimpan agar rendering & retry konsisten | Editor judul manual | Keputusan produk: judul murni hasil AI, tanpa kurasi per fess; mengurangi permukaan UI & audit |
+| D7b | Regenerasi hanya untuk kasus gagal/kosong, bukan "acak ulang" | Tombol re-roll bebas | Mencegah biaya kuota & judul berubah-ubah |
 | D8 | Kuota & biaya AI dijaga `RateLimitService` (Postgres) | In-memory | Serverless multi-instance; in-memory tidak konsisten |
 | D9 | Semua usulan AI = **usulan**, simpan tetap lewat endpoint lama | Auto-save metadata | Validasi backend tetap satu pintu; cegah halusinasi tersimpan |
 | D10 | Dua kill switch terpisah: `THUMBNAIL_ENABLED`, `AI_ENABLED` | Satu flag | Fitur visual bisa rilis tanpa AI; AI bisa dimatikan mendadak |
 | D11 | Domain watermark dari `frontendHostLabel()`, handle dari `base.handle`/`base.igAccount` | Hardcode domain, handle penulis | Dev/staging tidak menulis domain production; anonimitas penulis terjaga |
 | D12 | Judul **3–5 kata**, maks 60 karakter, 1–4 baris auto-fit | Bebas | Keterbacaan di feed mobile (≈ 30% lebar layar) |
-| D13 | Provider default **Google Gemini free tier**, di balik interface `AiProvider` generik | Mengunci ke satu SDK di seluruh kode | Gratis untuk volume kecil, tapi tetap bisa diganti OpenAI/Gemini berbayar/lokal tanpa mengubah pemanggil |
-| D14 | Anggaran = **kuota permintaan** (RPD/RPM), bukan dolar | Budget USD | Free tier tidak menagih; yang perlu dijaga adalah rate limit & kuota harian provider |
+| D13 | Provider default: **OpenAI-compatible adapter** (satu implementasi HTTP), provider dipilih lewat `AI_BASE_URL` + `AI_MODEL` | Satu SDK/provider hardcoded | Sekali tulis, bisa Gemini free tier, OpenRouter (DeepSeek/GPT/dll.) atau OpenAI tanpa ubah kode |
+| D14 | Anggaran = **kuota permintaan** (RPM/RPD) provider aktif | Budget USD | Free tier tidak menagih; yang perlu dijaga rate limit & kuota harian |
 | D15 | Thumbnail hanya untuk **Instagram** | Cover feed web juga | Menghindari perubahan tampilan feed yang belum diminta |
 
 ---
@@ -119,7 +121,7 @@ POST /api/fesses/canvas/preview   (+ with_thumbnail=true, media[], content, temp
 PostPreviewCarousel  → [thumbnail][kartu 1..n][media 1..m]  (maks 10)
         │
         ▼
-  field judul (60 char) bisa diedit / "Acak ulang"
+  judul tampil read-only (hasil AI / fallback), tidak bisa diedit
 ```
 
 ### 4.2 Publish (server)
@@ -256,19 +258,27 @@ export interface AiProvider {
 }
 ```
 
-- Implementasi awal: adapter **Google Gemini** (`generateContent`) karena punya free tier; interface tetap generik sehingga OpenAI/penyedia lain bisa ditambah tanpa mengubah `AiService`.
-- Pemanggilan memakai `fetch` biasa (tanpa SDK) ke `https://generativelanguage.googleapis.com/v1beta/models/<model>:generateContent`, header `x-goog-api-key`. Tidak perlu dependency baru.
-- Model awal: `gemini-2.5-flash-lite` (paling murah/cepat untuk 5 kata). Alternatif `gemini-2.5-flash` bila kualitas judul kurang. Keduanya diatur lewat `AI_MODEL`, jadi bisa diganti tanpa deploy kode.
-- Free tier punya batas (indikatif: ±10–15 RPM, ±250–1.000 permintaan/hari tergantung model). **Angka pastinya diverifikasi di Google AI Studio saat implementasi** dan dicatat di dokumen ini sebelum go-live.
+- Implementasi: **satu adapter OpenAI-compatible** berbasis `fetch` (tanpa SDK). Hampir semua provider yang relevan menyediakan `POST <base_url>/chat/completions` dengan skema `messages` yang sama, jadi provider tinggal diganti lewat env.
+- Kontrak minimal yang dipakai: `model`, `messages`, `temperature`, `max_tokens`, `response_format: { type: 'json_object' }` (bila didukung; kalau tidak, JSON dipaksa lewat prompt + parser toleran).
+- Preset konfigurasi (contoh, bukan hardcode di kode):
+
+| Provider | `AI_BASE_URL` | Contoh `AI_MODEL` | Catatan |
+|---|---|---|---|
+| Gemini (free tier) | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-2.5-flash-lite` | Default dev; gratis dengan batas RPM/RPD |
+| OpenRouter (DeepSeek) | `https://openrouter.ai/api/v1` | `deepseek/deepseek-chat` | Satu key untuk banyak model; header `HTTP-Referer`/`X-Title` opsional |
+| DeepSeek langsung | `https://api.deepseek.com/v1` | `deepseek-chat` | Murah, berbayar |
+| OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` | Berbayar, kebijakan data paling jelas |
+
+- Batas provider (RPM/RPD) berbeda-beda dan berubah; **angka final diverifikasi saat implementasi** lalu dijadikan nilai `AI_RPM_LIMIT` / `AI_DAILY_*`. Adapter tidak boleh mengasumsikan angka tertentu.
 - Provider di-inject ke `AiService` (constructor/param) supaya test tidak perlu jaringan.
 - Semua panggilan HTTP: `AbortController` + `timeoutMs`, retry **satu kali** hanya untuk 429/5xx/timeout, tanpa retry untuk 4xx validasi. `429` bukan error fatal — langsung fallback.
 
-**Catatan privasi free tier (wajib diputuskan sebelum production):** pada tier gratis, Google dapat memakai konten yang dikirim untuk meningkatkan produknya; tier berbayar tidak. Karena isi fess bersifat anonim, mitigasi yang disiapkan:
+**Catatan privasi tier gratis (wajib diputuskan sebelum production):** layanan gratis umumnya memakai konten yang dikirim untuk peningkatan produk atau mencatat request. Ini berlaku untuk Gemini free tier, dan model gratis di OpenRouter punya kebijakan masing-masing (cek halaman privasi model yang dipilih). Karena isi fess bersifat anonim, mitigasi yang disiapkan:
 
 1. Kirim **hanya teks fess** (tanpa foto, tanpa identitas penulis, tanpa `userId`).
 2. Scrub nama/handle/email/telepon dari input sebelum dikirim.
-3. Default fitur `AI_ENABLED=false` di production sampai ada keputusan sadar; free tier dipakai untuk dev/staging.
-4. Bila ingin production dengan jaminan no-training, cukup ganti `AI_API_KEY` ke project berbayar — kode tidak berubah.
+3. Default fitur `AI_ENABLED=false` di production sampai ada keputusan sadar; tier gratis dipakai untuk dev/staging.
+4. Untuk production tanpa risiko training, ganti `AI_BASE_URL`/`AI_MODEL`/`AI_API_KEY` ke provider berbayar (OpenAI/DeepSeek) — kode tidak berubah.
 
 ### 7.2 Prompt judul (versi 1)
 
@@ -327,7 +337,7 @@ Karena memakai free tier, yang dijaga adalah **jumlah permintaan**, bukan dolar.
 - Kuota global harian: `RateLimitService.consume('ai:title:global:<yyyy-mm-dd>', AI_DAILY_TITLE_LIMIT, 86400)` — diisi **di bawah** batas free tier (mis. 200 dari 250 RPD) supaya menyisakan ruang untuk metadata template & percobaan manual.
 - Laju per menit: `RateLimitService.consume('ai:rpm', AI_RPM_LIMIT, 60)` untuk mencegah 429 beruntun.
 - Kedua kuota habis → `fallbackTitle()` + `SystemLog` tone `error` (`source: AI_TITLE`). Tidak pernah menunggu atau mengulang tanpa batas.
-- Bila `AI_PROVIDER`/`AI_API_KEY` diganti ke tier berbayar, aktifkan `AI_MONTHLY_BUDGET_USD` (opsional) sebagai pengaman tambahan: `RateLimitService.consume('ai:budget:<yyyy-mm>', <token budget>, 32 hari)`.
+- Bila provider diganti ke tier berbayar, aktifkan `AI_MONTHLY_BUDGET_USD` (opsional) sebagai pengaman tambahan: `RateLimitService.consume('ai:budget:<yyyy-mm>', <token budget>, 32 hari)`.
 - Semua hasil (ok/fallback/error) dicatat di `AiGeneration` (token, latensi, `status`) untuk laporan di engine log tanpa endpoint baru.
 
 ### 7.6 Waktu & ketahanan
@@ -446,7 +456,7 @@ model AiGeneration {
 Catatan:
 
 - `Base.thumbnailMode` adalah **opt-out per base**: `auto` = thumbnail + judul AI (perilaku bawaan), `no_ai` = thumbnail tetap dibuat tetapi judul deterministik (tanpa panggilan AI), `off` = tanpa thumbnail sama sekali. Nilainya bisa diubah lewat `PATCH /api/bases/:handle/settings` (validator `UpdateBaseSettingsSchema`). **Catatan:** saat ini belum ada halaman pengaturan base di frontend yang memanggil endpoint itu, jadi UI-nya masuk fase P4; sampai saat itu nilainya dikelola lewat Super Admin/DB.
-- `thumbnailVersion` dipakai sebagai `?v=` pada URL thumbnail agar CDN Instagram tidak memakai gambar lama saat judul diedit.
+- `thumbnailVersion` dipakai sebagai `?v=` pada URL thumbnail saat thumbnail **diregenerasi** (kasus gagal/kosong). Judul tidak bisa diedit, jadi URL stabil pada kondisi normal — ini juga yang membuat CDN Instagram aman dari gambar lama.
 - `thumbnailError` dipotong 500 char (mengikuti pola `igError`).
 - Tidak ada backfill: fess lama `thumbnailStatus = 'idle'` dan tetap diposting seperti sekarang.
 
@@ -456,9 +466,8 @@ Catatan:
 
 | Method | Path | Auth | Fungsi |
 |---|---|---|---|
-| POST | `/api/fesses/canvas/preview` | user | **Diperluas**: `with_thumbnail` (bool), `media` (≤4), `thumbnail_title` (opsional) → `[thumbnail, ...kartu]` |
-| POST | `/api/fesses/:id/thumbnail` | Base Admin / Super Admin | Regenerasi thumbnail (rate limit 5/menit, audit) |
-| PATCH | `/api/fesses/:id/thumbnail` | Base Admin / Super Admin | Ubah judul manual (≤60 char, banned words, audit) |
+| POST | `/api/fesses/canvas/preview` | user | **Diperluas**: `with_thumbnail` (bool), `media` (≤4) → `[thumbnail, ...kartu]`; judul hanya ditampilkan |
+| POST | `/api/fesses/:id/thumbnail` | Base Admin / Super Admin | Regenerasi **hanya bila** `thumbnailStatus` `failed`/`idle` (rate limit 5/menit, audit) |
 | PATCH | `/api/bases/:handle/settings` | Base Admin | **Diperluas**: `thumbnail_mode` (`auto`/`no_ai`/`off`) — opt-out per base |
 | POST | `/api/admin/templates/suggest-metadata` | Super Admin | Usulan metadata template (10/menit) |
 
@@ -468,8 +477,7 @@ Validator baru (`backend/src/validators/`):
 
 ```ts
 // fess.thumbnail.validator
-ThumbnailPreviewSchema = { base_handle, content, template?, with_thumbnail?, media?: MediaItem[] (≤4), thumbnail_title? }
-ThumbnailPatchSchema   = { title: string 3..60 }
+ThumbnailPreviewSchema = { base_handle, content, template?, with_thumbnail?, media?: MediaItem[] (≤4) }
 ```
 
 ---
@@ -482,7 +490,7 @@ ThumbnailPatchSchema   = { title: string 3..60 }
 |---|---|---|
 | `src/config/env.ts` | ubah | Blok `AI_*` + `THUMBNAIL_ENABLED` dengan default aman |
 | `src/services/ai/provider.ts` | baru | Interface + tipe |
-| `src/services/ai/gemini.provider.ts` | baru | Implementasi HTTP `generateContent` + timeout + retry terbatas |
+| `src/services/ai/openai-compatible.provider.ts` | baru | Implementasi HTTP `/chat/completions` + timeout + retry terbatas (dipakai semua provider) |
 | `src/services/ai/prompts.ts` | baru | Prompt & versi (`TITLE_PROMPT_VERSION`, `TEMPLATE_PROMPT_VERSION`) |
 | `src/services/ai/sanitize.ts` | baru | `sanitizeTitle`, `sanitizeTemplateMetadata`, `fallbackTitle` |
 | `src/services/ai/ai.service.ts` | baru | `generateTitle`, `suggestTemplateMetadata`, cache, kuota, ledger |
@@ -509,12 +517,12 @@ ThumbnailPatchSchema   = { title: string 3..60 }
 
 | File | Status | Isi |
 |---|---|---|
-| `src/components/compose/ThumbnailPanel.vue` | baru | Pratinjau thumbnail, input judul (60 char), tombol "Acak ulang", status loading/error |
+| `src/components/compose/ThumbnailPanel.vue` | baru | Pratinjau thumbnail + judul **read-only** (label "dibuat otomatis"), status loading/error |
 | `src/components/compose/PostPreviewCarousel.vue` | ubah | Slide thumbnail di indeks 0 + badge "Cover" (tidak bisa di-drag) |
 | `src/components/compose/PublishModal.vue` | ubah | Kirim `with_thumbnail` + tampilkan thumbnail di pratinjau |
-| `src/views/CreateFessPage.vue` | ubah | State `thumbnailTitle`, kirim `thumbnail_title`, simpan ke draft |
+| `src/views/CreateFessPage.vue` | ubah | Teruskan `with_thumbnail` + `media` ke pratinjau; tidak ada state judul |
 | `src/views/super-admin/TemplatesPage.vue` | ubah | Tombol "Isi otomatis (AI)" + panel review per field + state `aiLoading` terpisah |
-| `src/api/index.js` | ubah | `previewFessThumbnail`, `regenerateFessThumbnail`, `updateFessThumbnailTitle`, `suggestTemplateMetadata` |
+| `src/api/index.js` | ubah | `previewFessThumbnail`, `regenerateFessThumbnail`, `suggestTemplateMetadata` |
 | `src/styles/super-admin.css` | ubah (kecil) | Kelas panel review AI (memakai token yang ada) |
 
 Catatan UI (mengikuti konvensi repo):
@@ -533,22 +541,22 @@ Catatan UI (mengikuti konvensi repo):
 THUMBNAIL_ENABLED=false
 THUMBNAIL_MAX_MEDIA_FETCH_BYTES=8388608
 
-# AI (default: Google Gemini free tier)
+# AI — adapter OpenAI-compatible; provider ditentukan base URL + model
 AI_ENABLED=false
-AI_PROVIDER=gemini
+AI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai   # ganti ke https://openrouter.ai/api/v1 bila pakai OpenRouter
 AI_API_KEY=
-AI_MODEL=gemini-2.5-flash-lite
+AI_MODEL=gemini-2.5-flash-lite                                        # mis. deepseek/deepseek-chat untuk OpenRouter
 AI_TIMEOUT_MS=6000
 AI_MAX_INPUT_CHARS=6000
 
 # Kuota permintaan (bukan dolar), dijaga di Postgres
-AI_RPM_LIMIT=8                       # di bawah RPM free tier
-AI_DAILY_TITLE_LIMIT=200             # global, di bawah RPD free tier
+AI_RPM_LIMIT=8                       # di bawah RPM provider
+AI_DAILY_TITLE_LIMIT=200             # global, di bawah RPD provider
 AI_DAILY_TITLE_LIMIT_PER_BASE=50
 AI_TITLE_ENABLED=true                # hanya berlaku bila AI_ENABLED=true
 AI_TEMPLATE_METADATA_ENABLED=true
 
-# Opsional, hanya bila key berbayar dipakai
+# Opsional, hanya bila provider berbayar dipakai
 AI_MONTHLY_BUDGET_USD=0              # 0 = tidak dibatasi
 ```
 
@@ -629,7 +637,7 @@ Prinsip: **tidak ada test yang memanggil internet.** Provider AI dan Supabase se
 |---|---|---|
 | P0 — Fondasi | Migrasi additive, env + kill switch, `thumbnail.util`, `ai/provider` + sanitizer, test unit | Suite hijau, flag off di semua env, production tidak berubah |
 | P1 — Thumbnail tanpa AI | Render + integrasi carousel + preview composer + regenerate admin; judul fallback deterministik | `THUMBNAIL_ENABLED=true` di dev; QA visual 10 kasus (foto gelap/terang/wajah/teks panjang/tanpa foto) |
-| P2 — Judul AI | `AiService.generateTitle` (Gemini free tier), cache/kuota/ledger, edit judul, indikator fallback | Fallback rate < 5% di dev; tidak ada 429 yang menggagalkan publish; kuota harian terverifikasi tidak melewati free tier |
+| P2 — Judul AI | `AiService.generateTitle` (adapter OpenAI-compatible), cache/kuota/ledger, indikator fallback | Fallback rate < 5% di dev; tidak ada 429 yang menggagalkan publish; kuota harian terverifikasi tidak melewati batas provider |
 | P3 — Metadata template AI | Ekstraksi teks + endpoint suggest + panel review di konsol | Usulan masuk akal untuk 12 template yang ada; tidak ada auto-save |
 | P4 — Eksperimen | Varian judul A/B, pemilihan foto cover manual, alt-text IG, background AI opsional | Menunggu data P1–P3 |
 
@@ -643,7 +651,7 @@ Rilis production mengikuti aturan repo: PR draft → review → merge ke `main` 
 |---|---|---|
 | Provider AI lambat/down | Publish tertunda | Timeout 6 s + fallback; render paralel; flag bisa dimatikan |
 | Biaya membengkak | Tagihan | Cache hash + kuota harian + anggaran bulanan Postgres |
-| Judul tidak sesuai nada komunitas | Kualitas konten | Prompt berbahasa Indonesia + contoh; edit manual; evaluasi 100 sampel sebelum production |
+| Judul tidak sesuai nada komunitas | Kualitas konten | Prompt berbahasa Indonesia + contoh; judul final (tanpa edit) sehingga evaluasi 100 sampel wajib sebelum production; fallback deterministik bila AI mati |
 | Thumbnail menutupi wajah | Estetika | Crop fokus atas-tengah + zona watermark 18% bawah; QA visual |
 | Slot carousel penuh | Satu kartu terpotong | Alokasi: kurangi kartu, bukan media; log saat terpotong |
 | `retry` memakai payload lama | Thumbnail hilang saat retry | Thumbnail disisipkan sebelum `persistIgState` |
@@ -685,7 +693,7 @@ Rilis production mengikuti aturan repo: PR draft → review → merge ke `main` 
 - [ ] Judul 3–5 kata, ≤ 60 karakter, lolos banned words dan filter PII.
 - [ ] AI dimatikan / timeout / **429 kuota free tier** / anggaran habis → fallback deterministik, publish tetap jalan.
 - [ ] Konten identik tidak memanggil provider dua kali (cache).
-- [ ] Judul bisa diedit Base Admin; URL thumbnail berubah versi (`?v=`), bukan cache lama.
+- [ ] Judul **tidak dapat diubah** dari UI mana pun; regenerasi hanya tersedia saat `failed`/`idle`.
 
 ### F3 — Metadata template
 
@@ -701,19 +709,19 @@ Rilis production mengikuti aturan repo: PR draft → review → merge ke `main` 
 
 Sudah diputuskan:
 
-- **Provider**: Google Gemini (free tier), di balik interface generik agar bisa diganti.
-- **Anggaran**: kuota permintaan free tier, bukan dolar.
+- **Provider**: adapter OpenAI-compatible generik; Gemini free tier sebagai default dev, bisa diganti ke OpenRouter/DeepSeek/OpenAI lewat `AI_BASE_URL` + `AI_MODEL` + `AI_API_KEY`.
+- **Anggaran**: kuota permintaan provider, bukan dolar.
 - **Watermark handle**: handle **base**, bukan penulis.
-- **Judul**: 3–5 kata, dibuat langsung oleh Google Gemini.
+- **Judul**: 3–5 kata, dibuat AI, **tidak bisa diedit**.
 - **Cakupan**: Instagram saja, bukan cover feed web.
+- **Urutan rilis**: P1 (thumbnail tanpa AI) dikerjakan lebih dulu.
 
 Masih perlu konfirmasi:
 
-1. **Judul boleh diedit** sebelum publish? (rekomendasi: ya, 60 karakter, tanpa regenerasi otomatis)
-2. **Opt-out per base** (`auto` / `no_ai` / `off`) — aktif sejak rilis pertama atau menyusul bersama UI pengaturan base?
-3. **Kuota**: `AI_DAILY_TITLE_LIMIT=200` global dan 50 per base per hari — cukup?
-4. Apakah **free tier dipakai juga di production**, mengingat Google dapat memakai konten untuk meningkatkan produknya? Alternatifnya: free tier hanya untuk dev/staging, production memakai key berbayar (kode sama).
-5. Target tanggal rilis P1 (thumbnail tanpa AI) — bisa jalan lebih dulu tanpa menunggu nomor 1–4.
+1. **Provider mana yang dipakai di dev** lebih dulu: Gemini free tier, OpenRouter, atau DeepSeek langsung? (mempengaruhi nilai `AI_RPM_LIMIT`/`AI_DAILY_*`)
+2. **Tier gratis di production atau tidak**, mengingat kebijakan pemakaian data masing-masing provider.
+3. **Opt-out per base** (`auto`/`no_ai`/`off`) aktif sejak rilis pertama (hanya lewat API/DB) atau menunggu UI pengaturan base?
+4. **Kuota**: `AI_DAILY_TITLE_LIMIT=200` global & 50 per base per hari — cukup?
 
 ---
 
@@ -724,7 +732,7 @@ Masih perlu konfirmasi:
 3. `ThumbnailService.ensure()` + storage + persist; test dengan storage/Prisma mock.
 4. Integrasi di `canvas.service` (indeks 0, batas 10, `igPayload`).
 5. Preview composer (`with_thumbnail`) + `ThumbnailPanel` + `PostPreviewCarousel`.
-6. Endpoint regenerate & patch judul + rate limit + audit.
+6. Endpoint regenerate (hanya `failed`/`idle`) + rate limit + audit.
 7. `ai/provider` + `sanitize` + `AiService.generateTitle` + cache/kuota/ledger.
 8. Ganti jalur judul di `ThumbnailService` ke AI dengan fallback.
 9. Ekstraksi teks SVG + `suggestMetadata` + route/controller/validator.

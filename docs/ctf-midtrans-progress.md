@@ -59,6 +59,22 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 - Kartu kredit/debit **tidak** dipakai di v1.
 - Metode aktif: QRIS, GoPay, ShopeePay, VA BCA/BNI/BRI/Permata, Mandiri Bill.
 - Snap dan halaman pembayaran eksternal tidak dipakai; flow pembayaran sepenuhnya in-app.
+- **Sumber kebenaran paket (sejak 2026-10-28): tabel `PaymentPackage`, bukan konstanta.**
+  `PAYMENT_PACKAGES` di `src/constants/payments.ts` hanya fallback bila tabel belum ada
+  (deploy sebelum migrasi). Super Admin mengubah paket di
+  `/super-admin/keuangan?tab=payments` → kartu “Paket top-up CTF”.
+- Harga efektif per CTF **tidak** dijadikan aturan; UI hanya menampilkan hitungannya sebagai
+  pembanding agar admin sadar saat membuat paket lebih mahal per CTF.
+- `code` paket immutable (dipakai `PaymentOrder.packageCode`). Paket tidak dihapus, hanya
+  dinonaktifkan; order lama tetap menyimpan snapshot `packageName`/`amountIdr`/`ctfAmount`,
+  jadi perubahan nominal hanya berlaku untuk pembelian berikutnya.
+- Setiap perubahan paket wajib alasan + kata sandi Super Admin, ditulis ke `AdminAuditLog`
+  (`PAYMENT_PACKAGE_CREATED` / `_UPDATED` / `_STATUS_CHANGED`) dan `SystemLog` source `PAYOUT`.
+- Katalog publik `GET /payments/packages` di-cache 20 detik (`payment-packages:active`);
+  setiap mutasi menginvalidasi cache. Pembuatan order membaca paket langsung dari DB sehingga
+  paket yang baru dinonaktifkan tidak bisa dibeli.
+- Kill switch `PAYMENTS_ENABLED` tetap di env dan tetap butuh deploy — belum bisa diubah dari
+  konsol.
 
 ### Keamanan & refund
 
@@ -441,6 +457,7 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 | 2026-10-25 | UI keuangan Base Admin dipoles (frontend `3dbf55f`): tab Saldo/Pendapatan/Payout, hero navy/lime, komposisi saldo, filter dan riwayat, checklist payout, form payout/rekening, state KYC/locked/error, serta aksesibilitas form. 209 checks Playwright lulus; frontend dev `dpl_DTkKU4r17jeHiVpcWLQN6yhPY55z`; backend dan production tidak disentuh. |
 | 2026-10-25 | Input rekening payout direvisi (frontend `8eb4381`): picker 22 bank dengan pencarian, logo resmi, initials brand, fallback `Bank lainnya`, keyboard/outside-click, dan logo rekening aktif. 244 checks lokal + verifikasi deployed lulus; frontend dev `dpl_B1tkYEbzu3aEN6z2k2QLUAV1cUJf`; backend/flags/production tidak berubah. |
 | 2026-10-28 | Kontrol Super Admin `freeForever` diberi muka **Harga fess**: tabel menampilkan `Gratis` atau `1 CTF / fess`, dialog memilih `Gratis permanen (0 CTF)` vs `Normal (1 CTF)` dengan alasan + re-auth. Skema tidak berubah; `freeForever` tetap satu-satunya sumber kebenaran dan harga normal tetap `CTF_PER_PAID_FESS`. Response admin kini menyertakan `fess_price_ctf` agar UI tidak hardcode. |
+| 2026-10-28 | Paket top-up dipindah ke tabel `PaymentPackage` (migrasi `20261028020000_payment_packages`, seed 5 paket lama via SQL) agar Super Admin bisa mengubah nominal/CTF tanpa deploy. Endpoint baru `GET/POST /admin/payments/packages`, `PATCH /admin/payments/packages/:code`, `POST /admin/payments/packages/:code/status` dengan re-auth, alasan, audit, dan rate limit. Katalog publik tetap camelCase dan tetap kompatibel `TopUpFlow`; fallback konstanta hanya saat tabel belum ada. `PAYMENTS_ENABLED` tetap env-only. |
 
 ## 10. Checklist production (belum dijalankan)
 

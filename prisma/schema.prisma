@@ -570,6 +570,24 @@ model PaymentEvent {
   @@index([status, createdAt])
 }
 
+/// Paket top-up CTF yang bisa diubah Super Admin tanpa deploy.
+/// `PaymentOrder` tetap menyimpan snapshot nama/nominal/CTF saat order dibuat,
+/// jadi mengubah paket tidak mengubah order lama.
+model PaymentPackage {
+  code        String   @id
+  name        String
+  amountIdr   Int
+  ctfAmount   Int
+  description String   @default("")
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isActive, sortOrder])
+}
+
 model FessCharge {
   id             String           @id @default(cuid())
   fessId         String?          @unique

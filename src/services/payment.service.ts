@@ -8,14 +8,13 @@ import {
   BASE_REVENUE_PER_FESS_IDR,
   CTF_PER_PAID_FESS,
   PAYMENT_METHODS,
-  PAYMENT_PACKAGES,
   findPaymentMethod,
-  findPaymentPackage,
   type PaymentMethodCode,
 } from '../constants/payments.js';
 import { parseMidtransDate } from '../utils/midtrans-date.util.js';
 import { CtfWalletService } from './ctf-wallet.service.js';
 import { MidtransError, MidtransService } from './midtrans.service.js';
+import { PaymentPackageService } from './payment-package.service.js';
 
 export type PaymentUser = {
   id: string;
@@ -126,14 +125,14 @@ function eventKey(payload: Record<string, unknown>) {
 }
 
 export class PaymentService {
-  static getPackages() {
+  static async getPackages() {
     return {
       enabled: ENV.PAYMENTS_ENABLED,
       configured: MidtransService.isConfigured(),
       currency: 'IDR',
       ctf_per_paid_fess: CTF_PER_PAID_FESS,
       base_revenue_per_paid_fess_idr: BASE_REVENUE_PER_FESS_IDR,
-      packages: PAYMENT_PACKAGES,
+      packages: await PaymentPackageService.listActive(),
       methods: PAYMENT_METHODS,
     };
   }
@@ -155,7 +154,7 @@ export class PaymentService {
     }
 
     assertRequestKey(input.requestKey);
-    const pkg = findPaymentPackage(input.packageCode);
+    const pkg = await PaymentPackageService.findForOrder(input.packageCode);
     if (!pkg) throw paymentError('UNKNOWN_PACKAGE', 'Paket top-up tidak ditemukan', 400);
     const method = findPaymentMethod(input.method);
     if (!method) throw paymentError('UNKNOWN_PAYMENT_METHOD', 'Metode pembayaran tidak dikenal', 400);

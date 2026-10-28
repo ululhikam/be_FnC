@@ -130,3 +130,14 @@ export const PAYMENT_PACKAGES: PaymentPackage[] = [
 export function findPaymentPackage(code: string): PaymentPackage | undefined {
   return PAYMENT_PACKAGES.find((pkg) => pkg.code === code);
 }
+
+/** Batas kode paket: huruf kecil, angka, garis bawah. Kode tidak bisa diubah. */
+export const PACKAGE_CODE_PATTERN = /^[a-z0-9_]{3,32}$/;
+
+/** Normalisasi kode paket dari input admin; string kosong bila tidak valid. */
+export function sanitizePackageCode(code: string | null | undefined): string {
+  const clean = String(code ?? '')
+    .trim()
+    .toLowerCase();
+  return PACKAGE_CODE_PATTERN.test(clean) ? clean : '';
+}

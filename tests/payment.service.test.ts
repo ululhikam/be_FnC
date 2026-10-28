@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ENV } from '../src/config/env.js';
 import { prisma } from '../src/config/prisma.js';
+import { invalidateCache } from '../src/utils/cache.util.js';
 import { CtfWalletService } from '../src/services/ctf-wallet.service.js';
 import { MidtransService } from '../src/services/midtrans.service.js';
 import { PaymentService } from '../src/services/payment.service.js';
@@ -19,6 +20,10 @@ vi.mock('../src/config/prisma.js', () => {
       create: vi.fn(),
       findUnique: vi.fn(),
       update: vi.fn(),
+    },
+    paymentPackage: {
+      findUnique: vi.fn(),
+      findMany: vi.fn(),
     },
     adminAuditLog: {
       create: vi.fn(),
@@ -82,12 +87,31 @@ const originalEnabled = ENV.PAYMENTS_ENABLED;
 const originalServerKey = ENV.MIDTRANS_SERVER_KEY;
 const originalProduction = ENV.MIDTRANS_IS_PRODUCTION;
 
+/** Baris tabel PaymentPackage yang dipakai oleh resolve paket di createOrder. */
+const packageRow = {
+  code: 'coba_dulu',
+  name: 'Coba Dulu',
+  amountIdr: 5000,
+  ctfAmount: 25,
+  description: 'Paket kecil untuk mencoba top-up dan publish.',
+  sortOrder: 10,
+  isActive: true,
+  updatedById: null,
+  updatedAt: new Date('2026-10-24T00:00:00.000Z'),
+};
+
 describe('PaymentService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    invalidateCache('payment-packages:');
     ENV.PAYMENTS_ENABLED = true;
     ENV.MIDTRANS_SERVER_KEY = 'SB-Mid-server-test';
     ENV.MIDTRANS_IS_PRODUCTION = false;
+    vi.mocked(prisma.paymentPackage.findUnique).mockImplementation(
+      async (args: any) =>
+        (args?.where?.code === packageRow.code ? { ...packageRow } : null) as any
+    );
+    vi.mocked(prisma.paymentPackage.findMany).mockResolvedValue([{ ...packageRow }] as any);
     vi.mocked(prisma.paymentOrder.findUnique).mockResolvedValue(null);
     vi.mocked(prisma.paymentOrder.findMany).mockResolvedValue([]);
     vi.mocked(prisma.paymentOrder.count).mockResolvedValue(0);
@@ -126,12 +150,12 @@ describe('PaymentService', () => {
     ENV.MIDTRANS_IS_PRODUCTION = originalProduction;
   });
 
-  it('exposes packages and the payment kill switch', () => {
+  it('exposes packages and the payment kill switch', async () => {
     ENV.PAYMENTS_ENABLED = false;
-    const packages = PaymentService.getPackages();
+    const packages = await PaymentService.getPackages();
     expect(packages.enabled).toBe(false);
     expect(packages.ctf_per_paid_fess).toBe(1);
-    expect(packages.packages.map((pkg) => pkg.code)).toContain('bundling');
+    expect(packages.packages.map((pkg) => pkg.code)).toContain('coba_dulu');
     expect(packages.methods.map((method) => method.code)).toContain('qris');
   });
 

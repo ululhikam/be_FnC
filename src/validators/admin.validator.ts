@@ -74,6 +74,60 @@ export const AdminPaymentEventsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 
+/**
+ * Paket top-up: Super Admin boleh mengubah nama, nominal, dan CTF tanpa deploy.
+ * Kode paket immutable (dipakai `PaymentOrder.packageCode`) dan divalidasi ketat.
+ */
+export const AdminPaymentPackageFieldsSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(2, 'Nama paket wajib diisi minimal 2 karakter')
+    .max(40, 'Nama paket maksimal 40 karakter'),
+  amount_idr: z
+    .number()
+    .int('Nominal harus bilangan bulat')
+    .min(1_000, 'Nominal minimal Rp1.000')
+    .max(10_000_000, 'Nominal maksimal Rp10.000.000'),
+  ctf_amount: z
+    .number()
+    .int('Jumlah CTF harus bilangan bulat')
+    .min(1, 'Jumlah CTF minimal 1')
+    .max(1_000_000, 'Jumlah CTF maksimal 1.000.000'),
+  description: z.string().trim().max(160, 'Deskripsi maksimal 160 karakter').default(''),
+  sort_order: z.number().int().min(0).max(999).default(0),
+  is_active: z.boolean().default(true),
+  reason: z
+    .string()
+    .trim()
+    .min(5, 'Alasan wajib diisi minimal 5 karakter')
+    .max(500, 'Alasan maksimal 500 karakter'),
+  password: z.string().min(1, 'Konfirmasi kata sandi wajib diisi').max(200),
+});
+
+export const AdminPaymentPackageCreateSchema = AdminPaymentPackageFieldsSchema.extend({
+  code: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(
+      /^[a-z0-9_]{3,32}$/,
+      'Kode paket 3-32 karakter: huruf kecil, angka, atau garis bawah'
+    ),
+});
+
+export const AdminPaymentPackageUpdateSchema = AdminPaymentPackageFieldsSchema;
+
+export const AdminPaymentPackageStatusSchema = z.object({
+  is_active: z.boolean(),
+  reason: z
+    .string()
+    .trim()
+    .min(5, 'Alasan wajib diisi minimal 5 karakter')
+    .max(500, 'Alasan maksimal 500 karakter'),
+  password: z.string().min(1, 'Konfirmasi kata sandi wajib diisi').max(200),
+});
+
 export const SecurityControlsSchema = z.object({
   rate_limit_per_ip: z.number().int().min(1).max(60).optional(),
   ai_filter_active: z.boolean().optional(),

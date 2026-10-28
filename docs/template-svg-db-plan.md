@@ -609,6 +609,8 @@ Yang **tetap** di frontend: `videoNormalizer.js` (ffmpeg.wasm) dan `MediaUploade
   dengan import DB.
 - Path deterministik `templates/<key>-v<version>.png` (upsert), PNG 540×675 (±40–75 KB/template,
   total ±700 KB). `version` dibaca dari DB; `--no-db` memakai v1 untuk unggah sebelum import.
+  Setelah import yang menaikkan `version` (checksum SVG berubah), jalankan ulang script agar
+  path `v<n>` baru dan `thumbnailUrl` ikut diperbarui.
 - Opsi: `--env dev|prod`, `--only`, `--host`, `--width`, `--out`, `--no-db`, `--dry-run`,
   `--no-quote`, dan `--confirm-prod` (guard tulis DB produksi).
 - Sudah diunggah ke bucket dev (`confess-media-dev`) dan produksi (`confess-media`); 12 baris

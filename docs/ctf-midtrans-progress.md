@@ -76,6 +76,33 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 - Kill switch `PAYMENTS_ENABLED` tetap di env dan tetap butuh deploy — belum bisa diubah dari
   konsol.
 
+### Kupon promo
+
+- Kupon **mengurangi harga bayar (IDR)**, bukan jumlah CTF: pengguna tetap menerima CTF penuh
+  paket yang dipilih. Karena itu diskon tidak boleh membuat sisa bayar di bawah
+  `MIN_CHARGEABLE_IDR` (Rp1.000).
+- Tipe diskon dipilih per kupon: `FIXED` (nominal rupiah) atau `PERCENT` (1–100, dibulatkan ke
+  bawah, opsional dibatasi `maxDiscountIdr`).
+- Kuota: `maxRedemptions` (null = tanpa batas) dan **selalu 1x per akun** (`maxPerUser = 1`).
+  Berlaku untuk semua paket aktif; `minAmountIdr` bisa dipakai bila promo hanya untuk paket besar.
+- Kode **diketik admin**, immutable, dinormalisasi ke huruf besar (`^[A-Z0-9_-]{3,32}$`). Kupon
+  tidak pernah dihapus, hanya dinonaktifkan, sehingga riwayat order tetap utuh.
+- Siklus pemakaian: order dibuat → baris `CouponRedemption` `RESERVED` + `redemptionCount`
+  bertambah (atomik, `updateMany` dengan `redemptionCount < maxRedemptions`) → lunas menjadi
+  `CONFIRMED` → order `FAILED` menjadi `RELEASED` dan kuota dikembalikan. Order `EXPIRED`
+  **tetap memegang kuota** karena masih bisa dilunasi lewat notifikasi Midtrans.
+- Diskon dihitung sekali saat order dibuat dan disimpan sebagai snapshot
+  (`PaymentOrder.couponCode`, `PaymentOrder.discountIdr`); perubahan kupon setelahnya tidak
+  mengubah order lama, dan `Idempotency-Key` yang sama dengan kupon berbeda ditolak
+  (`IDEMPOTENCY_CONFLICT`).
+- Setiap mutasi kupon wajib alasan ≥5 karakter + kata sandi Super Admin, ditulis ke
+  `AdminAuditLog` (`COUPON_CREATED` / `_UPDATED` / `_STATUS_CHANGED`) dan `SystemLog`
+  source `PAYOUT`.
+- Pratinjau `POST /payments/coupons/preview` hanya menghitung potongan (tidak mengunci kuota) dan
+  dibatasi 20 permintaan/menit agar kode tidak bisa dienumerasi cepat.
+- Konsol: `/super-admin/keuangan?tab=payments` → kartu “Kupon promo”. Halaman top-up punya input
+  kupon opsional dengan pratinjau harga sebelum order dibuat.
+
 ### Keamanan & refund
 
 - `User.balance` legacy dianggap CTF dan sudah dimigrasikan ke `CtfWallet` integer.
@@ -289,6 +316,11 @@ Jangan pernah menaruh `MIDTRANS_SERVER_KEY` di frontend atau di commit.
 | PUT | `/api/admin/base-revenue/bank` | Base Admin, Super Admin + password |
 | POST | `/api/admin/base-revenue/kyc` | Super Admin + password |
 | POST | `/api/admin/base-revenue/free-forever` | Super Admin + password + reason |
+| GET | `/api/admin/payments/coupons` | Super Admin |
+| POST | `/api/admin/payments/coupons` | Super Admin + password + reason |
+| PATCH | `/api/admin/payments/coupons/:code` | Super Admin + password + reason |
+| POST | `/api/admin/payments/coupons/:code/status` | Super Admin + password + reason |
+| POST | `/api/payments/coupons/preview` | User login + email terverifikasi |
 
 Aksi review payout: `approve`, `reject`, `mark_paid`, `mark_failed`.
 Approve dan mark-paid mewajibkan password re-auth. Semua aksi menolak self-approval dan menulis audit log.
@@ -458,6 +490,7 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 | 2026-10-25 | Input rekening payout direvisi (frontend `8eb4381`): picker 22 bank dengan pencarian, logo resmi, initials brand, fallback `Bank lainnya`, keyboard/outside-click, dan logo rekening aktif. 244 checks lokal + verifikasi deployed lulus; frontend dev `dpl_B1tkYEbzu3aEN6z2k2QLUAV1cUJf`; backend/flags/production tidak berubah. |
 | 2026-10-28 | Kontrol Super Admin `freeForever` diberi muka **Harga fess**: tabel menampilkan `Gratis` atau `1 CTF / fess`, dialog memilih `Gratis permanen (0 CTF)` vs `Normal (1 CTF)` dengan alasan + re-auth. Skema tidak berubah; `freeForever` tetap satu-satunya sumber kebenaran dan harga normal tetap `CTF_PER_PAID_FESS`. Response admin kini menyertakan `fess_price_ctf` agar UI tidak hardcode. |
 | 2026-10-28 | Paket top-up dipindah ke tabel `PaymentPackage` (migrasi `20261028020000_payment_packages`, seed 5 paket lama via SQL) agar Super Admin bisa mengubah nominal/CTF tanpa deploy. Endpoint baru `GET/POST /admin/payments/packages`, `PATCH /admin/payments/packages/:code`, `POST /admin/payments/packages/:code/status` dengan re-auth, alasan, audit, dan rate limit. Katalog publik tetap camelCase dan tetap kompatibel `TopUpFlow`; fallback konstanta hanya saat tabel belum ada. `PAYMENTS_ENABLED` tetap env-only. |
+| 2026-10-29 | Kupon promo ditambahkan (migrasi `20261028030000_coupons`): tabel `Coupon` + `CouponRedemption`, kolom snapshot `PaymentOrder.couponCode`/`discountIdr`. Diskon `FIXED`/`PERCENT` (dibatasi `maxDiscountIdr`) mengurangi harga bayar, bukan jumlah CTF, dan sisa bayar wajib ≥ Rp1.000. Kuota total opsional + 1x per akun; kuota dikunci atomik saat order dibuat (`RESERVED`), dikonfirmasi saat lunas, dilepas hanya saat `FAILED` (order `EXPIRED` tetap memegang kuota). Endpoint admin `GET/POST /admin/payments/coupons`, `PATCH /:code`, `POST /:code/status` (re-auth + alasan + audit `COUPON_*`) dan pratinjau pengguna `POST /payments/coupons/preview`. Konsol `/super-admin/keuangan?tab=payments` mendapat kartu “Kupon promo”; halaman top-up mendapat input kupon dengan pratinjau harga. 35 test kupon baru (13 util + 22 service), backend full suite 457/457, build backend/frontend lulus, verifikasi API dev 18/18 dan UI headless 10/10. |
 
 ## 10. Checklist production (belum dijalankan)
 
@@ -466,7 +499,8 @@ Semua item di bawah ini **rencana**; belum ada aksi terhadap production.
 ### Pre-flight
 
 - [ ] Review dan merge branch `feat/ctf-midtrans` setelah sign-off eksplisit.
-- [ ] Backup database production dan terapkan migrasi additive (`prisma migrate deploy`) sebelum deploy kode, termasuk enum `WELCOME_BONUS`.
+- [ ] Backup database production dan terapkan migrasi additive (`prisma migrate deploy`) sebelum deploy kode, termasuk enum `WELCOME_BONUS`, tabel `PaymentPackage` (`20261028020000_payment_packages`), serta tabel `Coupon`/`CouponRedemption` (`20261028030000_coupons`). Verifikasi region DB production sebelum merge, lalu pastikan 5 paket top-up ikut ter-seed.
+- [ ] Verifikasi kupon promo: buat satu kupon uji, cek pratinjau di halaman top-up, pastikan diskon hanya mengubah harga bayar dan CTF tetap utuh, lalu nonaktifkan kupon uji dan hapus setelah canary.
 - [ ] Isi env production: `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false`, `WELCOME_CTF_BONUS=1`, `MIDTRANS_IS_PRODUCTION=true`, production server/client/merchant key, `PAYMENT_RECONCILE_SECRET` kuat, DB URL, JWT, storage, email.
 - [ ] Pastikan tidak ada key sandbox di project production dan tidak ada key production di frontend.
 - [ ] Set Midtrans production notification URL ke `https://<domain-production>/api/payments/midtrans/notification`; aktifkan metode pembayaran dan izin refund yang disetujui.

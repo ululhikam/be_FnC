@@ -174,22 +174,25 @@ Kanvas **1080×1350** (4:5, sama dengan `ASPECTS.portrait`), output **JPEG q90**
 
 | Layer | Isi | Aturan |
 |---|---|---|
-| L0 | Foto user | Cover-crop (fokus atas-tengah agar wajah tidak terpotong), `scale 1.08`, blur 24–32 px |
-| L1 | Gradien 2–3 stop dari palet foto | Atas `alpha 0.10` → bawah `alpha 0.88`, warna dominan digelapkan (LCh −25%) |
-| L2 | Aksen | Satu bentuk geometris (garis/ring) memakai warna aksen palet, opacity 0.25 |
-| L3 | Judul | Font `display` (Bebas Neue) atau `sans` (Poppins 700), auto-fit 88→44 px, maks 4 baris |
-| L4 | Label base | Nama base kecil di atas judul, `Poppins 500`, 30 px, opacity 0.9 (opsional bila judul panjang) |
-| L5 | Watermark | Kiri-bawah `@handle` (Poppins 600, 34 px), kanan-bawah `fessncurious.vercel.app` (Fira Mono 26 px, opacity 0.8) |
+| L0 | Foto user | Cover-crop (fokus atas-tengah agar wajah tidak terpotong), blur 28 px, `brightness 0.72`, `saturation 1.05` |
+| L1 | Gradien 3 stop dari palet foto | Atas `alpha 0.12` → tengah `0.45` → bawah `0.94` (`0.94` di zona watermark), warna dominan digelapkan 40% |
+| L1b | Plat judul | Kapsul gelap `rgba` di belakang judul; alpha **0.32–0.86** hasil ukur rata-rata luminance foto di pita 25–75% tinggi |
+| L2 | Aksen | Satu ring + satu garis memakai warna aksen palet, opacity 0.28 / 0.60 |
+| L3 | Judul | Poppins **800** uppercase, auto-fit 92→44 px, maks 4 baris, hindari baris terakhir satu kata |
+| L4 | Label base | Nama base kecil di atas judul, `Poppins 600`, 24 px, `letter-spacing 4` |
+| L5 | Watermark | Kiri-bawah `@handle` (Poppins 600, 34 px), kanan-bawah `fessncurious.vercel.app` (Fira Mono 25 px) |
 | L6 | Zona aman | Margin 72 px; judul tidak menyentuh area watermark (min. gap 32 px) |
 
 Aturan tambahan:
 
-- **Kontras wajib** ≥ 4.5:1 (target 7:1) antara judul dan rata-rata lokal di belakangnya. Jika gagal, overlay digelapkan bertahap (3 langkah) sebelum mengecilkan font.
+- **Kontras wajib** ≥ 4.5:1 (target 7:1). Karena foto user tidak bisa dikendalikan, kontras dijaga oleh **plat judul adaptif**: rata-rata luminance foto di pita judul diukur lebih dulu, lalu alpha plat dipilih (foto terang = plat lebih pekat). QA 4 foto (gelap, terang, potret, langit) menghasilkan **8,5–14:1** untuk judul putih.
 - **Tanpa hex baru di kode** hanya berlaku untuk frontend; backend menghitung warna dari foto, bukan dari konstanta tema.
 - **Determinisme**: palet dari downscale 24×30 + kuantisasi; tidak ada `Math.random()` — hasil untuk input sama harus sama (memudahkan uji & retry).
 - **Emoji** di judul maksimal 1, karena emoji dirender lewat `assets/emoji-paths.json` (Twemoji), bukan font sistem.
-- **Watermark** tidak boleh menutupi wajah: kalau deteksi fokus tidak tersedia (tanpa AI vision), zona watermark tetap di 18% bawah dan foto di-crop agar subjek di atas garis itu.
-- **Fallback tanpa foto** (mis. video saja): gradien dari `base.color` + pola garis halus; judul tetap ada, watermark tetap ada.
+- **Watermark** tidak boleh menutupi wajah: tanpa AI vision, zona watermark tetap di 18% bawah dan foto di-crop agar subjek di atas garis itu.
+- **Fallback tanpa foto** (hanya video, atau tanpa media sama sekali): **tidak ada** slide thumbnail. Publish berjalan seperti sebelum fitur ini (lihat §6 poin 4).
+- **Tipografi wajib lewat resvg**, bukan `sharp().composite(svg)`: sharp merender SVG dengan font sistem, sehingga Poppins hilang di Vercel. Overlay dirender ke PNG memakai `fonts/` yang sama dengan kartu.
+- **Pengukuran lebar teks** memakai `opentype.js` dengan margin aman 5% karena lebar glyph hasil resvg ±3% lebih besar dari hasil pengukuran.
 
 Contoh komposisi (bukan kode final):
 
@@ -216,7 +219,7 @@ Batas keras IG = **10 item**. Saat ini: `media ≤ 4`, kartu = `10 - media`, thu
 ### Aturan yang diusulkan
 
 ```text
-thumb   = 1 bila ada foto gambar, selain itu 0
+thumb   = 1 bila ada ≥1 media gambar, selain itu 0
 mediaN  = jumlah media user yang akan diposting (≤ 4)
 maxCard = 10 - mediaN - thumb          // minimal 5, karena mediaN ≤ 4
 cards   = kartu.slice(0, maxCard)
@@ -228,8 +231,8 @@ Konsekuensi:
 1. Thumbnail **tidak pernah** menggeser media user; yang berkurang adalah kartu teks (buatan sistem).
 2. Bila kartu terpotong, `ellipsis` dan jumlah halaman sudah ditangani renderer (`canvas.service.ts:663-673`, `:871-882`). Perilaku ini dicatat di `SystemLog` (`source: CANVAS_WORKER`, `tone: muted`).
 3. Semantik token `card:<i>` **tidak berubah** karena `cardItems` dipotong sebelum `arrangeCarouselItems` (perilaku yang sudah ada di `:273-274`). Thumbnail **tidak** memakai token di `carouselOrder` — ia selalu di indeks 0 dan tidak bisa di-drag.
-4. Bila media hanya video: thumbnail tetap dibuat (background gradien base), tidak ada transkrip → AI hanya memakai teks fess.
-5. Bila `THUMBNAIL_ENABLED=false` atau thumbnail gagal: `items` = perilaku lama (tidak ada slide tambahan); publish tetap jalan.
+4. **Tanpa foto gambar** (hanya video atau tanpa media): **tidak ada** slide thumbnail, karena cover butuh foto sebagai latar. Fotonya sendiri tidak pernah dikirim ke AI; hanya dibaca backend untuk render.
+5. Bila `THUMBNAIL_ENABLED=false`, base memilih `off`, atau render gagal: `items` = perilaku lama (tidak ada slide tambahan); publish tetap jalan.
 
 ---
 
@@ -661,6 +664,22 @@ Prinsip: **tidak ada test yang memanggil internet.** Provider AI dan Supabase se
 | P4 — Eksperimen | Varian judul A/B, pemilihan foto cover manual, alt-text IG, background AI opsional | Menunggu data P1–P3 |
 
 Rilis production mengikuti aturan repo: PR draft → review → merge ke `main` (auto-deploy), migrasi dijalankan sebelum merge, dan flag tetap `false` sampai sign-off.
+
+### 16.1 Status implementasi P1 (backend + frontend)
+
+| Area | Status |
+|---|---|
+| Migrasi additive (`Fess.thumbnail*`, `Base.thumbnailMode`, `AiGeneration`) | ✅ diterapkan ke DB dev (`ap-south-1`) via `db execute` + `migrate resolve --applied`; diff dev = 0 |
+| `src/utils/thumbnail.util.ts` (foto, slot, palet, kontras, plat adaptif, auto-fit, widow, watermark, opt-out) | ✅ |
+| `src/utils/remote-image.util.ts` (guard SSRF + fetch gambar) | ✅ dipakai thumbnail & avatar kanvas |
+| `src/services/thumbnail.service.ts` (render 1080×1350, upload, persist, reuse, preview) | ✅ |
+| Integrasi `canvas.service` (slide 0, pemotongan kartu, `igPayload`, preview) | ✅ thumbnail dibuat sebelum `persistIgState` |
+| `POST /api/fesses/:id/thumbnail` (regenerate hanya `failed`/`idle`, 5/menit, audit) | ✅ |
+| Preview composer + slide cover di `PublishModal`/`PostPreviewCarousel` | ✅ |
+| Test | ✅ 40 file / 484 test hijau; `tsc` build bersih |
+| Belum | Aktifkan `THUMBNAIL_ENABLED=true` di project dev, QA visual di UI, P2 judul AI |
+
+Catatan QA visual P1 (4 foto uji, picsum): kontras judul 8,5–14:1; watermark bawah 4,9–14:1. Iterasi yang dilakukan: plat judul adaptif, blur 28 px + `brightness 0.72`, gradient 0.12/0.45/0.94, margin aman 5% untuk pengukuran lebar, dan penghindaran baris terakhir satu kata.
 
 ---
 

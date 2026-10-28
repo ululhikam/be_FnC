@@ -55,7 +55,10 @@ vi.mock('sharp', () => ({
 }));
 
 import { TemplateAdminService } from '../src/services/template-admin.service.js';
-import { analyzeTemplateSvg } from '../src/utils/template-admin.util.js';
+import {
+  analyzeTemplateSvg,
+  TemplateAdminError,
+} from '../src/utils/template-admin.util.js';
 import { CanvasService } from '../src/services/canvas.service.js';
 import { StorageService } from '../src/services/storage.service.js';
 import { AdminSecurityService } from '../src/services/admin-security.service.js';
@@ -218,6 +221,22 @@ describe('TemplateAdminService.create', () => {
 
     expect(prisma.template.create).not.toHaveBeenCalled();
   });
+
+  it('menolak SVG tidak aman sebelum menyimpan', async () => {
+    vi.mocked(prisma.template.findUnique).mockResolvedValueOnce(null);
+    vi.mocked(analyzeTemplateSvg).mockRejectedValueOnce(
+      new TemplateAdminError('TEMPLATE_UNSAFE', 'SVG ditolak: Tag <script> tidak diizinkan.', 422)
+    );
+
+    await expect(
+      TemplateAdminService.create('usr_admin', { key: '13-papan-kampus', svg: '<svg/>' })
+    ).rejects.toMatchObject({
+      code: 'TEMPLATE_UNSAFE',
+      status: 422,
+    });
+
+    expect(prisma.template.create).not.toHaveBeenCalled();
+  });
 });
 
 describe('TemplateAdminService.update', () => {
@@ -343,6 +362,26 @@ describe('TemplateAdminService.replaceSvg', () => {
       expect.anything()
     );
     expect(result.version).toBe(2);
+  });
+
+  it('menolak SVG tidak aman sebelum mengubah baris', async () => {
+    vi.mocked(prisma.template.findUnique).mockResolvedValueOnce(adminRow() as any);
+    vi.mocked(analyzeTemplateSvg).mockRejectedValueOnce(
+      new TemplateAdminError(
+        'TEMPLATE_INVALID',
+        'Dokumen harus berupa SVG murni dengan elemen <svg> sebagai root.',
+        422
+      )
+    );
+
+    await expect(
+      TemplateAdminService.replaceSvg('usr_admin', '13-papan-kampus', '<html></html>')
+    ).rejects.toMatchObject({
+      code: 'TEMPLATE_INVALID',
+      status: 422,
+    });
+
+    expect(prisma.template.update).not.toHaveBeenCalled();
   });
 });
 

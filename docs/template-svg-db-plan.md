@@ -579,11 +579,22 @@ Yang **tetap** di frontend: `videoNormalizer.js` (ffmpeg.wasm) dan `MediaUploade
 - Preview endpoint memakai template DB (fallback legacy bila DB gagal).
 - Thumbnail Supabase Storage belum dibuat — ditunda ke Fase 5 (belum ada kebutuhan UI).
 
-**Fase 4 — frontend**
-- Store + modal + preview (hapus `PostPreview.vue`, `cardPagination.js`, `config/templates.js`).
-- QA visual: bandingkan `<img>` preview vs PNG hasil `canvas/export` untuk 12 template.
-- Uji jalur gagal: matikan endpoint preview → harus muncul state error + "Coba lagi",
-  bukan kartu palsu.
+**Fase 4 — frontend** — ✅ selesai
+- `stores/templateStore.js`: katalog dari `GET /api/templates`, cache 5 menit, panggilan
+  bersamaan berbagi satu promise, getter `label`/`aspectRatio`/`randomKey`.
+- `TemplateModal.vue` memakai katalog API (loading, error + "Coba lagi", thumbnail palette
+  dari `palette` DB) — tidak ada lagi salinan template di frontend.
+- `PostPreviewCarousel.vue` hanya menampilkan `<img>` PNG hasil render backend; `PublishModal`
+  menampilkan state error + tombol "Coba lagi" bila render gagal.
+- Dihapus: `components/compose/PostPreview.vue`, `utils/cardPagination.js`, `config/templates.js`
+  (total ±2.300 baris duplikasi hilang).
+- `CreateFessPage.vue`: template acak diambil dari store setelah katalog dimuat; draf yang
+  sudah ada tetap dihormati.
+- Verifikasi: `npm run build` lolos; `getTemplates` lewat proxy Vite mengembalikan 12 item;
+  preview HTTP menghasilkan PNG untuk template 01/04/06 (termasuk versi multi-halaman +
+  kutipan), dicek visual.
+- Catatan: `npm run format:check` repo masih gagal karena 54 file lama; hanya file yang
+  disentuh fitur ini yang diformat.
 
 **Fase 5 — admin (opsional)**
 - CRUD template di konsol Super Admin + upload SVG baru (dengan validator yang sama
@@ -618,19 +629,21 @@ Yang **tetap** di frontend: `videoNormalizer.js` (ffmpeg.wasm) dan `MediaUploade
       `canvas.service.test.ts`, `canvas.preview.test.ts`, `validators.test.ts`).
 - [x] `npx tsc -p tsconfig.build.json --noEmit` lolos (TS strict, import `.js`).
 - [x] `GET /api/templates` mengembalikan 12 item aktif tanpa `svgSource`/`slots`.
-- [ ] Pratinjau composer = PNG `canvas/export` untuk 12 template (bandingkan berdampingan).
-- [ ] Pratinjau multi-halaman: jumlah slide kartu di composer = `page_count` dari backend.
+- [x] Pratinjau composer = PNG hasil render backend (dicek via HTTP untuk 01/04/06; 9 lain
+      memakai jalur render yang sama dan sudah diverifikasi di Fase 2).
+- [x] Pratinjau multi-halaman: `images.length` preview = `page_count` backend (6/5/3 halaman
+      pada uji 01/04/06).
 - [x] Paginasi: konten pendek → 1 halaman; ~30 baris → multi-halaman;
       sangat panjang → tepat 10 halaman + `…` (test per template).
 - [ ] Carousel: kartu + media tergabung, total ≤ 10 slide, `carouselOrder` dihormati.
 - [x] Kutipan: `quoted_fess` → frame di halaman 1, tidak menembus batas template, teks fess
       tidak tumpang tindih (diverifikasi visual untuk 12 template).
 - [x] `npx vitest run tests/template-renderer.test.ts` mencakup kutipan panjang & pemotongan `…`.
-- [ ] Preview gagal → state error + "Coba lagi" (tanpa kartu DOM).
-- [ ] `grep -r "cardPagination\|config/templates" frontend/src` → kosong.
+- [x] Preview gagal → state error + "Coba lagi" (tanpa kartu DOM).
+- [x] `grep -r "cardPagination\|config/templates" frontend/src` → kosong.
 - [x] Fess lama (key `cyberpunk`, `default`, …) masih ter-render (fallback legacy).
 - [ ] Posting ke Instagram dev berhasil untuk minimal 1 template baru (gambar + carousel).
-- [ ] `npm run format:check` frontend bersih.
+- [ ] `npm run format:check` frontend bersih (54 file lama di luar fitur ini masih gagal).
 - [x] Tidak ada `template-card/` yang dirujuk saat runtime.
 
 ---

@@ -8,12 +8,12 @@ Keputusan produk yang sudah dikunci:
 
 | Topik | Keputusan |
 |---|---|
-| Provider AI | **Adapter generik "OpenAI-compatible"**; default dev: Gemini free tier lewat endpoint kompatibelnya. Bisa diganti ke OpenRouter (DeepSeek, dsb.), OpenAI, atau provider lain hanya dengan `AI_BASE_URL` + `AI_MODEL` + `AI_API_KEY` |
-| Anggaran | Kuota permintaan (RPM/RPD) milik provider yang aktif, bukan dolar |
+| Provider AI | **Adapter generik "OpenAI-compatible"**; default: **OpenRouter** (`AI_BASE_URL=https://openrouter.ai/api/v1`) dengan model gratis DeepSeek. Bisa diganti ke Gemini/OpenAI/DeepSeek langsung hanya lewat env |
+| Anggaran | Kuota permintaan (RPM/RPD), bukan dolar. Plafon nyata ditentukan provider; plafon internal disetel di bawahnya |
 | Watermark | Handle **base** + host frontend aktif |
 | Judul | 3–5 kata, dibuat AI, **tidak bisa diedit** (final setelah dibuat) |
 | Cakupan | **Instagram saja** (bukan cover feed web) |
-| Opt-out | Per base: `auto` (default) / `no_ai` / `off` |
+| Opt-out | Per base: `auto` (default) / `no_ai` / `off` — **aktif sejak rilis pertama** (via API/DB, UI menyusul) |
 | Urutan rilis | **P1 (thumbnail tanpa AI) lebih dulu**, baru P2 judul AI |
 
 ---
@@ -98,9 +98,10 @@ Konsekuensi penting:
 | D10 | Dua kill switch terpisah: `THUMBNAIL_ENABLED`, `AI_ENABLED` | Satu flag | Fitur visual bisa rilis tanpa AI; AI bisa dimatikan mendadak |
 | D11 | Domain watermark dari `frontendHostLabel()`, handle dari `base.handle`/`base.igAccount` | Hardcode domain, handle penulis | Dev/staging tidak menulis domain production; anonimitas penulis terjaga |
 | D12 | Judul **3–5 kata**, maks 60 karakter, 1–4 baris auto-fit | Bebas | Keterbacaan di feed mobile (≈ 30% lebar layar) |
-| D13 | Provider default: **OpenAI-compatible adapter** (satu implementasi HTTP), provider dipilih lewat `AI_BASE_URL` + `AI_MODEL` | Satu SDK/provider hardcoded | Sekali tulis, bisa Gemini free tier, OpenRouter (DeepSeek/GPT/dll.) atau OpenAI tanpa ubah kode |
-| D14 | Anggaran = **kuota permintaan** (RPM/RPD) provider aktif | Budget USD | Free tier tidak menagih; yang perlu dijaga rate limit & kuota harian |
+| D13 | Provider default: **OpenRouter** (DeepSeek gratis), lewat adapter OpenAI-compatible | SDK/provider hardcoded | Satu key untuk banyak model; ganti model = ganti `AI_MODEL`, tanpa deploy |
+| D14 | Anggaran = **kuota permintaan** (RPM/RPD) provider, plafon internal di bawahnya | Budget USD | Free tier tidak menagih; risiko sebenarnya adalah 429 |
 | D15 | Thumbnail hanya untuk **Instagram** | Cover feed web juga | Menghindari perubahan tampilan feed yang belum diminta |
+| D16 | Opt-out per base **aktif sejak rilis** | Menunggu UI | Base bisa mematikan lebih awal; UI menyusul tanpa mengubah skema |
 
 ---
 
@@ -264,21 +265,22 @@ export interface AiProvider {
 
 | Provider | `AI_BASE_URL` | Contoh `AI_MODEL` | Catatan |
 |---|---|---|---|
-| Gemini (free tier) | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-2.5-flash-lite` | Default dev; gratis dengan batas RPM/RPD |
-| OpenRouter (DeepSeek) | `https://openrouter.ai/api/v1` | `deepseek/deepseek-chat` | Satu key untuk banyak model; header `HTTP-Referer`/`X-Title` opsional |
+| **OpenRouter (default)** | `https://openrouter.ai/api/v1` | `deepseek/deepseek-chat-v3.1:free` | Satu key banyak model; model `:free` punya batas ketat. Kirim header `HTTP-Referer` & `X-Title` (opsional, untuk atribusi) |
+| Gemini (free tier) | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-2.5-flash-lite` | Alternatif gratis; batas RPM/RPD terpisah |
 | DeepSeek langsung | `https://api.deepseek.com/v1` | `deepseek-chat` | Murah, berbayar |
 | OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` | Berbayar, kebijakan data paling jelas |
 
-- Batas provider (RPM/RPD) berbeda-beda dan berubah; **angka final diverifikasi saat implementasi** lalu dijadikan nilai `AI_RPM_LIMIT` / `AI_DAILY_*`. Adapter tidak boleh mengasumsikan angka tertentu.
+- Batas provider (RPM/RPD) berbeda-beda dan berubah-ubah. Angka indikatif OpenRouter untuk model `:free`: ±20 RPM dan ±50 permintaan/hari (naik ke ±1.000/hari bila akun pernah top-up ≥ US$10). **Verifikasi di dashboard OpenRouter saat implementasi**; angka itu yang menentukan `AI_RPM_LIMIT` / `AI_DAILY_*`, bukan sebaliknya.
+- OpenRouter punya banyak model: kalau kualitas judul DeepSeek kurang, cukup ganti `AI_MODEL` (mis. ke model lain di katalog OpenRouter) tanpa ubah kode.
 - Provider di-inject ke `AiService` (constructor/param) supaya test tidak perlu jaringan.
 - Semua panggilan HTTP: `AbortController` + `timeoutMs`, retry **satu kali** hanya untuk 429/5xx/timeout, tanpa retry untuk 4xx validasi. `429` bukan error fatal — langsung fallback.
 
-**Catatan privasi tier gratis (wajib diputuskan sebelum production):** layanan gratis umumnya memakai konten yang dikirim untuk peningkatan produk atau mencatat request. Ini berlaku untuk Gemini free tier, dan model gratis di OpenRouter punya kebijakan masing-masing (cek halaman privasi model yang dipilih). Karena isi fess bersifat anonim, mitigasi yang disiapkan:
+**Catatan privasi tier gratis (berlaku juga di production):** model gratis di OpenRouter dapat mencatat/menerbitkan prompt, tergantung model dan setelan akun (cek halaman privasi model + setelan "prompt logging" di akun). Karena isi fess bersifat anonim, mitigasi yang disiapkan:
 
 1. Kirim **hanya teks fess** (tanpa foto, tanpa identitas penulis, tanpa `userId`).
 2. Scrub nama/handle/email/telepon dari input sebelum dikirim.
-3. Default fitur `AI_ENABLED=false` di production sampai ada keputusan sadar; tier gratis dipakai untuk dev/staging.
-4. Untuk production tanpa risiko training, ganti `AI_BASE_URL`/`AI_MODEL`/`AI_API_KEY` ke provider berbayar (OpenAI/DeepSeek) — kode tidak berubah.
+3. Pilih model `:free` yang kebijakan datanya paling ketat, dan catat pilihannya di dokumen ini.
+4. Bila kelak butuh jaminan no-log/no-training, ganti `AI_MODEL` ke model berbayar di OpenRouter (key sama) — kode tidak berubah.
 
 ### 7.2 Prompt judul (versi 1)
 
@@ -330,14 +332,20 @@ Ditampilkan tanpa membedakan ke user, tetapi ditandai `thumbnailPromptVersion = 
 
 ### 7.5 Cache, kuota, dan biaya
 
-Karena memakai free tier, yang dijaga adalah **jumlah permintaan**, bukan dolar.
+Karena memakai tier gratis, yang dijaga adalah **jumlah permintaan**. Ada dua lapis yang harus dibedakan:
 
-- Cache: `AiGeneration` dengan `@@unique([kind, inputHash])`, `inputHash = sha256(kind + promptVersion + baseHandle + content)`. Konten sama tidak memanggil provider dua kali — ini penghemat kuota terbesar.
-- Kuota per base: `RateLimitService.consume('ai:title:<baseId>:<yyyy-mm-dd>', AI_DAILY_LIMIT_PER_BASE, 86400)`.
-- Kuota global harian: `RateLimitService.consume('ai:title:global:<yyyy-mm-dd>', AI_DAILY_TITLE_LIMIT, 86400)` — diisi **di bawah** batas free tier (mis. 200 dari 250 RPD) supaya menyisakan ruang untuk metadata template & percobaan manual.
-- Laju per menit: `RateLimitService.consume('ai:rpm', AI_RPM_LIMIT, 60)` untuk mencegah 429 beruntun.
-- Kedua kuota habis → `fallbackTitle()` + `SystemLog` tone `error` (`source: AI_TITLE`). Tidak pernah menunggu atau mengulang tanpa batas.
-- Bila provider diganti ke tier berbayar, aktifkan `AI_MONTHLY_BUDGET_USD` (opsional) sebagai pengaman tambahan: `RateLimitService.consume('ai:budget:<yyyy-mm>', <token budget>, 32 hari)`.
+1. **Plafon internal** (milik kita, di Postgres) — boleh disetel longgar.
+2. **Plafon provider** (OpenRouter) — angka nyata yang menentukan kapan 429 muncul.
+
+- Cache: `AiGeneration` dengan `@@unique([kind, inputHash])`, `inputHash = sha256(kind + promptVersion + baseHandle + content)`. Konten sama tidak memanggil provider dua kali — penghemat kuota terbesar.
+- Plafon internal (longgar, bisa diubah via env):
+  - per base: `RateLimitService.consume('ai:title:<baseId>:<yyyy-mm-dd>', AI_DAILY_TITLE_LIMIT_PER_BASE, 86400)` → default **200/hari/base**
+  - global: `RateLimitService.consume('ai:title:global:<yyyy-mm-dd>', AI_DAILY_TITLE_LIMIT, 86400)` → default **1.000/hari**
+  - laju: `RateLimitService.consume('ai:rpm', AI_RPM_LIMIT, 60)` → default **15/menit** (di bawah ±20 RPM OpenRouter)
+- Plafon provider (indikatif, verifikasi di dashboard): model `:free` ≈ **50 permintaan/hari**, naik ke ≈ **1.000/hari** bila akun OpenRouter pernah top-up ≥ US$10 sekali. Artinya plafon internal di atas **belum tentu tercapai** — yang membatasi bisa jadi provider.
+- Perilaku saat kena batas (internal atau provider 429): `fallbackTitle()` + `SystemLog` tone `error` (`source: AI_TITLE`), publish tetap jalan. Tidak ada retry beruntun yang memperburuk 429.
+- Bila 429 > 5% permintaan selama 3 hari → tindakan berurutan: (a) turunkan `AI_DAILY_TITLE_LIMIT` mendekati plafon provider, (b) top-up sekali US$10 untuk membuka ±1.000/hari, (c) ganti `AI_MODEL` ke model berbayar murah (≈US$0,0001 per judul).
+- Bila provider berbayar dipakai, aktifkan `AI_MONTHLY_BUDGET_USD` sebagai pengaman tambahan: `RateLimitService.consume('ai:budget:<yyyy-mm>', <token budget>, 32 hari)`.
 - Semua hasil (ok/fallback/error) dicatat di `AiGeneration` (token, latensi, `status`) untuk laporan di engine log tanpa endpoint baru.
 
 ### 7.6 Waktu & ketahanan
@@ -455,7 +463,7 @@ model AiGeneration {
 
 Catatan:
 
-- `Base.thumbnailMode` adalah **opt-out per base**: `auto` = thumbnail + judul AI (perilaku bawaan), `no_ai` = thumbnail tetap dibuat tetapi judul deterministik (tanpa panggilan AI), `off` = tanpa thumbnail sama sekali. Nilainya bisa diubah lewat `PATCH /api/bases/:handle/settings` (validator `UpdateBaseSettingsSchema`). **Catatan:** saat ini belum ada halaman pengaturan base di frontend yang memanggil endpoint itu, jadi UI-nya masuk fase P4; sampai saat itu nilainya dikelola lewat Super Admin/DB.
+- `Base.thumbnailMode` adalah **opt-out per base** dan **aktif sejak rilis pertama**: `auto` = thumbnail + judul AI (perilaku bawaan), `no_ai` = thumbnail tetap dibuat tetapi judul deterministik (tanpa panggilan AI), `off` = tanpa thumbnail sama sekali. Nilainya bisa diubah lewat `PATCH /api/bases/:handle/settings` (validator `UpdateBaseSettingsSchema`). **Catatan:** belum ada halaman pengaturan base di frontend yang memanggil endpoint itu, jadi pada rilis pertama nilainya dikelola lewat API/DB (Super Admin); UI masuk fase P4.
 - `thumbnailVersion` dipakai sebagai `?v=` pada URL thumbnail saat thumbnail **diregenerasi** (kasus gagal/kosong). Judul tidak bisa diedit, jadi URL stabil pada kondisi normal — ini juga yang membuat CDN Instagram aman dari gambar lama.
 - `thumbnailError` dipotong 500 char (mengikuti pola `igError`).
 - Tidak ada backfill: fess lama `thumbnailStatus = 'idle'` dan tetap diposting seperti sekarang.
@@ -541,31 +549,32 @@ Catatan UI (mengikuti konvensi repo):
 THUMBNAIL_ENABLED=false
 THUMBNAIL_MAX_MEDIA_FETCH_BYTES=8388608
 
-# AI — adapter OpenAI-compatible; provider ditentukan base URL + model
-AI_ENABLED=false
-AI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai   # ganti ke https://openrouter.ai/api/v1 bila pakai OpenRouter
+# AI — adapter OpenAI-compatible; provider OpenRouter (default)
+AI_ENABLED=true
+AI_BASE_URL=https://openrouter.ai/api/v1
 AI_API_KEY=
-AI_MODEL=gemini-2.5-flash-lite                                        # mis. deepseek/deepseek-chat untuk OpenRouter
+AI_MODEL=deepseek/deepseek-chat-v3.1:free     # ganti ke model non-:free bila kuota kurang
 AI_TIMEOUT_MS=6000
 AI_MAX_INPUT_CHARS=6000
 
-# Kuota permintaan (bukan dolar), dijaga di Postgres
-AI_RPM_LIMIT=8                       # di bawah RPM provider
-AI_DAILY_TITLE_LIMIT=200             # global, di bawah RPD provider
-AI_DAILY_TITLE_LIMIT_PER_BASE=50
+# Plafon internal (bukan dolar), dijaga di Postgres
+AI_RPM_LIMIT=15                      # di bawah ±20 RPM OpenRouter
+AI_DAILY_TITLE_LIMIT=1000            # plafon internal global (plafon provider bisa lebih ketat)
+AI_DAILY_TITLE_LIMIT_PER_BASE=200
 AI_TITLE_ENABLED=true                # hanya berlaku bila AI_ENABLED=true
 AI_TEMPLATE_METADATA_ENABLED=true
 
-# Opsional, hanya bila provider berbayar dipakai
+# Opsional, hanya bila model berbayar dipakai
 AI_MONTHLY_BUDGET_USD=0              # 0 = tidak dibatasi
 ```
 
 Aturan:
 
-- Default **off** di semua environment; dinyalakan per environment setelah QA.
+- `AI_ENABLED=true` dipakai di dev **dan** production (keputusan pemilik produk), dengan kill switch tetap tersedia untuk mematikan mendadak.
 - `THUMBNAIL_ENABLED=false` → perilaku persis seperti sekarang.
 - `AI_ENABLED=false` + `THUMBNAIL_ENABLED=true` → thumbnail tetap jadi, judul memakai fallback deterministik. Ini mode rilis Phase 1.
-- Angka `AI_RPM_LIMIT`/`AI_DAILY_*` **harus di bawah** batas free tier yang berlaku saat implementasi; selisihnya adalah penyangga untuk 429.
+- `AI_ENABLED=false` juga otomatis dipakai bila `AI_API_KEY` kosong (fail-safe, bukan error saat boot).
+- Plafon internal disetel **longgar** dan diturunkan bila 429 > 5%; plafon nyata tetap milik provider.
 - File `.env*` **tidak diubah** dalam perencanaan ini; template contoh diperbarui pada fase implementasi dengan persetujuan.
 
 ---
@@ -581,7 +590,7 @@ Aturan:
 | SSRF saat mengambil foto | Pakai guard yang sudah ada (`canvas.service.ts:1101-1142`): hanya http(s), tolak IP privat/loopback, batas 8MB & timeout |
 | Penyalahgunaan biaya | Kuota harian per base + anggaran bulanan global di Postgres (`RateLimitService`) + cache hash konten |
 | Kebocoran API key | Hanya env server; tidak ada endpoint yang mengembalikan key/URL provider |
-| Retensi data provider | Google free tier dapat memakai konten untuk meningkatkan produk; mitigasi: kirim teks saja, scrub PII, default `AI_ENABLED=false` di production, dan opsi naik ke tier berbayar tanpa ubah kode |
+| Retensi data provider | Model `:free` OpenRouter dapat mencatat/menerbitkan prompt; mitigasi: kirim teks saja, scrub PII, pilih model dengan kebijakan paling ketat, dan opsi ganti ke model berbayar tanpa ubah kode |
 | Konten tidak pantas lolos ke cover | Judul tetap melewati `ModerationService`/banned words sebelum disimpan |
 
 Kebijakan produk yang perlu ditulis di halaman privasi: "Isi teks fess dapat diproses oleh penyedia AI untuk membuat judul cover; foto tidak diproses oleh AI."
@@ -600,17 +609,21 @@ Kebijakan produk yang perlu ditulis di halaman privasi: "Isi teks fess dapat dip
 | Fallback title rate | < 5% (normal) |
 | p95 latensi AI judul | < 2.5 s |
 | p95 latensi render thumbnail | < 900 ms |
-| Pemakaian kuota AI harian | < 80% dari `AI_DAILY_TITLE_LIMIT` |
-| Respons 429 provider | < 1% permintaan |
+| Pemakaian kuota AI harian | terpantau, tidak menyentuh plafon provider |
+| Respons 429 provider | < 5% permintaan |
 
-Kapasitas free tier (indikatif, verifikasi saat implementasi):
+Kapasitas provider (OpenRouter, indikatif — verifikasi saat implementasi):
 
 | Operasi | Token in/out | Pemakaian kuota |
 |---|---|---|
 | Judul (≈ 600 in / 40 out) | 600/40 | 1 permintaan |
 | Metadata template (≈ 1.500 in / 200 out) | 1.500/200 | 1 permintaan |
 
-Dengan batas indikatif ±250 permintaan/hari (Flash-Lite ±1.000), `AI_DAILY_TITLE_LIMIT=200` menyisakan ruang untuk metadata template dan uji manual. Saat kuota habis, fitur otomatis memakai judul deterministik — **tidak ada tagihan dan tidak ada publish yang gagal**.
+Model `:free` di OpenRouter dibatasi ≈ 50 permintaan/hari (≈ 1.000/hari bila akun pernah top-up ≥ US$10 sekali). Karena itu:
+
+- Plafon internal (`1.000/hari`, `200/base/hari`) sengaja longgar agar tidak menjadi hambatan buatan.
+- Selama plafon provider masih 50/hari, sebagian besar fess akan memakai judul fallback — **bukan error**, hanya kualitas judul lebih sederhana.
+- Jalur peningkatan tanpa ubah kode: top-up sekali US$10 → ±1.000/hari, atau ganti `AI_MODEL` ke model berbayar murah.
 
 ---
 
@@ -691,7 +704,7 @@ Rilis production mengikuti aturan repo: PR draft → review → merge ke `main` 
 ### F2 — Judul AI
 
 - [ ] Judul 3–5 kata, ≤ 60 karakter, lolos banned words dan filter PII.
-- [ ] AI dimatikan / timeout / **429 kuota free tier** / anggaran habis → fallback deterministik, publish tetap jalan.
+- [ ] AI dimatikan / timeout / **429 atau kuota provider habis** → fallback deterministik, publish tetap jalan.
 - [ ] Konten identik tidak memanggil provider dua kali (cache).
 - [ ] Judul **tidak dapat diubah** dari UI mana pun; regenerasi hanya tersedia saat `failed`/`idle`.
 
@@ -709,19 +722,20 @@ Rilis production mengikuti aturan repo: PR draft → review → merge ke `main` 
 
 Sudah diputuskan:
 
-- **Provider**: adapter OpenAI-compatible generik; Gemini free tier sebagai default dev, bisa diganti ke OpenRouter/DeepSeek/OpenAI lewat `AI_BASE_URL` + `AI_MODEL` + `AI_API_KEY`.
-- **Anggaran**: kuota permintaan provider, bukan dolar.
+- **Provider**: OpenRouter (`https://openrouter.ai/api/v1`) dengan model DeepSeek gratis, lewat adapter OpenAI-compatible. Ganti model/provider cukup lewat env.
+- **Tier gratis dipakai di dev dan production** — dengan kill switch tetap tersedia.
+- **Opt-out per base aktif sejak rilis** (`auto`/`no_ai`/`off`, dikelola via API/DB; UI menyusul).
+- **Kuota internal longgar**: 1.000/hari global, 200/hari/base, 15 RPM — dibatasi plafon provider, bukan plafon internal.
 - **Watermark handle**: handle **base**, bukan penulis.
 - **Judul**: 3–5 kata, dibuat AI, **tidak bisa diedit**.
 - **Cakupan**: Instagram saja, bukan cover feed web.
 - **Urutan rilis**: P1 (thumbnail tanpa AI) dikerjakan lebih dulu.
 
-Masih perlu konfirmasi:
+Masih perlu konfirmasi (bisa dijawab saat implementasi, tidak memblokir P1):
 
-1. **Provider mana yang dipakai di dev** lebih dulu: Gemini free tier, OpenRouter, atau DeepSeek langsung? (mempengaruhi nilai `AI_RPM_LIMIT`/`AI_DAILY_*`)
-2. **Tier gratis di production atau tidak**, mengingat kebijakan pemakaian data masing-masing provider.
-3. **Opt-out per base** (`auto`/`no_ai`/`off`) aktif sejak rilis pertama (hanya lewat API/DB) atau menunggu UI pengaturan base?
-4. **Kuota**: `AI_DAILY_TITLE_LIMIT=200` global & 50 per base per hari — cukup?
+1. **Model OpenRouter** final: `deepseek/deepseek-chat-v3.1:free` atau model `:free` lain? (uji 20 sampel judul dulu)
+2. Apakah akun OpenRouter akan **top-up sekali US$10** untuk membuka ±1.000 permintaan/hari? Tanpa itu, plafon nyata ≈ 50/hari dan sisanya fallback.
+3. **Opt-out**: cukup lewat API/DB dulu, atau UI pengaturan base ikut di P4?
 
 ---
 
@@ -748,5 +762,5 @@ Masih perlu konfirmasi:
 
 - Rencana ini **tidak** mengubah pipeline moderasi, billing, atau otorisasi.
 - Semua perubahan skema additive; rollback cukup mematikan `THUMBNAIL_ENABLED`/`AI_ENABLED`.
-- Biaya AI dijaga tiga lapis: cache, kuota harian per base, dan anggaran bulanan global.
+- Biaya AI dijaga tiga lapis: cache hash konten, kuota harian (per base + global), dan opsional anggaran bulanan bila memakai model berbayar.
 - Privasi dijaga dengan aturan tunggal: **foto tidak pernah keluar dari infrastruktur sendiri**; hanya teks yang dikirim ke provider AI.

@@ -140,7 +140,7 @@ describe('Password Reset Validators (OTP email)', () => {
 });
 
 describe('Fess Validators', () => {
-  it('should validate valid CreateFess payload', () => {
+  it('menerima key template apa pun yang masih dalam batas panjang', () => {
     const valid = {
       base_handle: '@codememfess',
       content: 'Ini adalah curhat programming anonim pertama saya!',
@@ -148,19 +148,19 @@ describe('Fess Validators', () => {
     };
     const res = CreateFessSchema.safeParse(valid);
     expect(res.success).toBe(true);
-    expect(CreateFessSchema.safeParse({ ...valid, template: 'cyberpunk' }).success).toBe(true);
-    expect(CreateFessSchema.safeParse({ ...valid, template: 'neobrutalism' }).success).toBe(true);
-    expect(CreateFessSchema.safeParse({ ...valid, template: 'rock' }).success).toBe(true);
-    expect(CreateFessSchema.safeParse({ ...valid, template: 'terminal' }).success).toBe(true);
 
-    // Semua template (termasuk 20 template baru) harus lolos validator.
+    // Keberadaan key divalidasi di service terhadap DB + template lama, bukan
+    // di schema — supaya template baru di database langsung bisa dipakai tanpa
+    // mengubah kode validator.
     for (const t of TEMPLATES) {
       expect(
         CreateFessSchema.safeParse({ ...valid, template: t.key }).success,
         `template ${t.key} seharusnya valid`
       ).toBe(true);
     }
-    expect(CreateFessSchema.safeParse({ ...valid, template: 'tidak-ada' }).success).toBe(false);
+    expect(CreateFessSchema.safeParse({ ...valid, template: 'cyberpunk' }).success).toBe(true);
+    expect(CreateFessSchema.safeParse({ ...valid, template: 'x'.repeat(41) }).success).toBe(false);
+    expect(CreateFessSchema.safeParse({ ...valid, template: '' }).success).toBe(false);
   });
 
   it('should validate carousel_order tokens', () => {

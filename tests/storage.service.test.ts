@@ -118,6 +118,54 @@ describe('StorageService Unit Tests (Supabase Object Storage)', () => {
     expect(uploadMock).toHaveBeenCalledTimes(2);
   });
 
+  it('uploads a buffer to a deterministic path (template thumbnail)', async () => {
+    const buffer = Buffer.from('fake png content');
+    const result = await StorageService.uploadBuffer({
+      path: 'templates/01-helpdesk-ticket-v1.png',
+      buffer,
+      contentType: 'image/png',
+    });
+
+    expect(uploadMock).toHaveBeenCalledWith('templates/01-helpdesk-ticket-v1.png', buffer, {
+      contentType: 'image/png',
+      upsert: true,
+    });
+    expect(result.url).toContain('/object/public/');
+    expect(result.size).toBe(buffer.length);
+  });
+
+  it('strips a leading slash from the buffer path', async () => {
+    await StorageService.uploadBuffer({
+      path: '/templates/02-network-map-v3.png',
+      buffer: Buffer.from('png'),
+    });
+
+    expect(uploadMock).toHaveBeenCalledWith(
+      'templates/02-network-map-v3.png',
+      expect.any(Buffer),
+      expect.objectContaining({ contentType: 'application/octet-stream' })
+    );
+  });
+
+  it('rejects an empty buffer path or payload', async () => {
+    await expect(
+      StorageService.uploadBuffer({ path: '', buffer: Buffer.from('png') })
+    ).rejects.toThrow(/Path unggah/);
+    await expect(
+      StorageService.uploadBuffer({ path: 'templates/x.png', buffer: Buffer.alloc(0) })
+    ).rejects.toThrow(/Buffer unggah kosong/);
+    expect(uploadMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects uploadBuffer when storage is unconfigured', async () => {
+    await withoutStorage(async () => {
+      await expect(
+        StorageService.uploadBuffer({ path: 'templates/x.png', buffer: Buffer.from('png') })
+      ).rejects.toThrow(/Storage media belum dikonfigurasi/);
+      expect(uploadMock).not.toHaveBeenCalled();
+    });
+  });
+
   it('throws (no fake URL) for oversized files when storage is unconfigured', async () => {
     await withoutStorage(async () => {
       const big = makeFile({ size: 3 * 1024 * 1024, buffer: Buffer.alloc(3 * 1024 * 1024) });

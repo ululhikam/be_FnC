@@ -321,6 +321,39 @@ model Song {
   createdAt  DateTime @default(now())
 }
 
+model Template {
+  id          String  @id @default(cuid())
+  // Kunci stabil = nama file SVG tanpa ekstensi, mis. '01-helpdesk-ticket'.
+  key         String  @unique
+  label       String
+  description String?
+  category    String  @default("campus")
+  // 'svg' (12 desain template-card) | 'legacy' (38 template lama di constants/templates.ts)
+  renderer    String  @default("svg")
+  aspect      String  @default("portrait")
+  width       Int     @default(1080)
+  height      Int     @default(1350)
+
+  // SVG sumber (masih berisi teks contoh), dipakai renderer untuk tiap halaman.
+  svgSource    String  @db.Text
+  // Geometri slot hasil ukur scripts/measure-templates.mjs (lihat docs/template-svg-db-plan.md §6.2).
+  slots        Json
+  // Warna dominan untuk UI: { accent, bg, ink }.
+  palette      Json?
+  thumbnailUrl String?
+  // sha256 svgSource — mendeteksi perubahan file tanpa re-import.
+  checksum     String?
+  version      Int     @default(1)
+
+  status      String   @default("active") // draft | active | archived
+  sortOrder   Int      @default(0)
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status, sortOrder])
+}
+
 model PlatformConnection {
   id            String   @id @default(cuid())
   baseId        String?

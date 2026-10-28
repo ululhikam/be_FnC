@@ -5,6 +5,8 @@ import { InstagramService } from './instagram.service.js';
 import { ModerationService } from './moderation.service.js';
 import { FessBillingService, getBaseBillingState } from './fess-billing.service.js';
 import { BaseRevenueService } from './base-revenue.service.js';
+import { TemplateService } from './template.service.js';
+import { TEMPLATES } from '../constants/templates.js';
 import { invalidateCache, getOrSet } from '../utils/cache.util.js';
 
 /** Fess counters only track publicly visible confessions. */
@@ -215,6 +217,27 @@ export class FessService {
   }
 
   /**
+   * Pastikan key template bisa dirender sebelum fess disimpan.
+   *
+   * Selama transisi ada dua sumber: tabel `Template` (12 desain SVG baru) dan
+   * konstanta `TEMPLATES` (template generatif lama). Key yang tidak ada di
+   * keduanya ditolak 422 supaya tidak ada fess dengan template tak bisa render.
+   */
+  static async resolveTemplateKey(raw?: string | null): Promise<string> {
+    const key = String(raw || '').trim() || 'default';
+    if (TEMPLATES.some((t) => t.key === key)) return key;
+
+    const record = await TemplateService.getActive(key);
+    if (record) return record.key;
+
+    const err: any = new Error(`Template ${key} tidak tersedia`);
+    err.status = 422;
+    err.code = 'VALIDATION_ERROR';
+    err.errors = { template: `Template ${key} tidak tersedia` };
+    throw err;
+  }
+
+  /**
    * Create a new fess (confession)
    */
   static async createFess(
@@ -275,6 +298,10 @@ export class FessService {
     }
 
     const billing = getBaseBillingState(base);
+
+    // Key template divalidasi ke DB sebelum transaksi: fess tersimpan hanya
+    // dengan template yang benar-benar bisa dirender.
+    const templateKey = await FessService.resolveTemplateKey(payload.template);
 
     // Paid bases require a signed-in account with a verified email. During the
     // trial anonymous posting stays available; after the trial it does not.
@@ -346,7 +373,7 @@ export class FessService {
               topic: payload.topic || null,
               scheduledAt: scheduledDate,
               song: payload.song || undefined,
-              template: payload.template || 'default',
+              template: templateKey,
               quotedFess: payload.quoted_fess || undefined,
               tag: payload.tag || null,
               status: initialStatus,

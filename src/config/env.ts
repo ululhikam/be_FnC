@@ -2,34 +2,47 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { resolveEnvMode } from './env-mode.util.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const backendRoot = path.resolve(__dirname, '../..');
+const prodEnvPath = path.join(backendRoot, '.env');
+const devEnvPath = path.join(backendRoot, '.env.development');
 
-// Load environment variables explicitly from backend/.env and process.cwd().
-// Production/Vercel keeps using process env + .env; local development can
-// override it with backend/.env.development so production credentials are
-// never used by accident.
-dotenv.config({ path: path.join(backendRoot, '.env') });
-dotenv.config();
+// Mode ditentukan dari environment proses SEBELUM dotenv memuat `.env`, karena
+// `backend/.env` sendiri berisi NODE_ENV=production. Tanpa urutan ini,
+// `npm run dev` lokal akan memuat kredensial production dan melewati
+// `.env.development` sepenuhnya.
+const mode = resolveEnvMode({
+  initialNodeEnv: process.env.NODE_ENV,
+  runningOnVercel: Boolean(process.env.VERCEL),
+  devEnvExists: fs.existsSync(devEnvPath),
+  allowProdDbForLocal: process.env.ALLOW_PROD_DB_FOR_LOCAL === 'true',
+});
 
-if ((process.env.NODE_ENV || 'development') === 'development') {
-  const devEnvPath = path.join(backendRoot, '.env.development');
-  if (fs.existsSync(devEnvPath)) {
-    dotenv.config({ path: devEnvPath, override: true });
-  } else if (process.env.ALLOW_PROD_DB_FOR_LOCAL === 'true') {
-    console.warn(
-      '[env] backend/.env.development not found; ALLOW_PROD_DB_FOR_LOCAL=true so ' +
-        'falling back to backend/.env. Do not use production data for normal development.'
-    );
-  } else {
-    throw new Error(
-      'backend/.env.development is required for local development. ' +
-        'Copy .env.development.example and fill in the dev Supabase credentials. ' +
-        'If you really need to use backend/.env, set ALLOW_PROD_DB_FOR_LOCAL=true.'
-    );
-  }
+if (mode === 'dev-file') {
+  // Hanya `.env.development` yang dimuat: jangan pernah mencampurnya dengan
+  // `.env` production agar tidak ada nilai yang bocor saat key-nya berbeda.
+  process.env.NODE_ENV = 'development';
+  dotenv.config({ path: devEnvPath, override: true });
+  console.log('[env] Mode development — memakai backend/.env.development');
+} else if (mode === 'prod-fallback') {
+  dotenv.config({ path: prodEnvPath });
+  dotenv.config();
+  console.warn(
+    '[env] backend/.env.development not found; ALLOW_PROD_DB_FOR_LOCAL=true so ' +
+      'falling back to backend/.env. Do not use production data for normal development.'
+  );
+} else if (mode === 'missing-dev') {
+  throw new Error(
+    'backend/.env.development is required for local development. ' +
+      'Copy .env.development.example and fill in the dev Supabase credentials. ' +
+      'If you really need to use backend/.env, set ALLOW_PROD_DB_FOR_LOCAL=true.'
+  );
+} else {
+  dotenv.config({ path: prodEnvPath });
+  dotenv.config();
 }
 
 const nodeEnv = process.env.NODE_ENV || 'development';

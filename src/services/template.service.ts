@@ -142,6 +142,7 @@ export class TemplateService {
   /** Dipanggil setelah import/ubah template agar tidak ada data basi. */
   static invalidate(key?: string): void {
     if (key) invalidateCache(`${CACHE_PREFIX}${key}`);
-    invalidateCache(`${CACHE_PREFIX}list:`);
+    // Awalan `template:` mencakup `template:list:` dan seluruh cache per key.
+    invalidateCache(CACHE_PREFIX);
   }
 }

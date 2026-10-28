@@ -625,7 +625,7 @@ Yang **tetap** di frontend: `videoNormalizer.js` (ffmpeg.wasm) dan `MediaUploade
 ## 11. Checklist verifikasi
 
 - [x] `npx vitest run tests/template-renderer.test.ts` hijau (10 test, 12 template).
-- [x] `npx vitest run` penuh hijau (30 file / 344 test, tidak ada regresi
+- [x] `npx vitest run` penuh hijau (31 file / 348 test, tidak ada regresi
       `canvas.service.test.ts`, `canvas.preview.test.ts`, `validators.test.ts`).
 - [x] `npx tsc -p tsconfig.build.json --noEmit` lolos (TS strict, import `.js`).
 - [x] `GET /api/templates` mengembalikan 12 item aktif tanpa `svgSource`/`slots`.

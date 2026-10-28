@@ -96,6 +96,7 @@ Urutan di `TemplateAdminService.create`:
 2. `analyzeTemplateSvg(svg, key)`:
    - key divalidasi dan key legacy ditolak;
    - ukuran maksimal **2MB**;
+   - dokumen wajib berupa SVG murni; HTML yang membungkus `<svg>` ditolak;
    - SVG dinormalisasi lebih dulu (`@import` Google Fonts, `var(--font-*)`, dan
      `mix-blend-mode` dibuang), lalu sisa SVG diperiksa keamanannya;
    - ditolak bila ada `DOCTYPE/ENTITY`, `<script>`, `on*`, `javascript:`, `url()`/`href`
@@ -266,7 +267,7 @@ Tidak ada warna hex langsung di komponen; semua memakai variabel `src/style.css`
 
 | File | Cakupan |
 | --- | --- |
-| `backend/tests/template-admin.util.test.ts` | Key valid/reserved, keamanan SVG, rasio 4:5, slot wajib, batas 2MB, dan seluruh 12 template resmi di `assets/templates/`. |
+| `backend/tests/template-admin.util.test.ts` | Key valid/reserved, root SVG murni, variasi bypass keamanan, rasio 4:5, slot wajib, batas 2MB, dan seluruh 12 template resmi di `assets/templates/`. |
 | `backend/tests/template-admin.service.test.ts` | Create (bersama/base), base tidak ditemukan, update pemilik, aktivasi tanpa thumbnail, replace versi sama/berubah, regenerate + cache-buster, archive idempoten, audit. |
 | `backend/tests/template-resolution.test.ts` | Resolusi template per base, penolakan milik base lain, `listActive` vs `listActiveForBase`. |
 | `backend/tests/canvas.preview.test.ts` | Pratinjau composer menolak base tidak ada, template draft, dan template milik base lain; template aktif sendiri/bersama tetap dirender. |

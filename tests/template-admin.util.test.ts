@@ -86,6 +86,47 @@ describe('analyzeTemplateSvg', () => {
     }
   });
 
+  it('menolak variasi penulisan berbahaya', async () => {
+    const cases = [
+      TEMPLATE_SVG.replace('</svg>', '<SCRIPT>alert(1)</SCRIPT></svg>'),
+      TEMPLATE_SVG.replace('</svg>', '<foreignObject><div>x</div></foreignObject></svg>'),
+      TEMPLATE_SVG.replace('</svg>', '<image HREF = https://example.com/a.png /></svg>'),
+      TEMPLATE_SVG.replace('</svg>', '<rect fill="url(data:image/svg+xml;base64,AAA)"/></svg>'),
+      TEMPLATE_SVG.replace('</svg>', '<image xlink:href="data:text/html;base64,AAA"/></svg>'),
+    ];
+
+    for (const svg of cases) {
+      await expect(analyzeTemplateSvg(svg, '13-papan-kampus')).rejects.toMatchObject({
+        code: 'TEMPLATE_UNSAFE',
+        status: 422,
+      });
+    }
+  });
+
+  it('menolak HTML yang membungkus SVG dan file non-SVG', async () => {
+    const html = `<html><body>${TEMPLATE_SVG}</body></html>`;
+    await expect(analyzeTemplateSvg(html, '13-papan-kampus')).rejects.toMatchObject({
+      code: 'TEMPLATE_INVALID',
+      status: 422,
+      errors: { svg: expect.stringContaining('HTML') },
+    });
+
+    await expect(analyzeTemplateSvg('bukan svg sama sekali', '13-papan-kampus')).rejects.toMatchObject(
+      {
+        code: 'TEMPLATE_INVALID',
+        status: 422,
+      }
+    );
+  });
+
+  it('menerima deklarasi XML dan komentar sebelum elemen svg', async () => {
+    const prolog = `<?xml version="1.0" encoding="UTF-8"?>\n<!-- template uji -->\n${TEMPLATE_SVG}`;
+    const analysis = await analyzeTemplateSvg(prolog, '13-papan-kampus');
+
+    expect(analysis.width).toBe(1080);
+    expect(analysis.height).toBe(1350);
+  });
+
   it('menolak SVG yang bukan 4:5', async () => {
     const square = TEMPLATE_SVG.replace('height="1350"', 'height="1080"');
     await expect(analyzeTemplateSvg(square, '13-papan-kampus')).rejects.toMatchObject({

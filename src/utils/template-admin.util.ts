@@ -152,7 +152,32 @@ function numberAttr(attrs: string, name: string): number | null {
   return Number.isFinite(value) && value > 0 ? value : null;
 }
 
+/**
+ * Dokumen harus benar-benar SVG: hanya BOM, deklarasi XML, komentar, dan
+ * DOCTYPE yang boleh mendahului elemen `<svg>`. Ini menolak HTML yang
+ * membungkus SVG (mis. `<html><body><svg ...>`).
+ */
+function assertSvgDocument(svg: string): void {
+  const head = svg
+    .replace(/^\uFEFF/, '')
+    .replace(/<\?xml[\s\S]*?\?>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<!DOCTYPE[\s\S]*?>/gi, '')
+    .trimStart();
+
+  if (!/^<svg(?:\s|>)/i.test(head)) {
+    throw new TemplateAdminError(
+      'TEMPLATE_INVALID',
+      'Dokumen harus berupa SVG murni dengan elemen <svg> sebagai root.',
+      422,
+      { svg: 'SVG yang dibungkus HTML tidak diizinkan.' }
+    );
+  }
+}
+
 function parseCanvasSize(svg: string): { width: number; height: number } {
+  assertSvgDocument(svg);
+
   const root = /<svg\b([^>]*)>/i.exec(svg);
   if (!root) {
     throw new TemplateAdminError(
@@ -208,7 +233,7 @@ function assertSafeSvg(svg: string): void {
     { pattern: /javascript\s*:/i, message: 'URL javascript: tidak diizinkan.' },
     { pattern: /@import\b/i, message: 'CSS @import tidak diizinkan.' },
     {
-      pattern: /(?:href|xlink:href)\s*=\s*["']\s*(?:https?:)?\/\//i,
+      pattern: /(?:href|xlink:href)\s*=\s*["']?\s*(?:https?:)?\/\//i,
       message: 'Referensi gambar/aset eksternal tidak diizinkan.',
     },
     {

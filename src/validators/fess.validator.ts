@@ -1,8 +1,4 @@
 import { z } from 'zod';
-import { TEMPLATES } from '../constants/templates.js';
-
-/** Semua key template yang valid — otomatis ikut saat template baru ditambah. */
-const TEMPLATE_KEYS = TEMPLATES.map((t) => t.key) as [string, ...string[]];
 
 export const MediaItemSchema = z.object({
   // ID stabil dari composer; dipakai token carousel_order "media:<id>".
@@ -95,7 +91,9 @@ export const CreateFessSchema = z.object({
   topic: z.string().optional().nullable(),
   scheduled_at: z.string().datetime().optional().nullable(),
   song: SongAttachmentSchema.optional().nullable(),
-  template: z.enum(TEMPLATE_KEYS).optional().default('default'),
+  // Key template divalidasi di service terhadap tabel `Template` (SVG baru) dan
+  // daftar template lama — daftar tidak lagi di-hardcode di validator.
+  template: z.string().trim().min(1).max(40).optional().default('default'),
   quoted_fess: QuotedFessSchema.optional().nullable(),
   tag: z.enum(['Cerita', 'Tanya']).optional().nullable(),
   // Optional body fallback for clients that cannot send custom headers.

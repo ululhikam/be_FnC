@@ -7,6 +7,7 @@ import userRoutes from './user.routes.js';
 import uploadRoutes from './upload.routes.js';
 import songRoutes from './song.routes.js';
 import topicRoutes from './topic.routes.js';
+import templateRoutes from './template.routes.js';
 import adminRoutes from './admin.routes.js';
 import paymentRoutes from './payment.routes.js';
 
@@ -20,6 +21,7 @@ router.use('/users', userRoutes);
 router.use('/upload', uploadRoutes);
 router.use('/songs', songRoutes);
 router.use('/topics', topicRoutes);
+router.use('/templates', templateRoutes);
 router.use('/admin', adminRoutes);
 router.use('/payments', paymentRoutes);
 

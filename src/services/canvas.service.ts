@@ -11,6 +11,7 @@ import {
   type TemplateTypography,
 } from '../constants/templates.js';
 import { StorageService } from './storage.service.js';
+import { TemplateService, type TemplateRecord, type TemplateSlots } from './template.service.js';
 import { prisma } from '../config/prisma.js';
 import { InstagramService } from './instagram.service.js';
 import {
@@ -100,6 +101,8 @@ export interface FessLike {
   id?: string;
   content: string;
   baseHandle: string;
+  /** Waktu publikasi fess; dipakai slot tanggal di template SVG. */
+  createdAt?: Date | string | null;
   tag?: string | null;
   topic?: string | null;
   template?: string | null;
@@ -150,6 +153,8 @@ const HARD_SHADOW =
 
 const MAX_PAGES = 10; // batas carousel Instagram
 const MAX_QUOTE_LINES = 4;
+/** Jarak aman antara baris terakhir isi fess dan kotak kutipan (sama dengan pengukur). */
+const QUOTE_GAP = 26;
 
 export class CanvasService {
   /**
@@ -225,7 +230,7 @@ export class CanvasService {
     const preparedFess = await CanvasService.withResolvedBaseAvatar(
       fess as unknown as FessLike
     );
-    const svgs = CanvasService.buildSvgPages(preparedFess, templateKey, aspectKey);
+    const svgs = await CanvasService.buildPages(preparedFess, templateKey, aspectKey);
 
     // ── SVG → JPEG (resvg + sharp, font bundled) → upload per halaman ──────
     // Instagram Content Publishing hanya menerima gambar JPEG.
@@ -763,6 +768,180 @@ export class CanvasService {
     });
   }
 
+  /**
+   * Pilih jalur render untuk sebuah template.
+   *
+   * - Template dari DB dengan `renderer = 'svg'` → render desain asli
+   *   (`buildSvgTemplatePages`), geometri dari `slots`.
+   * - Selain itu (termasuk 38 template lama & key tak dikenal) → jalur
+   *   generatif lama supaya fess lama tidak pernah gagal dirender.
+   *
+   * Bila DB tidak bisa dibaca, jangan gagalkan publikasi: jatuh ke jalur lama.
+   */
+  static async buildPages(
+    fess: FessLike,
+    templateKey = 'default',
+    aspectKey = ''
+  ): Promise<string[]> {
+    const key = templateKey || fess.template || 'default';
+    let record: TemplateRecord | null = null;
+    try {
+      record = await TemplateService.getByKey(key);
+    } catch (err: any) {
+      console.warn('[Canvas] Gagal membaca template dari DB:', err?.message || err);
+    }
+
+    if (record && record.renderer === 'svg' && record.svgSource) {
+      return CanvasService.buildSvgTemplatePages(fess, record, aspectKey);
+    }
+    return CanvasService.buildSvgPages(fess, key, aspectKey);
+  }
+
+  /**
+   * Render halaman untuk template berbasis file SVG desain.
+   *
+   * Tidak ada angka per-template di sini: `slots` (hasil ukur
+   * `scripts/measure-templates.mjs`) menentukan posisi, ukuran font, kapasitas
+   * baris, dan geometri kotak kutipan.
+   */
+  private static buildSvgTemplatePages(
+    fess: FessLike,
+    template: TemplateRecord,
+    aspectKey = ''
+  ): string[] {
+    const slots = template.slots as TemplateSlots;
+    const m = slots.message;
+    const aspect = ASPECTS[aspectKey] || ASPECTS.portrait;
+
+    // Slot tidak lengkap → lebih baik render versi generatif daripada SVG rusak.
+    if (!m || !(m.fontSize > 0) || !(m.maxWidth > 0) || !(m.bottom > 0)) {
+      return CanvasService.buildSvgPages(fess, template.key, aspectKey);
+    }
+
+    const designFont = m.fontSize;
+    const ratio = m.lineRatio && m.lineRatio > 0 ? m.lineRatio : m.lineHeight / designFont;
+    const weight = m.weight && m.weight > 0 ? m.weight : 700;
+    const measureFont = getMeasureFont('sans', weight >= 600 ? 700 : 500);
+    const content = String(fess.content || '');
+
+    const quote = (fess.quotedFess ?? null) as any;
+    const q = slots.quote;
+    const hasQuote = Boolean(q) && Boolean(String(quote?.content || '').trim());
+
+    // Ukuran font diturunkan dari ukuran desain, bukan tier angka tetap, supaya
+    // proporsi kartu tetap sama saat kontennya panjang.
+    const tiers = [1, 0.86, 0.74, 0.64].map((s) => Math.max(16, Math.round(designFont * s)));
+
+    let fontSize = tiers[0];
+    let lineHeight = Math.round(fontSize * ratio);
+    let letterSpacingPx = 0;
+    let pages: TextPage[] = [];
+    let truncated = false;
+    let firstCap = 0;
+
+    for (const tier of tiers) {
+      fontSize = tier;
+      lineHeight = Math.max(1, Math.round(fontSize * ratio));
+      letterSpacingPx = (m.letterSpacing ?? 0) * (fontSize / designFont);
+
+      const lines = layoutText(content, m.maxWidth, fontSize, measureFont, letterSpacingPx);
+      const descender = fontSize * 0.25;
+      const restCap = Math.max(1, Math.floor((m.bottom - descender) / lineHeight) + 1);
+      firstCap = hasQuote && q
+        ? Math.max(1, Math.min(restCap, Math.floor((q.y - QUOTE_GAP - descender) / lineHeight) + 1))
+        : restCap;
+
+      const result = paginate(lines, firstCap, restCap, MAX_PAGES);
+      pages = result.pages;
+      truncated = result.truncated;
+      if (!truncated) break;
+    }
+
+    if (!pages.length) pages = [[]];
+    if (truncated && pages.length && measureFont) {
+      const lastPage = pages[pages.length - 1];
+      const lastLine = lastPage[lastPage.length - 1];
+      if (lastLine) {
+        lastLine.push({
+          kind: 'text',
+          text: '\u2026',
+          width: measureTextWidth('\u2026', measureFont, fontSize, letterSpacingPx),
+        });
+      }
+    }
+
+    const matrix =
+      Array.isArray(slots.anchor?.matrix) && slots.anchor!.matrix.length === 6
+        ? slots.anchor!.matrix
+        : [1, 0, 0, 1, slots.anchor?.x ?? 0, slots.anchor?.y ?? 0];
+    const matrixAttr = `matrix(${matrix.join(' ')})`;
+    const inkColor = m.fill || template.palette?.ink || '#111111';
+
+    // Grup pesan asli (berisi teks contoh) dibuang; teks hasil layout ditempel
+    // di akhir dokumen dengan matriks anchor yang sama, jadi rotasi kartu
+    // (template 04/05) tetap diikuti.
+    const svgBase = replaceMetaTexts(
+      replaceTextById(
+        replaceTextById(
+          replaceTextById(
+            stripGroupById(template.svgSource, 'editable-message'),
+            'editable-user',
+            quoteHandleLabel(fess)
+          ),
+          'editable-time',
+          formatFessStamp(fess)
+        ),
+        // Desain asli menulis "dikirim lewat myfess.id". Footer kartu harus
+        // memakai identitas base yang sebenarnya, sama seperti renderer lama.
+        'editable-footer',
+        fitTextToWidth(
+          `Instagram Feed \u00b7 ${quoteHandleLabel(fess)}`,
+          getMeasureFont('sans', 700),
+          slots.footer?.fontSize || 22,
+          footerMaxWidth(slots, template.width)
+        )
+      ),
+      quoteHandleLabel(fess),
+      formatFessStamp(fess)
+    );
+
+    const totalPages = pages.length;
+
+    return pages.map((page, idx) => {
+      const textSvg = renderTextLines(
+        page,
+        0,
+        0,
+        fontSize,
+        lineHeight,
+        inkColor,
+        { family: 'sans', weight, letterSpacingPx, align: 'left' },
+        m.maxWidth
+      );
+
+      const quoteSvg =
+        idx === 0 && hasQuote && q
+          ? buildSvgQuoteFrame(q, quote, template.palette?.accent)
+          : '';
+
+      // Badge halaman memakai pill gelap + teks putih supaya tetap terbaca di
+      // atas warna latar apa pun (mis. papan cokelat template 06).
+      const badgeText = `${idx + 1}/${totalPages}`;
+      const badgeWidth =
+        Math.ceil(measureTextWidth(badgeText, getMeasureFont('sans', 700), 15)) + 22;
+      const badgeX = template.width - 36 - badgeWidth;
+      const badgeY = template.height - 54;
+      const pageBadge = totalPages > 1
+        ? `<g>\n    <rect x="${badgeX}" y="${badgeY}" width="${badgeWidth}" height="28" rx="14" fill="${inkColor}" opacity="0.72"/>\n    <text x="${(badgeX + badgeWidth / 2).toFixed(1)}" y="${badgeY + 19}" font-family="Poppins, Arial, sans-serif" font-size="15" font-weight="700" fill="#FFFFFF" text-anchor="middle">${badgeText}</text>\n  </g>`
+        : '';
+
+      return `${svgBase.replace(
+        '</svg>',
+        `\n  <!-- Fess n Curious: isi fess & kutipan -->\n  <g transform="${matrixAttr}">\n    ${quoteSvg}\n    ${textSvg}\n  </g>\n  ${pageBadge}\n</svg>`
+      )}`;
+    });
+  }
+
   /** Render SVG card → Buffer PNG memakai font bundled (identik lokal & Vercel). */
   static renderSvgToPng(svg: string): Buffer {
     const fontFiles = getFontFiles();
@@ -793,7 +972,8 @@ export class CanvasService {
     templateKey = 'default'
   ): Promise<string[]> {
     const preparedFess = await CanvasService.withResolvedBaseAvatar(fess);
-    return CanvasService.buildSvgPages(preparedFess, templateKey).map(
+    const svgs = await CanvasService.buildPages(preparedFess, templateKey);
+    return svgs.map(
       (svg) => `data:image/png;base64,${CanvasService.renderSvgToPng(svg).toString('base64')}`
     );
   }
@@ -1346,6 +1526,159 @@ function renderTextLines(
   });
 
   return out.join('\n    ');
+}
+
+/* ── Template SVG desain: manipulasi slot & kotak kutipan ─────────────────── */
+
+/** Buang satu grup berdasarkan id (mis. teks contoh `#editable-message`). */
+function stripGroupById(svg: string, id: string): string {
+  const re = new RegExp(`<g\\s+id="${id}"[^>]*>[\\s\\S]*?</g>\\s*`);
+  return svg.replace(re, '');
+}
+
+/** Ganti isi sebuah `<text id="…">…</text>` tanpa mengubah posisi/gayanya. */
+function replaceTextById(svg: string, id: string, value: string | null): string {
+  if (value === null) return svg;
+  // `\sid=` wajib: tanpa itu `data-id="…"` juga ikut cocok.
+  const re = new RegExp(`(<text\\b[^>]*?\\sid="${id}"[^>]*>)([\\s\\S]*?)(</text>)`);
+  if (!re.test(svg)) return svg;
+  return svg.replace(re, (_all, open: string, _old: string, close: string) =>
+    `${open}${escapeXml(value)}${close}`
+  );
+}
+
+/**
+ * Ganti dua `<text>` pertama di dalam `#editable-meta` (handle lalu waktu).
+ * Beberapa desain menggabungkan handle + waktu dalam satu grup, jadi posisinya
+ * harus dipertahankan apa adanya (termasuk `transform` grup).
+ */
+function replaceMetaTexts(svg: string, handle: string | null, stamp: string | null): string {
+  const re = /<g\s+id="editable-meta"[^>]*>[\s\S]*?<\/g>/;
+  const match = re.exec(svg);
+  if (!match) return svg;
+
+  let index = 0;
+  const inner = match[0].replace(
+    /(<text\b[^>]*>)([\s\S]*?)(<\/text>)/g,
+    (all: string, open: string, old: string, close: string) => {
+      const value = index === 0 ? handle : index === 1 ? stamp : null;
+      index += 1;
+      return value === null ? all : `${open}${escapeXml(value)}${close}`;
+    }
+  );
+  return svg.slice(0, match.index) + inner + svg.slice(match.index + match[0].length);
+}
+
+/** Handle base untuk slot `@user` (sama dengan yang tampil di kartu lama). */
+function quoteHandleLabel(fess: FessLike): string {
+  const raw = fess.base?.igAccount || fess.baseHandle || '@fess';
+  return raw.startsWith('@') ? raw : `@${raw}`;
+}
+
+/**
+ * Lebar maksimum teks footer menurut `text-anchor` & posisi x desain, supaya
+ * branding base yang panjang tidak keluar dari tepi kartu.
+ */
+function footerMaxWidth(slots: TemplateSlots, cardWidth: number): number {
+  const footer = slots.footer;
+  if (!footer) return cardWidth - 80;
+  const margin = 40;
+  const available =
+    footer.anchor === 'middle'
+      ? 2 * Math.min(footer.x - margin, cardWidth - margin - footer.x)
+      : footer.anchor === 'end'
+      ? footer.x - margin
+      : cardWidth - margin - footer.x;
+  return Math.max(120, available);
+}
+
+const STAMP_DATE = new Intl.DateTimeFormat('id-ID', {
+  day: '2-digit',
+  month: 'short',
+  year: 'numeric',
+  timeZone: 'Asia/Jakarta',
+});
+const STAMP_TIME = new Intl.DateTimeFormat('id-ID', {
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+  timeZone: 'Asia/Jakarta',
+});
+
+/** "25 Okt 2026 · 18:46 WIB" — bentuk yang dipakai teks contoh di SVG. */
+function formatFessStamp(fess: FessLike): string | null {
+  const raw = fess.createdAt ? new Date(fess.createdAt) : new Date();
+  if (Number.isNaN(raw.getTime())) return null;
+  return `${STAMP_DATE.format(raw)} \u00b7 ${STAMP_TIME.format(raw)} WIB`;
+}
+
+/**
+ * Kotak kutipan ber-frame untuk template SVG.
+ *
+ * Geometrinya berasal dari `slots.quote` (hasil ukur, koordinat lokal ke anchor),
+ * jadi tidak ada angka desain yang ditulis ulang di sini. Teks kutipan memakai
+ * `layoutText` yang sama dengan isi fess — tidak ada mesin layout kedua.
+ */
+function buildSvgQuoteFrame(
+  q: NonNullable<TemplateSlots['quote']>,
+  quote: any,
+  accentFallback?: string
+): string {
+  const qFont = Math.max(10, q.fontSize);
+  const padq = q.padq;
+  const headerH = q.header;
+  const accent = q.accent || accentFallback || '#FF5A26';
+  const stroke = q.stroke || q.ink || '#14245D';
+  const muted = q.muted || 'rgba(17,17,17,0.72)';
+  const maxLines = Math.max(1, q.maxLines);
+
+  const measure = getMeasureFont('sans', 500);
+  const innerWidth = Math.max(40, q.width - padq * 2);
+  let lines = String(quote?.content || '')
+    .split(/\r?\n/)
+    .flatMap((paragraph) => layoutText(paragraph, innerWidth, qFont, measure, 0));
+  if (lines.length > maxLines) {
+    lines = lines.slice(0, maxLines);
+    const lastLine = lines[lines.length - 1];
+    if (lastLine) {
+      lastLine.push({
+        kind: 'text',
+        text: '\u2026',
+        width: measureTextWidth('\u2026', measure, qFont),
+      });
+    }
+  }
+
+  const handle = String(quote?.handle || quote?.senderHandle || '').trim();
+  const labelFont = Math.round(qFont * 0.72);
+  const labelFull = handle ? `KUTIPAN · ${handle.toUpperCase()}` : 'KUTIPAN';
+  const labelWidth = measureTextWidth(labelFull, measure, labelFont);
+  const label =
+    labelWidth <= innerWidth
+      ? labelFull
+      : fitTextToWidth(labelFull, measure, labelFont, innerWidth);
+
+  const headerY = q.y + padq + Math.round(qFont * 0.95);
+  const firstBaseline = q.y + padq + headerH + Math.round(qFont * 0.95);
+  const linesSvg = lines.length
+    ? renderTextLines(
+        lines,
+        q.x + padq,
+        firstBaseline,
+        qFont,
+        q.lineHeight,
+        muted,
+        { family: 'sans', weight: 500, letterSpacingPx: 0, align: 'left' },
+        innerWidth
+      )
+    : '';
+
+  return `<rect x="${q.x}" y="${q.y}" width="${q.width}" height="${q.height}" rx="16"
+          fill="${q.fill || 'rgba(20,36,93,0.06)'}" stroke="${stroke}" stroke-opacity="0.35" stroke-width="1.5"/>
+    <rect x="${q.x}" y="${q.y}" width="4" height="${q.height}" rx="2" fill="${accent}" opacity="0.85"/>
+    <text x="${(q.x + padq).toFixed(1)}" y="${headerY}" font-family="Poppins, Arial, sans-serif" font-size="${labelFont}"
+          font-weight="700" letter-spacing="0.6" fill="${accent}">${escapeXml(label)}</text>
+    ${linesSvg}`;
 }
 
 /** Ukur & bangun kotak kutipan (mirip preview quote di frontend) — di bawah isi fess. */

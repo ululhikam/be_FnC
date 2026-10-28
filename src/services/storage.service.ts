@@ -124,7 +124,7 @@ export class StorageService {
   /**
    * Upload file to Supabase Object Storage.
    *
-   * - Storage terkonfigurasi: upload + 1x percobaan ulang dengan proteksi timeout 25s.
+   * - Storage terkonfigurasi: upload + 1x percobaan ulang dengan proteksi timeout 120s.
    * - Storage belum dikonfigurasi (dev/test tanpa kredensial): fallback data-URI untuk file < 2MB.
    */
   static async uploadMedia(file: Express.Multer.File, folder = 'media'): Promise<UploadResult> {

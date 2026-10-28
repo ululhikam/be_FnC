@@ -16,6 +16,7 @@
  *
  * Pemakaian:
  *   npm run template:import:dev                  # tulis ke DB .env.development
+ *   npm run template:import                      # tulis ke DB .env (produksi; butuh persetujuan)
  *   node scripts/import-templates.mjs --dry-run  # lihat hasil tanpa menyentuh DB
  *   node scripts/import-templates.mjs --dir assets/templates --only 01-helpdesk-ticket
  */

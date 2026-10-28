@@ -660,3 +660,28 @@ Yang **tetap** di frontend: `videoNormalizer.js` (ffmpeg.wasm) dan `MediaUploade
 - Production: `be-fnc.vercel.app` & `fessncurious.vercel.app`, auto-deploy dari branch `main`
   di GitHub. **Jangan push ke `main` dan jangan deploy manual ke project production.**
 - Kedua repo saat ini checkout di `main` → buat branch fitur sebelum mulai bekerja.
+
+### 12.1 Go-live produksi (belum dijalankan)
+
+Kode aman di-deploy lebih dulu: `buildPages()` menangkap kegagalan baca `Template` dan jatuh ke
+renderer lama, jadi situs tidak rusak — tetapi 12 template baru **belum muncul** (katalog 500 →
+composer memakai `default` legacy) sampai database produksi diisi.
+
+Urutan yang disarankan (butuh persetujuan eksplisit karena menulis DB produksi):
+
+1. Backup database produksi (snapshot Supabase) sebelum menyentuh apa pun.
+2. Cek status migrasi produksi: `npx prisma migrate status` (membaca `backend/.env`).
+   - Jika **hanya** `20261028000000_template_model` yang pending → `npx prisma migrate deploy`
+     aman (migrasi additive: satu tabel + dua index, tanpa FK).
+   - Jika masih ada migrasi lain yang pending (mis. backlog CTF yang belum sign-off) →
+     **jangan** `migrate deploy`; terapkan `migration.sql` milik template secara terpisah lalu
+     catat di `_prisma_migrations`, atau tuntaskan dulu backlog tersebut.
+3. Isi 12 template: `npm run template:import` (membaca `backend/.env` → DB produksi).
+   Verifikasi: `SELECT count(*) FROM "Template" WHERE status = 'active';` → 12, dan
+   `GET https://be-fnc.vercel.app/api/templates` → 12 item.
+4. Merge `feat/svg-templates-db` ke `main` (kedua repo) → auto-deploy produksi.
+5. Canary: buka composer produksi, pastikan pemilih berisi 12 template, pratinjau PNG tampil,
+   dan satu posting uji menghasilkan kartu yang benar (termasuk footer host
+   `fessncurious.vercel.app`).
+6. Pantau log `[Canvas] Gagal membaca template dari DB` — kalau muncul, berarti tabel/isi belum
+   siap dan semua render masih jatuh ke template legacy.

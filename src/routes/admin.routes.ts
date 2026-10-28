@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { AdminController } from '../controllers/admin.controller.js';
 import { BaseRevenueController } from '../controllers/base-revenue.controller.js';
 import { PlatformAdminController } from '../controllers/platform-admin.controller.js';
+import { TemplateAdminController } from '../controllers/template-admin.controller.js';
 import {
   requireAuth,
   requireRole,
@@ -29,6 +30,11 @@ import {
   AdminPaymentEventsQuerySchema,
   FessAnalyticsQuerySchema,
 } from '../validators/admin.validator.js';
+import {
+  CreateTemplateSchema,
+  ReplaceTemplateSvgSchema,
+  UpdateTemplateSchema,
+} from '../validators/template-admin.validator.js';
 
 const router = Router();
 
@@ -205,6 +211,74 @@ router.post(
 // ---------------------------------------------------------------------------
 // Super Admin platform console (read models + guarded account actions)
 // ---------------------------------------------------------------------------
+
+// Template kartu: import SVG, thumbnail otomatis, metadata & pemilik base.
+router.get(
+  '/templates',
+  requireAuth,
+  requireRole('Super Admin'),
+  TemplateAdminController.list
+);
+
+router.post(
+  '/templates',
+  requireAuth,
+  requireRole('Super Admin'),
+  paymentRateLimit({
+    name: 'template-admin-create',
+    limit: 20,
+    windowSeconds: 60,
+    message: 'Terlalu banyak import template. Coba lagi beberapa saat.',
+    code: 'TEMPLATE_RATE_LIMITED',
+  }),
+  validateBody(CreateTemplateSchema),
+  TemplateAdminController.create
+);
+
+router.patch(
+  '/templates/:key',
+  requireAuth,
+  requireRole('Super Admin'),
+  validateBody(UpdateTemplateSchema),
+  TemplateAdminController.update
+);
+
+router.put(
+  '/templates/:key/svg',
+  requireAuth,
+  requireRole('Super Admin'),
+  paymentRateLimit({
+    name: 'template-admin-replace',
+    limit: 20,
+    windowSeconds: 60,
+    message: 'Terlalu banyak penggantian SVG. Coba lagi beberapa saat.',
+    code: 'TEMPLATE_RATE_LIMITED',
+  }),
+  validateBody(ReplaceTemplateSvgSchema),
+  TemplateAdminController.replaceSvg
+);
+
+router.post(
+  '/templates/:key/thumbnail',
+  requireAuth,
+  requireRole('Super Admin'),
+  paymentRateLimit({
+    name: 'template-admin-thumbnail',
+    limit: 20,
+    windowSeconds: 60,
+    message: 'Terlalu banyak render thumbnail. Coba lagi beberapa saat.',
+    code: 'TEMPLATE_RATE_LIMITED',
+  }),
+  TemplateAdminController.regenerateThumbnail
+);
+
+router.delete(
+  '/templates/:key',
+  requireAuth,
+  requireRole('Super Admin'),
+  TemplateAdminController.archive
+);
+
 router.get(
   '/ops/summary',
   requireAuth,

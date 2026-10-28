@@ -6,7 +6,15 @@
       "src": "api/index.ts",
       "use": "@vercel/node",
       "config": {
-        "includeFiles": ["src/**", "prisma/**", "fonts/**", "assets/**", "public/**"],
+        "includeFiles": [
+          "src/**",
+          "prisma/**",
+          "fonts/**",
+          "assets/**",
+          "public/**",
+          "scripts/measure-templates.mjs",
+          "scripts/template-meta.mjs"
+        ],
         "maxDuration": 60
       }
     }

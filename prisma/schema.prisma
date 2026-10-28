@@ -105,6 +105,7 @@ model Base {
   creatorId                   String?
   creator                     User?     @relation("BaseCreator", fields: [creatorId], references: [id], onDelete: SetNull)
   freeForeverSetBy            User?     @relation("BaseFreeForeverSetBy", fields: [freeForeverSetById], references: [id], onDelete: SetNull)
+  templates                   Template[]
   createdAt                   DateTime  @default(now())
   updatedAt                   DateTime  @updatedAt
 
@@ -347,11 +348,15 @@ model Template {
 
   status      String   @default("active") // draft | active | archived
   sortOrder   Int      @default(0)
+  // null = katalog bersama (dipakai semua base); terisi = eksklusif milik base ini.
+  baseId      String?
+  base        Base?    @relation(fields: [baseId], references: [id], onDelete: SetNull)
   createdById String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@index([status, sortOrder])
+  @@index([baseId, status, sortOrder])
 }
 
 model PlatformConnection {

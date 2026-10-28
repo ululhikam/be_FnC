@@ -81,6 +81,8 @@ export interface TemplateRecord {
   version: number;
   status: string;
   sortOrder: number;
+  /** null = katalog bersama; terisi = template eksklusif milik base tersebut. */
+  baseId?: string | null;
 }
 
 /** Baris katalog tanpa `svgSource` (dipakai endpoint daftar template). */
@@ -105,6 +107,7 @@ const BASE_SELECT = {
   version: true,
   status: true,
   sortOrder: true,
+  baseId: true,
 } as const;
 
 export class TemplateService {
@@ -127,15 +130,55 @@ export class TemplateService {
     return row && row.status === 'active' ? row : null;
   }
 
-  /** Daftar template aktif untuk pemilih (tanpa `svgSource`, payload tetap kecil). */
+  /**
+   * Template aktif yang boleh dipakai sebuah base: milik base itu sendiri atau
+   * katalog bersama (`baseId = null`). Template milik base lain ditolak.
+   */
+  static async getActiveForBase(key: string, baseId: string): Promise<TemplateRecord | null> {
+    const row = await TemplateService.getByKey(key);
+    if (!row || row.status !== 'active') return null;
+    if (row.baseId && row.baseId !== baseId) return null;
+    return row;
+  }
+
+  /**
+   * Katalog bersama (tanpa base): hanya baris `baseId = null`.
+   *
+   * Composer memuat ini sebelum base dipilih. Template milik base lain tidak
+   * boleh bocor ke pemilih umum.
+   */
   static async listActive(): Promise<TemplateSummaryRecord[]> {
     return getOrSet(`${CACHE_PREFIX}list:active`, TTL_MS, async () => {
       const rows = await prisma.template.findMany({
-        where: { status: 'active' },
+        where: { status: 'active', baseId: null },
         orderBy: [{ sortOrder: 'asc' }, { key: 'asc' }],
         select: BASE_SELECT,
       });
       return rows as unknown as TemplateSummaryRecord[];
+    });
+  }
+
+  /**
+   * Daftar template aktif untuk satu base: miliknya lebih dulu, lalu katalog
+   * bersama. Template milik base lain tidak pernah ikut.
+   */
+  static async listActiveForBase(baseId: string): Promise<TemplateSummaryRecord[]> {
+    const normalized = String(baseId || '').trim();
+    if (!normalized) return TemplateService.listActive();
+
+    return getOrSet(`${CACHE_PREFIX}list:base:${normalized}`, TTL_MS, async () => {
+      const rows = (await prisma.template.findMany({
+        where: {
+          status: 'active',
+          OR: [{ baseId: normalized }, { baseId: null }],
+        },
+        orderBy: [{ sortOrder: 'asc' }, { key: 'asc' }],
+        select: BASE_SELECT,
+      })) as unknown as TemplateSummaryRecord[];
+
+      const owned = rows.filter((row) => row.baseId === normalized);
+      const shared = rows.filter((row) => !row.baseId);
+      return [...owned, ...shared];
     });
   }
 

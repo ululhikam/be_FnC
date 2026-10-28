@@ -206,7 +206,9 @@ Script `backend/scripts/import-templates.mjs` (dijalankan manual, bukan runtime)
    `maxWidth` dihitung dari lebar area dekoratif template, bukan dari teks contoh.
 6. Validasi (gagal import bila dilanggar): tidak ada `@import`, `var(`, `href` non-data,
    `<filter>`, `<foreignObject>`; semua id unik; 4 baris contoh pada `editable-message`.
-7. Render PNG contoh 1080×1350 → upload Supabase Storage `templates/<key>-v<n>.png` → `thumbnailUrl`.
+7. Render PNG contoh 1080×1350 → perkecil ke 540×675 (PNG palette, ±40–75 KB) →
+   upload Supabase Storage `templates/<key>-v<n>.png` → `thumbnailUrl`
+   (`npm run template:thumbnails:*`, lihat Fase 4b).
 8. Upsert by `key`, simpan `checksum`; jika checksum berubah, `version + 1` dan thumbnail baru.
 
 `backend/prisma/seed.ts` **ada di git HEAD tetapi terhapus di working tree** (status `D`,
@@ -571,16 +573,17 @@ Yang **tetap** di frontend: `videoNormalizer.js` (ffmpeg.wasm) dan `MediaUploade
 
 **Fase 2 — renderer** — ✅ selesai
 - Renderer di `CanvasService` (lihat §6), frame kutipan di `buildSvgQuoteFrame` (§6.2).
-- `tests/template-renderer.test.ts` — 10 test memakai SVG asli + `docs/template-geometry.json`:
+- `tests/template-renderer.test.ts` — 12 test memakai SVG asli + `docs/template-geometry.json`:
   1 baris → 1 halaman, 30 baris → 5 halaman, 200 baris → 10 halaman + `…`, kutipan ber-frame,
-  footer/branding (host frontend), handle+tanggal, dan seluruh 12 template.
+  footer/branding (host frontend), handle+tanggal, thumbnail deterministik, dan seluruh
+  12 template.
 - Render visual 12 template + halaman 2 diverifikasi manual sebelum artefak dibersihkan
   (`npm run template:verify` bisa membuatnya lagi).
 
 **Fase 3 — API** — ✅ selesai
 - `routes/template.routes.ts` + `controllers/template.controller.ts` + daftar di `routes/index.ts`.
 - Preview endpoint memakai template DB (fallback legacy bila DB gagal).
-- Thumbnail Supabase Storage belum dibuat — ditunda ke Fase 5 (belum ada kebutuhan UI).
+- Thumbnail katalog ada di Fase 4b (selesai).
 
 **Fase 4 — frontend** — ✅ selesai
 - `stores/templateStore.js`: katalog dari `GET /api/templates`, cache 5 menit, panggilan
@@ -598,6 +601,18 @@ Yang **tetap** di frontend: `videoNormalizer.js` (ffmpeg.wasm) dan `MediaUploade
   kutipan), dicek visual.
 - Catatan: `npm run format:check` repo masih gagal karena 54 file lama; hanya file yang
   disentuh fitur ini yang diformat.
+
+**Fase 4b — thumbnail katalog** — ✅ selesai
+- `scripts/template-thumbnails.ts` merender halaman 1 lewat `CanvasService.renderTemplateThumbnail`
+  (contoh deterministik, `withQuote`, host footer bisa dioverride) lalu mengunggah PNG lewat
+  `StorageService.uploadBuffer`. Tidak ada geometri baru: sumbernya `measureTemplate()` yang sama
+  dengan import DB.
+- Path deterministik `templates/<key>-v<version>.png` (upsert), PNG 540×675 (±40–75 KB/template,
+  total ±700 KB). `version` dibaca dari DB; `--no-db` memakai v1 untuk unggah sebelum import.
+- Opsi: `--env dev|prod`, `--only`, `--host`, `--width`, `--out`, `--no-db`, `--dry-run`,
+  `--no-quote`, dan `--confirm-prod` (guard tulis DB produksi).
+- Sudah diunggah ke bucket dev (`confess-media-dev`) dan produksi (`confess-media`); 12 baris
+  dev sudah terisi `thumbnailUrl`. Baris produksi diisi saat go-live (§12.1).
 
 **Fase 5 — admin (opsional)**
 - CRUD template di konsol Super Admin + upload SVG baru (dengan validator yang sama
@@ -627,8 +642,8 @@ Yang **tetap** di frontend: `videoNormalizer.js` (ffmpeg.wasm) dan `MediaUploade
 
 ## 11. Checklist verifikasi
 
-- [x] `npx vitest run tests/template-renderer.test.ts` hijau (10 test, 12 template).
-- [x] `npx vitest run` penuh hijau (31 file / 348 test, tidak ada regresi
+- [x] `npx vitest run tests/template-renderer.test.ts` hijau (12 test, 12 template).
+- [x] `npx vitest run` penuh hijau (31 file / 354 test, tidak ada regresi
       `canvas.service.test.ts`, `canvas.preview.test.ts`, `validators.test.ts`).
 - [x] `npx tsc -p tsconfig.build.json --noEmit` lolos (TS strict, import `.js`).
 - [x] `GET /api/templates` mengembalikan 12 item aktif tanpa `svgSource`/`slots`.
@@ -644,6 +659,9 @@ Yang **tetap** di frontend: `videoNormalizer.js` (ffmpeg.wasm) dan `MediaUploade
 - [x] `npx vitest run tests/template-renderer.test.ts` mencakup kutipan panjang & pemotongan `…`.
 - [x] Preview gagal → state error + "Coba lagi" (tanpa kartu DOM).
 - [x] `grep -r "cardPagination\|config/templates" frontend/src` → kosong.
+- [x] Thumbnail katalog: 12 PNG `templates/<key>-v1.png` di bucket dev & produksi
+      (540×675, total ±700 KB); `thumbnail_url` 12 baris dev HTTP 200. DB produksi diisi
+      saat go-live (§12.1).
 - [x] Fess lama (key `cyberpunk`, `default`, …) masih ter-render (fallback legacy).
 - [ ] Posting ke Instagram dev berhasil untuk minimal 1 template baru (gambar + carousel).
 - [ ] `npm run format:check` frontend bersih (54 file lama di luar fitur ini masih gagal).
@@ -659,9 +677,14 @@ Yang **tetap** di frontend: `videoNormalizer.js` (ffmpeg.wasm) dan `MediaUploade
   (boleh `vercel --prod` ke project dev).
 - Production: `be-fnc.vercel.app` & `fessncurious.vercel.app`, auto-deploy dari branch `main`
   di GitHub. **Jangan push ke `main` dan jangan deploy manual ke project production.**
-- Kedua repo saat ini checkout di `main` → buat branch fitur sebelum mulai bekerja.
+- `main` = produksi. Kerjakan fitur di branch terpisah; jangan commit/push langsung ke `main`.
 
 ### 12.1 Go-live produksi (belum dijalankan)
+
+Status 28 Okt 2026: `npx prisma migrate status` (membaca `backend/.env`) menunjukkan 15 migrasi
+sudah applied dan **hanya** `20261028000000_template_model` yang pending. Artinya
+`npx prisma migrate deploy` hanya membuat tabel `Template` (additive: 1 tabel + 2 index, tanpa FK)
+dan tidak mengeksekusi backlog CTF. Tetap jalankan `migrate status` tepat sebelum deploy.
 
 Kode aman di-deploy lebih dulu: `buildPages()` menangkap kegagalan baca `Template` dan jatuh ke
 renderer lama, jadi situs tidak rusak — tetapi 12 template baru **belum muncul** (katalog 500 →
@@ -670,18 +693,27 @@ composer memakai `default` legacy) sampai database produksi diisi.
 Urutan yang disarankan (butuh persetujuan eksplisit karena menulis DB produksi):
 
 1. Backup database produksi (snapshot Supabase) sebelum menyentuh apa pun.
-2. Cek status migrasi produksi: `npx prisma migrate status` (membaca `backend/.env`).
-   - Jika **hanya** `20261028000000_template_model` yang pending → `npx prisma migrate deploy`
-     aman (migrasi additive: satu tabel + dua index, tanpa FK).
-   - Jika masih ada migrasi lain yang pending (mis. backlog CTF yang belum sign-off) →
-     **jangan** `migrate deploy`; terapkan `migration.sql` milik template secara terpisah lalu
-     catat di `_prisma_migrations`, atau tuntaskan dulu backlog tersebut.
+2. Pastikan hanya migrasi template yang pending: `npx prisma migrate status`.
+   Apply: `npx prisma migrate deploy`.
+   - Fallback bila `migrate deploy` tidak bisa dipakai: jalankan
+     `prisma/manual/20261028000000_template_model.sql` lewat psql/Supabase SQL Editor
+     (idempoten, aman diulang), lalu
+     `npx prisma migrate resolve --applied 20261028000000_template_model`.
+   - Jangan menyalin file manual itu ke `prisma/migrations/`: checksum-nya berbeda dan Prisma
+     akan menganggapnya migrasi baru.
 3. Isi 12 template: `npm run template:import` (membaca `backend/.env` → DB produksi).
    Verifikasi: `SELECT count(*) FROM "Template" WHERE status = 'active';` → 12, dan
-   `GET https://be-fnc.vercel.app/api/templates` → 12 item.
-4. Merge `feat/svg-templates-db` ke `main` (kedua repo) → auto-deploy produksi.
-5. Canary: buka composer produksi, pastikan pemilih berisi 12 template, pratinjau PNG tampil,
-   dan satu posting uji menghasilkan kartu yang benar (termasuk footer host
-   `fessncurious.vercel.app`).
-6. Pantau log `[Canvas] Gagal membaca template dari DB` — kalau muncul, berarti tabel/isi belum
+   `GET https://be-fnc.vercel.app/api/templates` → 12 item (thumbnail masih `null`).
+4. Isi thumbnail:
+   `npm run template:thumbnails:prod -- --host fessncurious.vercel.app --confirm-prod`.
+   Script merender halaman 1 dari SVG yang sama, mengunggah
+   `templates/<key>-v<n>.png` ke bucket `confess-media`, lalu menulis `Template.thumbnailUrl`.
+   - PNG-nya sudah diunggah lebih dulu (28 Okt 2026) dengan `--no-db`; langkah ini hanya
+     menautkan URL (upsert, file tidak terduplikasi).
+   - Verifikasi: semua `thumbnail_url` dari API merespons HTTP 200.
+5. Merge `feat/svg-templates-db` ke `main` (kedua repo) → auto-deploy produksi.
+6. Canary: buka composer produksi, pastikan pemilih berisi 12 template (dengan gambar
+   thumbnail), pratinjau PNG tampil, dan satu posting uji menghasilkan kartu yang benar
+   (termasuk footer host `fessncurious.vercel.app`).
+7. Pantau log `[Canvas] Gagal membaca template dari DB` — kalau muncul, berarti tabel/isi belum
    siap dan semua render masih jatuh ke template legacy.

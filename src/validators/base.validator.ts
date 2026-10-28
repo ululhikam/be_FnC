@@ -39,6 +39,9 @@ export const UpdateBaseSettingsSchema = z.object({
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   rules: z.array(z.string()).optional(),
   postMode: z.enum(['auto', 'moderated']).optional(),
+  // Opt-out thumbnail cover Instagram per base. `auto` = thumbnail + judul AI,
+  // `no_ai` = thumbnail tanpa AI, `off` = tanpa thumbnail sama sekali.
+  thumbnail_mode: z.enum(['auto', 'no_ai', 'off']).optional(),
   // Blacklist kata milik base — dipakai filter NLP saat mode auto post.
   bannedWords: z
     .array(

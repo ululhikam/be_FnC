@@ -40,7 +40,8 @@ export class FessController {
    */
   static async previewCanvas(req: Request, res: Response, next: NextFunction) {
     try {
-      const { base_handle, content, template, tag, topic, quoted_fess } = req.body;
+      const { base_handle, content, template, tag, topic, quoted_fess, media, with_thumbnail } =
+        req.body;
       const handle = normalizeHandle(String(base_handle || ''));
       const base = await prisma.base.findUnique({ where: { handle } });
 
@@ -59,7 +60,7 @@ export class FessController {
       // Canvas memuat resvg/sharp/opentype (native & berat). Import dinamis
       // memastikan endpoint baca biasa tidak menanggung biaya cold start-nya.
       const { CanvasService } = await import('../services/canvas.service.js');
-      const images = await CanvasService.renderPreviewImages(
+      const { images, hasThumbnail } = await CanvasService.renderPreviewImages(
         {
           content,
           baseHandle: handle,
@@ -67,18 +68,147 @@ export class FessController {
           tag: tag || null,
           topic: topic || null,
           quotedFess: quoted_fess || null,
+          media: media || [],
           base: {
             name: base.name,
             initial: base.initial,
             igAccount: base.igAccount,
             avatar: base.avatar,
             color: base.color,
+            thumbnailMode: (base as any).thumbnailMode,
           },
         },
-        templateKey
+        templateKey,
+        { withThumbnail: Boolean(with_thumbnail), media: media || [] }
       );
 
-      return successResponse(res, { images, page_count: images.length }, 200);
+      return successResponse(
+        res,
+        {
+          images,
+          page_count: images.length,
+          has_thumbnail: hasThumbnail,
+        },
+        200
+      );
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Buat ulang thumbnail cover (hanya saat `failed`/`idle`).
+   *
+   * Judul tidak bisa diedit siapa pun; endpoint ini murni pemulihan
+   * operasional setelah render gagal atau fitur baru dinyalakan.
+   */
+  static async regenerateThumbnail(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = String(req.params.id);
+      const viewer = req.user;
+      if (!viewer) {
+        return errorResponse(res, 'Autentikasi dibutuhkan', 401, 'UNAUTHORIZED');
+      }
+
+      const fess = await prisma.fess.findUnique({
+        where: { id },
+        include: { base: { select: { creatorId: true } } },
+      });
+      if (!fess) {
+        return errorResponse(res, 'Fess tidak ditemukan', 404, 'NOT_FOUND');
+      }
+
+      const postHandle = String(fess.baseHandle || '').replace(/^@/, '').toLowerCase();
+      const managesBase =
+        viewer.role === 'Super Admin' ||
+        (viewer.role === 'Base Admin' &&
+          ((viewer.managedBases || []).some(
+            (handle: string) => String(handle).replace(/^@/, '').toLowerCase() === postHandle
+          ) ||
+            fess.base?.creatorId === viewer.id));
+      if (!managesBase) {
+        return errorResponse(
+          res,
+          'Anda tidak memiliki izin membuat thumbnail fess ini',
+          403,
+          'FORBIDDEN'
+        );
+      }
+
+      const { ThumbnailService } = await import('../services/thumbnail.service.js');
+      const { RateLimitService } = await import('../services/rate-limit.service.js');
+
+      if (!ThumbnailService.isEnabled()) {
+        return errorResponse(res, 'Fitur thumbnail sedang dimatikan.', 409, 'THUMBNAIL_DISABLED');
+      }
+
+      const status = fess.thumbnailStatus || 'idle';
+      if (status !== 'failed' && status !== 'idle') {
+        return errorResponse(
+          res,
+          'Thumbnail sudah dibuat. Judul cover bersifat final dan tidak dapat dibuat ulang.',
+          409,
+          'THUMBNAIL_NOT_REGENERABLE'
+        );
+      }
+
+      const gate = await RateLimitService.consume(`thumbnail:regen:${id}`, 5, 60);
+      if (!gate.allowed) {
+        return errorResponse(
+          res,
+          `Terlalu banyak permintaan. Coba lagi dalam ${gate.retryAfterSeconds} detik.`,
+          429,
+          'RATE_LIMITED'
+        );
+      }
+
+      const result = await ThumbnailService.ensure({
+        id: fess.id,
+        content: fess.content,
+        baseHandle: fess.baseHandle,
+        media: fess.media,
+        base: fess.base as any,
+        thumbnailUrl: fess.thumbnailUrl,
+        thumbnailStatus: fess.thumbnailStatus,
+        thumbnailSourceMediaId: fess.thumbnailSourceMediaId,
+        thumbnailTitle: fess.thumbnailTitle,
+        thumbnailVersion: fess.thumbnailVersion,
+      });
+
+      const refreshed = await prisma.fess.findUnique({
+        where: { id },
+        select: {
+          thumbnailUrl: true,
+          thumbnailTitle: true,
+          thumbnailStatus: true,
+          thumbnailError: true,
+        },
+      });
+
+      if (result) {
+        try {
+          const { AdminSecurityService } = await import('../services/admin-security.service.js');
+          await AdminSecurityService.writeAudit({
+            actorId: viewer.id,
+            action: 'fess.thumbnail.regenerate',
+            targetType: 'Fess',
+            targetId: id,
+          });
+        } catch {
+          /* audit tidak boleh menggagalkan render */
+        }
+      }
+
+      return successResponse(
+        res,
+        {
+          thumbnail_url: refreshed?.thumbnailUrl || null,
+          thumbnail_title: refreshed?.thumbnailTitle || null,
+          thumbnail_status: refreshed?.thumbnailStatus || 'idle',
+          thumbnail_error: refreshed?.thumbnailError || null,
+        },
+        200
+      );
     } catch (error) {
       next(error);
     }

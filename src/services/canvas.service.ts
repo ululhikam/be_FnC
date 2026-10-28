@@ -14,6 +14,7 @@ import { StorageService } from './storage.service.js';
 import { TemplateService, type TemplateRecord, type TemplateSlots } from './template.service.js';
 import { prisma } from '../config/prisma.js';
 import { InstagramService } from './instagram.service.js';
+import { ThumbnailService, type ThumbnailResult } from './thumbnail.service.js';
 import {
   getFontFiles,
   getFontFileFor,
@@ -23,6 +24,7 @@ import {
 import { getEmojiSvgMarkup } from '../config/emoji.js';
 import { ENV } from '../config/env.js';
 import { TOPICS } from '../constants/topics.js';
+import { isPublicHttpUrl } from '../utils/remote-image.util.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -89,6 +91,9 @@ export interface CanvasExportResult {
   media_count: number;
   posted_to: ('instagram' | 'twitter' | 'telegram')[];
   ig_result?: any;
+  /** Slide cover (indeks 0) bila thumbnail berhasil dibuat. */
+  thumbnail_url?: string;
+  thumbnail_title?: string;
 }
 
 export interface CanvasExportOptions {
@@ -108,6 +113,8 @@ export interface FessLike {
   template?: string | null;
   quotedFess?: any;
   carouselOrder?: string[] | null;
+  /** Media composer (dipakai pemilih foto cover thumbnail). */
+  media?: unknown;
   base?: {
     name?: string | null;
     initial?: string | null;
@@ -116,6 +123,7 @@ export interface FessLike {
     /** Avatar yang sudah diubah menjadi data URI agar bisa ditanam ke SVG. */
     avatarDataUri?: string | null;
     color?: string | null;
+    thumbnailMode?: string | null;
   } | null;
 }
 
@@ -242,6 +250,26 @@ export class CanvasService {
     );
     const svgs = await CanvasService.buildPages(preparedFess, templateKey, aspectKey);
 
+    // ── Thumbnail cover (slide 0) ─────────────────────────────────────────
+    // Hanya dibuat saat benar-benar publish ke Instagram. Base yang opt-out
+    // (`thumbnailMode=off`/`no_ai` sesuai aturan) atau tanpa foto akan
+    // menghasilkan `null` dan publish berjalan seperti sebelumnya.
+    let thumbnail: ThumbnailResult | null = null;
+    if (publishToIg) {
+      thumbnail = await ThumbnailService.ensure({
+        id: fess.id,
+        content: fess.content,
+        baseHandle: fess.baseHandle,
+        media: fess.media,
+        base: (fess as any).base,
+        thumbnailUrl: (fess as any).thumbnailUrl,
+        thumbnailStatus: (fess as any).thumbnailStatus,
+        thumbnailSourceMediaId: (fess as any).thumbnailSourceMediaId,
+        thumbnailTitle: (fess as any).thumbnailTitle,
+        thumbnailVersion: (fess as any).thumbnailVersion,
+      });
+    }
+
     // ── SVG → JPEG (resvg + sharp, font bundled) → upload per halaman ──────
     // Instagram Content Publishing hanya menerima gambar JPEG.
     const imageUrls: string[] = [];
@@ -267,11 +295,25 @@ export class CanvasService {
     const posted_to: ('instagram' | 'twitter' | 'telegram')[] = [];
     let ig_result: any = null;
 
-    // Media user (gambar/video) ikut diposting. Sisakan slot untuk card agar
-    // media tetap kebagian (maksimal 10 item carousel Instagram).
+    // Media user (gambar/video) ikut diposting. Sisakan slot untuk thumbnail
+    // dan card agar media user tidak pernah terpotong (maksimal 10 item).
     const mediaItems = collectMediaItems(fess.media);
+    const slotPlan = ThumbnailService.planSlots({
+      cardCount: imageUrls.length,
+      mediaCount: mediaItems.length,
+      withThumbnail: Boolean(thumbnail),
+    });
+    if (slotPlan.droppedCards > 0) {
+      console.info(
+        `[Canvas] ${slotPlan.droppedCards} kartu dipotong agar thumbnail & media user masuk batas 10 slide.`
+      );
+      await logCanvasMuted(
+        `Fess ${fessId}: ${slotPlan.droppedCards} kartu dipotong agar thumbnail & media user masuk batas 10 slide.`
+      );
+    }
+
     const cardItems = imageUrls
-      .slice(0, Math.max(1, 10 - mediaItems.length))
+      .slice(0, slotPlan.maxCards)
       .map((url) => ({
         type: 'image' as const,
         url,
@@ -279,10 +321,24 @@ export class CanvasService {
         height: aspect.height,
         normalized: true,
       }));
-    const postItems = arrangeCarouselItems(
+    const arrangedItems = arrangeCarouselItems(
       cardItems,
       mediaItems,
       (fess as any).carouselOrder
+    );
+    const postItems = (
+      thumbnail
+        ? [
+            {
+              type: 'image' as const,
+              url: thumbnail.url,
+              width: 1080,
+              height: 1350,
+              normalized: true,
+            },
+            ...arrangedItems,
+          ]
+        : arrangedItems
     ).slice(0, 10);
 
     // Caption = isi fess penuh (pemotongan batas 2200 char ditangani InstagramService).
@@ -383,6 +439,9 @@ export class CanvasService {
       media_count: mediaItems.length,
       posted_to,
       ig_result,
+      ...(thumbnail
+        ? { thumbnail_url: thumbnail.url, thumbnail_title: thumbnail.title }
+        : {}),
     };
   }
 
@@ -1012,20 +1071,52 @@ export class CanvasService {
    * Render pratinjau kartu (PNG data URI) untuk modal konfirmasi posting.
    * Memakai builder & renderer yang sama dengan auto-post Instagram, jadi
    * bentuk teks, warna, dan paginasi identik dengan hasil yang diposting.
+   *
+   * `withThumbnail` menambahkan slide cover di indeks 0 (tanpa upload dan
+   * tanpa menyimpan apa pun) supaya pratinjau composer sama dengan hasil post.
    */
   static async renderPreviewImages(
     fess: FessLike,
-    templateKey = 'default'
-  ): Promise<string[]> {
+    templateKey = 'default',
+    options: { withThumbnail?: boolean; media?: unknown } = {}
+  ): Promise<{ images: string[]; hasThumbnail: boolean }> {
     const preparedFess = await CanvasService.withResolvedBaseAvatar(fess);
     const svgs = await CanvasService.buildPages(preparedFess, templateKey);
-    return svgs.map(
+    const images = svgs.map(
       (svg) => `data:image/png;base64,${CanvasService.renderSvgToPng(svg).toString('base64')}`
     );
+
+    if (!options.withThumbnail) return { images, hasThumbnail: false };
+
+    const cover = await ThumbnailService.renderPreview({
+      id: String(fess.id || 'preview'),
+      content: fess.content,
+      baseHandle: fess.baseHandle,
+      media: options.media ?? fess.media,
+      base: fess.base
+        ? { name: fess.base.name, thumbnailMode: fess.base.thumbnailMode }
+        : null,
+    });
+    if (!cover) return { images, hasThumbnail: false };
+    return { images: [cover.dataUri, ...images], hasThumbnail: true };
   }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * Catat peristiwa kanvas yang bersifat informasi (mis. kartu terpotong karena
+ * batas carousel). Tidak boleh menggagalkan render.
+ */
+async function logCanvasMuted(message: string): Promise<void> {
+  try {
+    await prisma.systemLog.create({
+      data: { source: 'CANVAS_WORKER', tone: 'muted', message: message.slice(0, 500) },
+    });
+  } catch {
+    /* logging opsional */
+  }
+}
 
 function escapeXml(unsafe: string): string {
   if (!unsafe) return '';
@@ -1066,7 +1157,7 @@ async function resolveBaseAvatarDataUri(value: unknown): Promise<string | null> 
       return null;
     }
   }
-  if (!AVATAR_REMOTE_RE.test(target) || !isPublicAvatarUrl(target)) return null;
+  if (!AVATAR_REMOTE_RE.test(target) || !isPublicHttpUrl(target)) return null;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);
@@ -1076,7 +1167,7 @@ async function resolveBaseAvatarDataUri(value: unknown): Promise<string | null> 
       redirect: 'follow',
       signal: controller.signal,
     });
-    if (!response.ok || !isPublicAvatarUrl(response.url)) return null;
+    if (!response.ok || !isPublicHttpUrl(response.url)) return null;
 
     const contentType = String(response.headers.get('content-type') || '')
       .split(';')[0]
@@ -1094,50 +1185,6 @@ async function resolveBaseAvatarDataUri(value: unknown): Promise<string | null> 
     return null;
   } finally {
     clearTimeout(timer);
-  }
-}
-
-/** Cegah fetch avatar ke alamat internal/private (SSRF dasar). */
-function isPublicAvatarUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
-
-    const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
-    if (
-      !host ||
-      host === 'localhost' ||
-      host.endsWith('.localhost') ||
-      host.endsWith('.local') ||
-      host.endsWith('.internal')
-    ) {
-      return false;
-    }
-
-    const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-    if (ipv4) {
-      const [a, b] = ipv4.slice(1).map(Number);
-      if (
-        a === 0 ||
-        a === 10 ||
-        a === 127 ||
-        (a === 169 && b === 254) ||
-        (a === 172 && b >= 16 && b <= 31) ||
-        (a === 192 && b === 168)
-      ) {
-        return false;
-      }
-    }
-
-    if (
-      host.includes(':') &&
-      (host === '::1' || host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80'))
-    ) {
-      return false;
-    }
-    return true;
-  } catch {
-    return false;
   }
 }
 

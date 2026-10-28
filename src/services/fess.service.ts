@@ -1712,6 +1712,11 @@ export class FessService {
       ig_status: fess.igStatus || (fess.postedToIg ? 'published' : 'idle'),
       ig_attempts: fess.igAttempts ?? 0,
       ig_updated_at: fess.igUpdatedAt ? new Date(fess.igUpdatedAt).getTime() : null,
+      // Cover Instagram (slide 0). Judul bersifat final — UI hanya menampilkan.
+      thumbnail_url: fess.thumbnailUrl || undefined,
+      thumbnail_title: fess.thumbnailTitle || undefined,
+      thumbnail_status: fess.thumbnailStatus || 'idle',
+      ...(options.includeIgError ? { thumbnail_error: fess.thumbnailError || null } : {}),
       ...(options.includeIgError ? { ig_error: fess.igError || null } : {}),
       ...(options.canManageInstagram !== undefined
         ? { can_manage_instagram: Boolean(options.canManageInstagram) }

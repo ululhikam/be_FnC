@@ -593,13 +593,31 @@ Diverifikasi langsung di kode:
       chargeback, guard `gte` pada `reservedIdr`
 - [ ] SEC-14 — seed admin dari env, guard produksi
 - [ ] SEC-13 — mekanisme pencabutan sesi (`tokenVersion`)
-- [ ] SEC-21, SEC-22 — kuota render canvas & posting anonim
-- [ ] SEC-24, SEC-25, SEC-26, SEC-27 — isolasi template, DNS-aware SSRF guard, batas
-      pagination, hardening reconcile
+- [x] SEC-21, SEC-22 — `quotaRateLimit()` di `POST /fesses` (30/jam per akun, 20/jam per IP)
+      dan `POST /fesses/canvas/preview` (60/10 menit per akun, 30/10 menit per IP);
+      `denyBannedSession()` menolak sesi ter-bekukan meski endpoint menerima anonim
+- [x] SEC-24 — detail template publik hanya dari katalog bersama (`baseId = null`)
+- [x] SEC-25 — `assertPublicHost()` me-resolve DNS lalu menolak bila ada alamat internal
+      (loopback, privat, CGNAT, link-local, multicast, IPv4-mapped); dipakai di
+      `fetchRemoteImage()` dan avatar canvas, termasuk host akhir setelah redirect
+- [x] SEC-27 — `/payments/reconcile` menerima HMAC-SHA256 atas timestamp (jendela 5 menit)
+      selain secret lama, menghormati `PAYMENTS_ENABLED`, dan mencatat
+      `AdminAuditLog` `PAYMENT_RECONCILE`
+- [x] SEC-26 — `PageQuerySchema` (1…10.000) di semua endpoint berhalaman, `query` ≤ 100 karakter
+- [x] SEC-23 — `quoted_fess` hanya memakai `id`; snapshot diambil dari fess sumber
+- [x] SEC-33 — `getInstagramStatus` → 404 untuk fess non-terbit (kecuali pengelola base)
 
 ### Tahap 3 — backlog
 
-Sisanya (SEC-23, SEC-28 … SEC-37) masuk backlog perbaikan rutin.
+- [x] SEC-32 — perbandingan hash OTP memakai `crypto.timingSafeEqual`
+- [x] SEC-34 — decrement `membersCount`/`followingCount` bergerbang `> 0` dan
+      `formatMembers()` meng-clamp nilai negatif
+- [x] SEC-28 — draf fess di `localStorage` ber-TTL 24 jam, tanpa media, dan dibersihkan
+      saat kedaluwarsa (`utils/fessDraft.js`)
+- [x] SEC-29, SEC-30 — `safeExternalUrl()` menyaring protokol pada `:href` dari API;
+      setiap `target="_blank"` yang tersisa sudah ber-`rel="noopener noreferrer"`
+- [x] SEC-31 — email verifikasi dipindah dari query ke fragment
+- [ ] Sisanya (SEC-35 … SEC-37) masuk backlog perbaikan rutin.
 
 ### 7.1 Status implementasi per temuan (branch `fix/security-hardening`)
 
@@ -622,6 +640,20 @@ Sisanya (SEC-23, SEC-28 … SEC-37) masuk backlog perbaikan rutin.
 | SEC-18 | `auto_flagged`/`flag_reason` (fess) dan `banned_words` (base) hanya dikirim bila `includeModeration` — diisi untuk Super Admin/pengelola base | `services/fess.service.ts`, `services/base.service.ts`, `services/admin.service.ts` |
 | SEC-19 | `isPubliclyVisible()`; komentar & vote pada fess non-terbit → 403 `FESS_NOT_PUBLISHED`; daftar komentar fess non-terbit → 404 | `services/comment.service.ts`, `services/fess.service.ts` |
 | SEC-20 | `reportFess` memakai `req.params.id`; `fess_id` di body jadi opsional | `controllers/fess.controller.ts`, `validators/fess.validator.ts` |
+| SEC-21 | `POST /fesses/canvas/preview`: 60/10 menit per akun, 30/10 menit per IP lewat `quotaRateLimit()` | `routes/fess.routes.ts`, `services/rate-limit.service.ts` |
+| SEC-22 | `POST /fesses`: 30/jam per akun, 20/jam per IP; `optionalAuth` menandai `req.authBlocked='BANNED'` dan `denyBannedSession()` menolak sesi ter-bekukan (403 `ACCOUNT_BANNED`) | `routes/fess.routes.ts`, `middlewares/auth.middleware.ts` |
+| SEC-23 | `resolveQuotedFess()` — hanya `id` yang dipakai; handle/isi/waktu/avatar diambil dari fess sumber; fess non-terbit → 422 | `services/fess.service.ts` |
+| SEC-24 | `TemplateService.getActiveFromCatalog()` — jalur publik tanpa `?base_handle=` menolak template ber-`baseId` | `services/template.service.ts`, `controllers/template.controller.ts` |
+| SEC-25 | `assertPublicHost()` me-resolve DNS dan menolak host bila ada alamat internal; `isBlockedAddress()` memeriksa rentang IPv4/IPv6 lengkap; diperiksa pada URL awal **dan** URL akhir setelah redirect | `utils/remote-image.util.ts`, `services/canvas.service.ts` |
+| SEC-26 | `PageQuerySchema` (1…10.000, default 1) dipakai semua validator berhalaman; `query` pencarian fess ≤ 100 karakter | `validators/pagination.validator.ts` (baru), `validators/*.ts` |
+| SEC-27 | `verifyReconcileSignature()` — HMAC-SHA256 atas timestamp, jendela ±5 menit; secret lama tetap diterima; `PAYMENTS_ENABLED=false` → 503; audit `PAYMENT_RECONCILE` | `controllers/payment.controller.ts` |
+| SEC-28 | `utils/fessDraft.js` — TTL 24 jam, draf kedaluwarsa dihapus saat dibaca, media tidak disimpan, payload dibatasi ke field dikenal | `frontend/src/utils/fessDraft.js` (baru), `views/CreateFessPage.vue` |
+| SEC-29 | `safeExternalUrl()` hanya meloloskan http(s) dan path relatif; dipakai untuk URL kartu (`igDownloadUrl`) dan permalink Instagram (`safePermalink`) | `frontend/src/utils/url.js` (baru), `components/common/FessCard.vue`, `components/admin/InstagramAnalytics.vue` |
+| SEC-30 | Tombol unduh kartu diberi `rel="noopener noreferrer"`; tautan `target="_blank"` lain sudah memilikinya | `components/common/FessCard.vue` |
+| SEC-31 | `verificationRoute()` menaruh ticket **dan** email di fragment; halaman verifikasi membaca lalu membersihkan fragment | `frontend/src/utils/emailVerification.js`, `views/VerifyEmailPage.vue` |
+| SEC-32 | `otpHashMatches()` memakai `crypto.timingSafeEqual` pada hash SHA-256 | `services/auth.service.ts` |
+| SEC-34 | Decrement `membersCount`/`followingCount` memakai `updateMany` bergerbang `> 0`; `formatMembers()` meng-clamp negatif/NaN ke 0 | `services/base.service.ts`, `utils/format.util.ts` |
+| SEC-33 | `getInstagramStatus` menyertakan `status` dan membalas 404 untuk fess non-terbit kecuali pengelola base | `services/fess.service.ts` |
 
 ---
 
@@ -644,6 +676,14 @@ dikunci sebagai test tanpa database:
 | SEC-18 | `serializeFess`/`serializeBase` tanpa `includeModeration` tidak memuat `auto_flagged`, `flag_reason`, `banned_words` |
 | SEC-19 | Komentar/vote pada fess `pending` → 4xx |
 | SEC-20 | `POST /fesses/<A>/report` dengan body `fess_id=<B>` → laporan tercatat untuk A |
+| SEC-21, SEC-22 | `RateLimitService.consume` → `allowed: false` pada `POST /fesses` / `canvas/preview` memberi 429 + `Retry-After`; token akun ter-ban → 403 `ACCOUNT_BANNED` walau endpoint menerima anonim |
+| SEC-24 | `GET /templates/<key milik base lain>` tanpa `?base_handle=` → 404 |
+| SEC-25 | Domain yang hasil resolusi DNS-nya `169.254.169.254`/`10.0.0.5` → ditolak; IP literal internal ditolak tanpa memanggil resolver |
+| SEC-26 | `?page=999999999` → 422 `VALIDATION_ERROR` |
+| SEC-27 | Reconcile tanpa HMAC/timestamp valid → 401; timestamp di luar jendela 5 menit → 401; `PAYMENTS_ENABLED=false` → 503 tanpa menyentuh order; keberhasilan menulis `AdminAuditLog` `PAYMENT_RECONCILE` |
+| SEC-23 | `POST /fesses` dengan `quoted_fess.handle`/`content` karangan → snapshot tersimpan mengikuti fess sumber |
+| SEC-33 | `GET /fesses/<pending>/instagram-status` sebagai anonim → 404 |
+| SEC-28 … SEC-31 | Frontend belum punya test runner, jadi verifikasi manual: draf > 24 jam hilang dan tidak memuat media, nilai `javascript:`/`data:` tidak menjadi `href`, email tidak lagi tampak di URL halaman verifikasi |
 
 Catatan: `testTimeout` 30 detik di `vitest.config.ts` wajib dipertahankan untuk test canvas
 (CPU-bound resvg/sharp).
@@ -653,11 +693,12 @@ Catatan: `testTimeout` 30 detik di `vitest.config.ts` wajib dipertahankan untuk 
 ## 9. Catatan proses
 
 - Audit ini statis (membaca kode), bukan pentest dinamis terhadap dev/production.
-- Perbaikan Tahap 0 + SEC-01, SEC-03…SEC-11, SEC-15…SEC-20 dikerjakan di branch
-  `fix/security-hardening` (backend & frontend), **bukan** `main` (lihat `AGENTS.md`).
-- Yang belum dikerjakan: SEC-12 (ekonomi billing), SEC-13 (`tokenVersion`), SEC-14
-  (seed admin), SEC-21…SEC-28 (kuota render/posting, isolasi template, SSRF DNS-aware,
-  batas pagination, hardening reconcile, draf lokal), dan backlog SEC-29…SEC-37.
+- Perbaikan yang sudah dikerjakan di branch `fix/security-hardening` (backend & frontend),
+  **bukan** `main` (lihat `AGENTS.md`): Tahap 0, SEC-01, SEC-03…SEC-11, SEC-15…SEC-34 —
+  kecuali SEC-12, SEC-13, SEC-14.
+- Yang belum dikerjakan: SEC-12 (ekonomi billing), SEC-13 (`tokenVersion`), SEC-14 (seed
+  admin), SEC-35 (endpoint hapus/edit komentar), SEC-36 (guard `gte` pada `reservedIdr` di
+  `mark_paid`), dan SEC-37 (artefak lokal di `.gitignore`).
 - Setelah SEC-01/SEC-02 diperbaiki, sebaiknya jalankan pentest ringan pada alur OAuth
   Instagram dan pembayaran di environment dev.
 
@@ -680,13 +721,22 @@ Catatan: `testTimeout` 30 detik di `vitest.config.ts` wajib dipertahankan untuk 
 | SEC-09 | Klaim `settlement`/`capture+accept` dari webhook diverifikasi ke `GET /v2/{order_id}/status`; status gateway yang dipakai; gagal verifikasi → 502 (Midtrans retry) | Signature Midtrans tidak mengikat `transaction_status`, jadi payload lama yang sah bisa diputar ulang sebagai settlement. Fail-closed lebih aman: order tertunda daripada CTF terkredit tanpa uang masuk. `signature_key` dibuang dari payload tersimpan agar dump DB tidak menjadi bahan replay |
 | SEC-18 | `auto_flagged`/`flag_reason`/`banned_words` hanya dikirim bila opsi `includeModeration` aktif | Metadata filter NLP membocorkan kata/kategori pemicu, sehingga penulis bisa menyusun konten agar lolos moderasi |
 | SEC-19 | Fess non-terbit → komentar/vote 403 `FESS_NOT_PUBLISHED`, daftar komentar 404 | Komentar/vote sebelum terbit tidak punya arti di UI dan membuka jalan menguji/memanipulasi antrean moderasi. Baris lama tanpa `status` tetap dianggap terbit agar konten yang sudah tampil tidak terkunci |
+| SEC-25 | Host diperiksa setelah resolusi DNS (`assertPublicHost`), bukan hanya dari teks URL; pemeriksaan diulang pada URL akhir setelah redirect | Nama domain yang tampak publik bisa menunjuk `127.0.0.1`/`169.254.169.254`, dan resolver sistem juga menerjemahkan bentuk numerik (`2130706433`, `0x7f000001`). Batasan yang diakui: `fetch` me-resolve sendiri setelah pemeriksaan, jadi DNS-rebinding tingkat lanjut butuh koneksi yang di-pin ke IP hasil resolve (belum dikerjakan) |
+| SEC-27 | HMAC atas **timestamp** saja (bukan body) + jendela ±5 menit; secret lama tetap diterima | Body sudah di-parse `express.json`, jadi serialisasi ulang belum tentu byte-identik dengan kiriman klien sehingga HMAC atas body rawan gagal palsu. Endpoint hanya menerima `{ limit }` yang juga dibatasi di service, sedangkan replay dicegah oleh timestamp |
+| SEC-28 | Draf 24 jam, tanpa media, payload difilter ke field dikenal | Isi confession sensitif; menyimpan 7 hari plus URL/base64 media membuat cerita pribadi tetap terbaca dari komputer bersama. Media juga tidak bisa dipulihkan andal (URL signed bisa kedaluwarsa) |
+| SEC-29, SEC-30 | `safeExternalUrl()` hanya meloloskan http(s) + path relatif; semua `target="_blank"` ber-`rel="noopener noreferrer"` | Nilai `href` dari API bisa berisi `javascript:`/`data:` yang dieksekusi saat diklik. `TopUpFlow` punya variannya sendiri karena perlu meloloskan deeplink (`gojek:`, `shopeeid:`) |
+| SEC-31 | Ticket **dan** email di fragment, bukan query | Fragment tidak dikirim ke server, tidak masuk access log, dan tidak bocor lewat `Referer`; halaman verifikasi menghapusnya setelah dibaca |
 
 ### 9.2 Verifikasi
 
-- `npx vitest run` di `backend`: **46 file / 602 test lulus** (termasuk suite baru
-  `tests/oauth-state.util.test.ts`, `tests/authRateLimit.middleware.test.ts`, dan test regresi
-  SEC-03/04/05/08/09/11/18/19/20).
-- `npm run build` di `backend` dan `frontend`: lulus.
+- `npx vitest run` di `backend`: **50 file / 636 test lulus** (termasuk suite baru
+  `tests/oauth-state.util.test.ts`, `tests/authRateLimit.middleware.test.ts`,
+  `tests/pagination.validator.test.ts`, `tests/quota-rate-limit.test.ts`,
+  `tests/remote-image.util.test.ts`, `tests/payment.controller.reconcile.test.ts`, dan test
+  regresi SEC-03/04/05/08/09/11/18/19/20/21/22/24/25/26/27/34).
+- `npx tsc -p tsconfig.build.json --noEmit` dan `npm run build` di `backend`: lulus.
+- `npm run build` di `frontend`: lulus. Frontend belum punya test runner, jadi SEC-28…SEC-31
+  diverifikasi manual (draf kedaluwarsa, `href` tersaring, email tidak di URL).
 - `npm run format:check` di `frontend` **sudah gagal sebelum perubahan ini** karena
   `core.autocrlf=true` di Windows sementara `.prettierrc.json` menetapkan `endOfLine: "lf"`
   (50 file, termasuk yang tidak tersentuh). Baris baru yang ditambahkan pada perubahan ini

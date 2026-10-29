@@ -123,7 +123,9 @@ export const VoteSchema = z.object({
 });
 
 export const ReportSchema = z.object({
-  fess_id: z.string().min(1, 'ID fess wajib diisi'),
+  // Target laporan ditentukan oleh `:id` di URL. `fess_id` dipertahankan
+  // opsional hanya untuk kompatibilitas klien lama — service memakai `:id`.
+  fess_id: z.string().min(1, 'ID fess wajib diisi').optional(),
   reason: z.enum(['spam', 'sara', 'pelecehan', 'dewasa', 'hoaks']),
   note: z.string().max(250, 'Catatan maksimal 250 karakter').optional().nullable(),
 });

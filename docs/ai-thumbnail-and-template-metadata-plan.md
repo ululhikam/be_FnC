@@ -766,6 +766,12 @@ Catatan P3:
 - Audit `TEMPLATE_AI_SUGGESTED` mencatat provider/model, `cached`, `confidence`, kategori, dan
   jumlah baris teks yang dipakai — bukan isi SVG.
 
+Uji langsung (dev, 29 Okt 2026): `assets/templates/01-helpdesk-ticket.svg` → 13 baris teks; Gemini
+`gemini-3.5-flash-lite` menjawab 2,3 s dengan label “Menfess Help Desk Kampus”, deskripsi 96
+karakter, kategori `campus`, keyakinan 0,95, dan ledger `status=ok`; panggilan kedua
+`cached=true` tanpa provider maupun kuota. Bucket `ai:template:<tanggal>` → `ai:rpm` terpakai
+sekali.
+
 ---
 
 ## 17. Risiko & mitigasi

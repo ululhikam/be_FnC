@@ -112,13 +112,17 @@ describe('normalisasi geometri carousel Instagram 4:5', () => {
     expect(meta.width).toBe(1080);
     expect(meta.height).toBe(1350);
 
-    // Area pad atas harus putih; bagian tengah tetap merah (tidak ter-crop).
+    // Area pad mengikuti warna foto (salinan blur), bukan putih polos.
     const { data, info } = await sharp(jpeg).raw().toBuffer({ resolveWithObject: true });
     const pixel = (x: number, y: number) => {
       const offset = (y * info.width + x) * info.channels;
       return [data[offset], data[offset + 1], data[offset + 2]];
     };
-    expect(pixel(10, 10)).toEqual([255, 255, 255]);
+    const [padR, padG, padB] = pixel(10, 10);
+    expect(padR).toBeGreaterThan(140);
+    expect(padG).toBeLessThan(90);
+    expect(padB).toBeLessThan(90);
+    expect(Math.min(padR, padG, padB)).toBeLessThan(200); // bukan putih
     const [r, g, b] = pixel(540, 675);
     expect(r).toBeGreaterThan(200);
     expect(g).toBeLessThan(60);

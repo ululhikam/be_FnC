@@ -9,8 +9,9 @@ import { StorageService } from '../services/storage.service.js';
  *  2. Semua item dalam satu carousel harus memiliki rasio aspek yang sama.
  *
  * Util ini menormalkan gambar user ke kanvas 4:5 (1080×1350) dengan mode
- * `contain` (pad putih), sehingga foto apa pun bisa dicampur dengan card fess
- * tanpa membuat container Meta berstatus ERROR.
+ * `contain`, sehingga foto apa pun bisa dicampur dengan card fess tanpa membuat
+ * container Meta berstatus ERROR. Sisa ruang (letterbox) diisi salinan foto yang
+ * di-cover + di-blur — bukan putih polos — supaya bingkai mengikuti warna foto.
  */
 
 export interface IgTargetDimensions {
@@ -156,23 +157,41 @@ async function normalizeImageUrl(
   return { url: upload.url, width: target.width, height: target.height };
 }
 
-/** Sharp: rotate EXIF → flatten alpha → contain/pad → JPEG ≤ 8 MB. */
+/** Sharp: rotate EXIF → contain di atas salinan foto blur → JPEG ≤ 8 MB. */
 export async function normalizeImageBuffer(
   buffer: Buffer,
   target: IgTargetDimensions = IG_CAROUSEL_TARGET
 ): Promise<Buffer> {
   let jpeg: Buffer;
   try {
-    const base = sharp(buffer)
-      .rotate() // hormati orientasi EXIF
-      .flatten({ background: '#ffffff' }) // hilangkan alpha (PNG/WebP transparan)
+    const source = sharp(buffer, { failOn: 'none' }).rotate();
+
+    // Latar letterbox: salinan foto yang di-cover lalu di-blur. Warna bingkai
+    // otomatis mengikuti foto, jadi foto non-4:5 tidak lagi berbingkai putih.
+    const backdrop = await source
+      .clone()
+      .resize(target.width, target.height, { fit: 'cover', position: 'centre' })
+      .blur(36)
+      .modulate({ brightness: 0.86, saturation: 1.06 })
+      .removeAlpha()
+      .toBuffer();
+
+    // Foto utama utuh (tanpa crop), padding transparan agar latar blur terlihat.
+    const foreground = await source
+      .clone()
       .resize({
         width: target.width,
         height: target.height,
         fit: 'contain',
-        position: 'center',
-        background: '#ffffff',
-      });
+        position: 'centre',
+        background: { r: 0, g: 0, b: 0, alpha: 0 },
+      })
+      .png()
+      .toBuffer();
+
+    const base = sharp(backdrop).composite([
+      { input: foreground, gravity: 'centre' },
+    ]);
 
     jpeg = await base.clone().jpeg({ quality: 92, mozjpeg: true }).toBuffer();
 

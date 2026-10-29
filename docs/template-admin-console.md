@@ -29,6 +29,7 @@ dua jalur render.
 | Template bersama | `Template.baseId = null`. Semua base melihatnya. 12 template lama tetap bersama sampai Super Admin menugaskannya. |
 | Template milik base | `Template.baseId = <id base>`. Hanya base itu yang melihat dan boleh memakainya. |
 | Eksklusivitas | Satu baris template hanya punya satu pemilik. Base lain tidak bisa memakai baris yang sama. |
+| Base punya template khusus | Begitu base punya minimal satu template aktif miliknya, katalog umum (template bersama **dan** template generatif lama) ditutup untuk base itu. Composer hanya menampilkan template miliknya. |
 | Desain sama untuk base lain | Import ulang SVG yang sama sebagai **baris baru** dengan key berbeda. Eksklusivitas tetap per baris. |
 | Jumlah per base | Tidak di-hardcode. Super Admin menentukan sendiri berapa template yang ditugaskan. |
 | Status | Import baru default `draft`; Super Admin boleh langsung memilih `active`. |
@@ -195,8 +196,8 @@ thumbnail dan ringkasan.
 | Method | Path | Keterangan |
 | --- | --- | --- |
 | `GET` | `/api/templates` | Hanya katalog bersama (`baseId = null`). |
-| `GET` | `/api/templates?base_handle=@base` | Template milik base itu (di urutan depan) + katalog bersama. |
-| `GET` | `/api/templates/:key?base_handle=@base` | Detail, discope ke base. |
+| `GET` | `/api/templates?base_handle=@base` | Template milik base itu saja bila base sudah punya template khusus; kalau belum, template miliknya (bila ada) + katalog bersama. |
+| `GET` | `/api/templates/:key?base_handle=@base` | Detail, discope ke base. Template bersama ditolak 404 bila base sudah punya template khusus. |
 
 Tanpa `base_handle`, template milik base lain **tidak pernah** terkirim. `base_handle`
 yang tidak ada → 404 `BASE_NOT_FOUND`.
@@ -205,9 +206,12 @@ yang tidak ada → 404 `BASE_NOT_FOUND`.
 
 `FessService.resolveTemplateKey(raw, baseId)`:
 
-- Key legacy (`constants/templates.ts`) tetap diterima untuk kompatibilitas fess lama.
-- Key DB harus `status = active` **dan** `baseId` kosong atau sama dengan base tujuan.
-- Jika tidak valid → 422 `VALIDATION_ERROR` dengan
+- Key legacy (`constants/templates.ts`) diterima **hanya** bila base belum punya template khusus.
+- Key DB harus `status = active` **dan** `baseId` sama dengan base tujuan. Untuk base tanpa
+  template khusus, baris `baseId = null` (katalog bersama) masih diterima.
+- `default` untuk base yang punya template khusus diganti template khusus pertama milik base,
+  supaya publikasi tidak gagal saat klien belum tahu template base.
+- Jika tetap tidak valid → 422 `VALIDATION_ERROR` dengan
   `errors.template = "Template <key> tidak tersedia untuk base ini"`.
 
 Ini mencegah user memakai key template milik base lain meskipun menebak key-nya.
@@ -227,13 +231,16 @@ bersama.
 | Pemanggil | Yang diterima |
 | --- | --- |
 | `GET /api/templates` | 12 template bersama |
-| `GET /api/templates?base_handle=@a` | `13-papan-kampus` + 12 bersama |
-| `GET /api/templates?base_handle=@b` | `14-kartu-b` + 12 bersama |
+| `GET /api/templates?base_handle=@a` | `13-papan-kampus` saja |
+| `GET /api/templates?base_handle=@b` | `14-kartu-b` saja |
+| `GET /api/templates?base_handle=@c` (tanpa template khusus) | 12 template bersama |
 | Composer base A memilih `14-kartu-b` | Ditolak 422 |
+| Composer base A memilih `default`/`midnight` | Ditolak 422 (diganti `13-papan-kampus` bila key `default`) |
 | Fess lama memakai `13-papan-kampus` | Tetap dirender (renderer tidak mengecek pemilik) |
 
 Composer (`templateStore`) menyimpan cache per `base_handle`. Saat base berubah, pilihan
-template yang tidak tersedia di scope baru otomatis diganti template acak yang valid.
+template yang tidak tersedia di scope baru otomatis diganti template acak yang valid. Modal
+template menampilkan keterangan “base ini memakai template khusus” dan badge **Khusus base**.
 
 ---
 
@@ -269,7 +276,7 @@ Tidak ada warna hex langsung di komponen; semua memakai variabel `src/style.css`
 | --- | --- |
 | `backend/tests/template-admin.util.test.ts` | Key valid/reserved, root SVG murni, variasi bypass keamanan, rasio 4:5, slot wajib, batas 2MB, dan seluruh 12 template resmi di `assets/templates/`. |
 | `backend/tests/template-admin.service.test.ts` | Create (bersama/base), base tidak ditemukan, penolakan SVG tidak aman pada create/replace, update pemilik, aktivasi tanpa thumbnail, replace versi sama/berubah, regenerate + cache-buster, archive idempoten, audit. |
-| `backend/tests/template-resolution.test.ts` | Resolusi template per base, penolakan milik base lain, `listActive` vs `listActiveForBase`. |
+| `backend/tests/template-resolution.test.ts` | Resolusi template per base, penolakan milik base lain, penutupan katalog umum (bersama & legacy) untuk base yang sudah punya template khusus, `listActive` vs `listActiveForBase`. |
 | `backend/tests/canvas.preview.test.ts` | Pratinjau composer menolak base tidak ada, template draft, dan template milik base lain; template aktif sendiri/bersama tetap dirender. |
 
 Jalankan:

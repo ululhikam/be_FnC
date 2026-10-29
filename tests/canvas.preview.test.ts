@@ -22,6 +22,7 @@ vi.mock('../src/config/prisma.js', () => ({
     },
     template: {
       findUnique: vi.fn().mockResolvedValue(null),
+      count: vi.fn().mockResolvedValue(0),
     },
   },
 }));

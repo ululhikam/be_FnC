@@ -131,14 +131,35 @@ export class TemplateService {
   }
 
   /**
-   * Template aktif yang boleh dipakai sebuah base: milik base itu sendiri atau
-   * katalog bersama (`baseId = null`). Template milik base lain ditolak.
+   * Template aktif yang boleh dipakai sebuah base.
+   *
+   * Aturan: base yang sudah punya template khusus **tertutup** dari katalog
+   * umum. Jadi baris `baseId = null` hanya boleh dipakai base yang belum punya
+   * template sendiri; selain itu hanya template milik base tersebut.
    */
   static async getActiveForBase(key: string, baseId: string): Promise<TemplateRecord | null> {
     const row = await TemplateService.getByKey(key);
     if (!row || row.status !== 'active') return null;
-    if (row.baseId && row.baseId !== baseId) return null;
-    return row;
+    if (row.baseId) return row.baseId === baseId ? row : null;
+    return (await TemplateService.hasOwnActive(baseId)) ? null : row;
+  }
+
+  /**
+   * Apakah base punya template khusus (aktif) miliknya sendiri.
+   *
+   * Dipakai sebagai gerbang: begitu base punya template khusus, template umum
+   * (katalog bersama dan template generatif lama) tidak boleh dipakai lagi.
+   */
+  static async hasOwnActive(baseId: string): Promise<boolean> {
+    const normalized = String(baseId || '').trim();
+    if (!normalized) return false;
+
+    return getOrSet(`${CACHE_PREFIX}own:${normalized}`, TTL_MS, async () => {
+      const total = await prisma.template.count({
+        where: { status: 'active', baseId: normalized },
+      });
+      return total > 0;
+    });
   }
 
   /**
@@ -159,7 +180,11 @@ export class TemplateService {
   }
 
   /**
-   * Daftar template aktif untuk satu base: miliknya lebih dulu, lalu katalog
+   * Daftar template aktif untuk satu base.
+   *
+   * Base yang sudah punya template khusus hanya menerima template miliknya
+   * sendiri — katalog umum tidak ikut, supaya desain base tidak tercampur.
+   * Base tanpa template khusus tetap menerima miliknya (bila ada) + katalog
    * bersama. Template milik base lain tidak pernah ikut.
    */
   static async listActiveForBase(baseId: string): Promise<TemplateSummaryRecord[]> {
@@ -177,8 +202,8 @@ export class TemplateService {
       })) as unknown as TemplateSummaryRecord[];
 
       const owned = rows.filter((row) => row.baseId === normalized);
-      const shared = rows.filter((row) => !row.baseId);
-      return [...owned, ...shared];
+      if (owned.length) return owned;
+      return rows.filter((row) => !row.baseId);
     });
   }
 

@@ -28,6 +28,11 @@ vi.mock('../src/config/prisma.js', () => ({
       update: vi.fn(),
       updateMany: vi.fn(),
     },
+    template: {
+      count: vi.fn(async () => 0),
+      findUnique: vi.fn(async () => null),
+      findMany: vi.fn(async () => []),
+    },
     follow: {
       findMany: vi.fn(),
       findUnique: vi.fn(),

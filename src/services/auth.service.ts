@@ -32,6 +32,21 @@ function sha256(value: string): string {
 }
 
 /**
+ * Bandingkan hash OTP dalam waktu konstan.
+ *
+ * Perbandingan `!==` pada string keluar lebih awal saat karakter pertama beda,
+ * sehingga secara teori bisa dipakai mengukur berapa banyak digit yang sudah
+ * benar. Nilai yang dibandingkan sudah berupa hash SHA-256 (panjang tetap),
+ * jadi `timingSafeEqual` bisa dipakai langsung.
+ */
+function otpHashMatches(otp: string, expectedHash: string | null | undefined): boolean {
+  const actual = Buffer.from(sha256(otp), 'utf8');
+  const expected = Buffer.from(String(expectedHash ?? ''), 'utf8');
+  if (actual.length !== expected.length) return false;
+  return crypto.timingSafeEqual(actual, expected);
+}
+
+/**
  * Hash bcrypt dummy untuk menyamakan waktu respons saat akun tidak ditemukan.
  * Nilainya tidak pernah cocok dengan kata sandi apa pun.
  */
@@ -640,7 +655,7 @@ export class AuthService {
       throw err;
     }
 
-    if (sha256(otp) !== record.otpHash) {
+    if (!otpHashMatches(otp, record.otpHash)) {
       await prisma.emailVerification.update({
         where: { userId: user.id },
         data: { attempts: { increment: 1 } },
@@ -898,7 +913,7 @@ export class AuthService {
       throw err;
     }
 
-    if (sha256(otp) !== record.otpHash) {
+    if (!otpHashMatches(otp, record.otpHash)) {
       await prisma.passwordReset.update({
         where: { userId: user.id },
         data: { attempts: { increment: 1 } },

@@ -198,16 +198,32 @@ describe('watermark foto asli Instagram', () => {
     expect(withMark.countBright(560, 1240, 1040, 1320)).toBeGreaterThan(20);
   });
 
-  it('scrim watermark hanya di tepi; bagian tengah foto tidak digelapkan', async () => {
+  it('pill watermark hanya di sudut; bagian tengah foto tidak digelapkan', async () => {
     const plain = await pixels(await normalizeImageBuffer(await photo()));
     const marked = await pixels(
       await normalizeImageBuffer(await photo(), undefined, { watermark: WATERMARK })
     );
 
     const top = (p: ReturnType<typeof plain.at>) => p.r + p.g + p.b;
-    expect(top(marked.at(540, 20))).toBeLessThan(top(plain.at(540, 20)));
-    // Tengah tetap identik (tidak ada scrim di area tengah).
+    // Pill solid di kiri-atas menggelapkan sudut, bukan seluruh lebar foto.
+    expect(top(marked.at(150, 70))).toBeLessThan(top(plain.at(150, 70)));
+    // Tengah & tepi kanan-atas (di luar pill) tetap sama.
     expect(top(marked.at(540, 675))).toBeCloseTo(top(plain.at(540, 675)), -1);
+    expect(top(marked.at(1000, 70))).toBeCloseTo(top(plain.at(1000, 70)), -1);
+  });
+
+  it('watermark memakai pill solid dengan garis tepi putih', async () => {
+    const jpeg = await normalizeImageBuffer(await photo(), undefined, { watermark: WATERMARK });
+    const { at } = await pixels(jpeg);
+
+    // Garis tepi atas pill handle (y≈48) lebih terang dari isi gelap di bawahnya.
+    const stroke = at(150, 48);
+    const fill = at(150, 60);
+    expect(Math.min(stroke.r, stroke.g, stroke.b)).toBeGreaterThan(
+      Math.min(fill.r, fill.g, fill.b) + 40
+    );
+    // Isi pill gelap pekat (bukan sekadar scrim tipis).
+    expect(Math.max(fill.r, fill.g, fill.b)).toBeLessThan(120);
   });
 
   it('bingkai non-4:5 tetap berwarna foto (bukan putih) saat watermark aktif', async () => {

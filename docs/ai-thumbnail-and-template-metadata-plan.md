@@ -185,8 +185,8 @@ scrim gradien tipis agar teks terbaca.
 | L1 | Scrim bawah | Gradien gelap dari ~y 1000 ke bawah: `alpha 0` → `0.62` → `0.95`, hanya di area teks |
 | L2 | Aksen | Garis pendek 96×5 px di atas judul + titik di depan handle, memakai warna turunan `Base.color` |
 | L3 | Judul | Poppins **800** uppercase, auto-fit 60→36 px, maks 3 baris, ukuran "kecil" supaya foto tetap dominan |
-| L4 | Pill handle base | `@handle` base di **pill rounded terpisah** sisi kiri (`Poppins 600`, 28 px, garis tepi putih 0.5). Dipotong elipsis hanya bila handle sangat panjang |
-| L5 | Pill URL platform | `fessncurious.vercel.app` di **pill rounded terpisah** sisi kanan (`Fira Mono`, 20 px, garis tepi 0.3). URL selalu utuh, tidak ikut terpotong |
+| L4 | Pill handle base | `@handle` base di **pill rounded terpisah** sisi kiri (`Poppins 600`, 28 px). Latar `#05070c` 0.62 + garis tepi putih 0.55 (2 px), teks putih 0.97. Dipotong elipsis hanya bila handle sangat panjang |
+| L5 | Pill URL platform | `fessncurious.vercel.app` di **pill rounded terpisah** sisi kanan (`Fira Mono`, 24 px, latar & garis tepi sama dengan pill handle). URL selalu utuh, tidak ikut terpotong |
 | L6 | Zona aman | Margin 72 px; baseline judul terakhir 1238; pill di y 1264 setinggi 60 px dengan radius penuh |
 
 Aturan tambahan:
@@ -224,18 +224,18 @@ Diterapkan di `instagram-media.util.ts` → `normalizeImageBuffer()` saat
 | Layer | Isi | Aturan |
 |---|---|---|
 | F0 | Foto user | `fit: contain` 1080×1350 — utuh, tanpa crop. Area sisa diisi salinan foto `cover` + `blur(36)` + `brightness 0.86` (bukan putih) |
-| F1 | Scrim atas | Gradien gelap 16% tinggi kanvas: `alpha 0.55` di tepi atas → `0` |
-| F2 | Handle base | `@handle` base, Poppins 600 ±30 px, kiri-atas, margin 4,5% lebar (48 px), putih 0.94 |
-| F3 | Scrim bawah | Gradien gelap 16% tinggi kanvas: `alpha 0` → `0.62` di tepi bawah |
-| F4 | Host platform | `fessncurious.vercel.app`, Fira Mono ±22 px, kanan-bawah, rata kanan, putih 0.82 |
+| F1 | Pill handle base | `@handle` base, Poppins 600 32 px, **pill solid** di kiri-atas (margin 4,5% = 48 px). Latar `#05070c` 0.72 + garis tepi putih 0.6 (2 px), radius penuh |
+| F2 | Pill host platform | `fessncurious.vercel.app`, Fira Mono 24 px, **pill solid** di kanan-bawah, rata kanan, gaya sama dengan pill handle |
 
 Aturan:
 
+- **Tanpa scrim penuh-lebar**: teks polos di atas foto terlalu samar, sedangkan pita gelap selebar kanvas menutupi foto. Karena itu kontras dijaga oleh pill solid, bukan gradien.
 - Hanya item yang **belum** `normalized` (foto user mentah) yang di-watermark; card canvas dan thumbnail sudah jadi dan tidak di-watermark dua kali.
 - URL hasil watermark disimpan di `igPayload` dengan `normalized: true`, jadi retry tidak menggambar ulang.
 - Cache normalisasi memakai kunci `lebar×tinggi|handle|host|url`, sehingga foto yang sama dengan handle berbeda tidak saling menimpa.
 - Jalur cepat "sudah JPEG 1080×1350" dilewati bila watermark diminta (foto harus digambar ulang, lalu diunggah).
 - Handle yang kosong/basi jatuh ke `FALLBACK_HANDLE`; host kosong jatuh ke `FALLBACK_HOST` — tidak pernah ada watermark setengah jadi.
+- Lebar pill mengikuti panjang teks memakai `measureFontWidth()` (`utils/font-measure.util.ts`), dipotong elipsis bila melebihi 60% kanvas.
 
 ---
 

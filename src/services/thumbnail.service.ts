@@ -9,16 +9,14 @@
  * `fallbackTitle()` deterministik. Judul bersifat final — tidak bisa diedit.
  */
 import sharp from 'sharp';
-import opentype from 'opentype.js';
-import fs from 'fs';
 import { ENV } from '../config/env.js';
 import { prisma } from '../config/prisma.js';
-import { getFontFileFor } from '../config/fonts.js';
 import { StorageService } from './storage.service.js';
 import { AiService } from './ai/ai.service.js';
 import { fetchRemoteImage } from '../utils/remote-image.util.js';
 import { renderSvgToPng } from '../utils/svg-render.util.js';
 import { frontendHost } from '../utils/frontend-host.util.js';
+import { fitTextToWidth, measureFontWidth } from '../utils/font-measure.util.js';
 import {
   THUMBNAIL_HEIGHT,
   THUMBNAIL_WIDTH,
@@ -54,8 +52,8 @@ const PILL_HEIGHT = 60;
 const PILL_GAP = 12;
 const HANDLE_FONT_SIZE = 28;
 const HANDLE_PADDING = 26;
-const HOST_FONT_SIZE = 20;
-const HOST_PADDING = 22;
+const HOST_FONT_SIZE = 24;
+const HOST_PADDING = 24;
 const BRAND_FALLBACK = '#0055ff';
 const NIGHT = '#05070c';
 
@@ -439,7 +437,7 @@ function buildFooterPills(handle: string, host: string): FooterPill[] {
       textX: rightEdge - HOST_PADDING,
       textBaseline: PILL_TOP + Math.round(PILL_HEIGHT / 2 + HOST_FONT_SIZE * 0.35),
       textAnchor: 'end',
-      stroke: 0.3,
+      stroke: 0.5,
     },
   ];
 }
@@ -475,10 +473,10 @@ function buildOverlaySvg(input: { layout: CoverLayout; brand: string }): string 
     .map(
       (pill) =>
         `<rect x="${pill.x}" y="${pill.y}" width="${pill.width}" height="${pill.height}" rx="${pill.radius}" ` +
-        `fill="${rgba(NIGHT, 0.34)}" stroke="${rgba('#ffffff', pill.stroke)}" stroke-width="1.5"/>` +
+        `fill="${rgba(NIGHT, 0.62)}" stroke="${rgba('#ffffff', pill.stroke)}" stroke-width="2"/>` +
         `<text x="${pill.textX}" y="${pill.textBaseline}" text-anchor="${pill.textAnchor}" ` +
         `font-family="${pill.fontFamily}" font-size="${pill.fontSize}" font-weight="${pill.fontWeight}" ` +
-        `fill="${rgba('#ffffff', pill.fontWeight >= 600 ? 0.96 : 0.78)}">${escapeXml(pill.text)}</text>`
+        `fill="${rgba('#ffffff', 0.97)}">${escapeXml(pill.text)}</text>`
     )
     .join('');
 
@@ -510,56 +508,8 @@ const renderOverlayPng = renderSvgToPng;
 
 // ── Pengukuran teks ────────────────────────────────────────────────────────
 
-const fontCache = new Map<string, opentype.Font | null>();
-
-/** Lebar teks memakai font bundled; fallback rasio bila font tidak tersedia. */
-function measureFontWidth(
-  family: 'sans' | 'mono',
-  weight: number,
-  text: string,
-  fontSize: number
-): number {
-  const key = `${family}:${weight}`;
-  if (!fontCache.has(key)) {
-    const file = getFontFileFor(family, weight);
-    let font: opentype.Font | null = null;
-    if (file) {
-      try {
-        font = opentype.parse(fs.readFileSync(file) as unknown as ArrayBuffer);
-      } catch {
-        font = null;
-      }
-    }
-    fontCache.set(key, font);
-  }
-  const font = fontCache.get(key);
-  const ratio = family === 'mono' ? 0.6 : 0.56;
-  if (!font) return text.length * fontSize * ratio;
-  try {
-    return font.getAdvanceWidth(text, fontSize, { kerning: true });
-  } catch {
-    return text.length * fontSize * ratio;
-  }
-}
-
 function measureTitleWidth(text: string, fontSize: number): number {
   return measureFontWidth('sans', 800, text, fontSize);
-}
-
-/** Potong teks dengan elipsis sampai muat di lebar tertentu. */
-function fitTextToWidth(
-  text: string,
-  fontSize: number,
-  maxWidth: number,
-  measure: (text: string, size: number) => number
-): string {
-  const limit = Math.max(0, maxWidth);
-  if (measure(text, fontSize) <= limit) return text;
-  let value = text;
-  while (value.length > 1 && measure(`${value}…`, fontSize) > limit) {
-    value = value.slice(0, -1).trimEnd();
-  }
-  return `${value}…`;
 }
 
 // ── Helper kecil ───────────────────────────────────────────────────────────

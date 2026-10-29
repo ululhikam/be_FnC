@@ -931,6 +931,33 @@ export class AuthService {
   }
 
   /**
+   * Profil publik (tanpa login).
+   *
+   * `serializeUser` sengaja menyertakan email/balance/revenue karena dipakai
+   * respons pemilik akun. Endpoint `GET /users/:userId` bersifat publik, jadi
+   * field tersebut tidak boleh ikut — email adalah identifier login dan
+   * kebocorannya memudahkan phishing/credential stuffing pada platform anonim.
+   */
+  static serializePublicUser(user: any) {
+    return {
+      id: user.id,
+      username: user.username,
+      handle: user.handle,
+      role: user.role,
+      avatar: user.avatar,
+      level: user.level ?? 1,
+      bio: user.bio,
+      badges: user.badges || [],
+      managed_bases: user.managedBases ? user.managedBases.map((b: any) => b.handle) : [],
+      ig_account: user.igAccount,
+      followers_count: user.followersCount ?? 0,
+      following_count: user.followingCount ?? 0,
+      fess_count: user.fessCount ?? 0,
+      created_at: user.createdAt ? new Date(user.createdAt).getTime() : Date.now(),
+    };
+  }
+
+  /**
    * Helper to format User model into exact OpenAPI User schema shape
    */
   static serializeUser(

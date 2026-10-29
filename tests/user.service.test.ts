@@ -48,6 +48,33 @@ describe('UserService — profile handle cooldown', () => {
     expect(result.user).not.toHaveProperty('handle_changed_at');
   });
 
+  // Email adalah identifier login dan balance/revenue adalah data finansial:
+  // endpoint ini publik, jadi ketiganya tidak boleh ikut (SEC-03).
+  it('tidak membocorkan email, balance, atau revenue pada profil publik', async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(
+      serializedUser({ ctfWallet: { balance: 625 }, revenue: 5000 }) as any
+    );
+
+    const result = await UserService.getProfile('usr_1');
+
+    expect(result.user).not.toHaveProperty('email');
+    expect(result.user).not.toHaveProperty('balance');
+    expect(result.user).not.toHaveProperty('revenue');
+    expect(result.user).toMatchObject({ id: 'usr_1', handle: '@alice' });
+  });
+
+  it('memakai select eksplisit sehingga hash password tidak ikut dibaca', async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(serializedUser() as any);
+
+    await UserService.getProfile('usr_1');
+
+    const arg = vi.mocked(prisma.user.findUnique).mock.calls[0][0] as any;
+    expect(arg.include).toBeUndefined();
+    expect(arg.select).toBeTruthy();
+    expect(arg.select.password).toBeUndefined();
+    expect(arg.select.googleId).toBeUndefined();
+  });
+
   it('allows the first handle change and records the change time', async () => {
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       id: 'usr_1',

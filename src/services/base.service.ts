@@ -233,6 +233,7 @@ export class BaseService {
 
     return this.serializeBase(base, isFollowing, {
       includeHandleCooldown: canManage,
+      includeModeration: canManage,
       instagramConnected,
     });
   }
@@ -473,7 +474,10 @@ export class BaseService {
     invalidateCache('bases:');
     if (nextHandle) invalidateCache('fesses:');
 
-    return this.serializeBase(updated, false, { includeHandleCooldown: true });
+    return this.serializeBase(updated, false, {
+      includeHandleCooldown: true,
+      includeModeration: true,
+    });
   }
 
   /**
@@ -612,7 +616,12 @@ export class BaseService {
   static serializeBase(
     base: any,
     isFollowing = false,
-    options: { includeHandleCooldown?: boolean; instagramConnected?: boolean } = {}
+    options: {
+      includeHandleCooldown?: boolean;
+      instagramConnected?: boolean;
+      /** Sertakan filter kata terlarang — hanya untuk pengelola base. */
+      includeModeration?: boolean;
+    } = {}
   ) {
     const handleChangeAvailableAt = getHandleChangeAvailableAt(base.handleChangedAt);
     const billing = getBaseBillingState(base);
@@ -648,7 +657,9 @@ export class BaseService {
       initial: base.initial || 'BA',
       post_mode: base.postMode || 'moderated',
       thumbnail_mode: base.thumbnailMode || 'auto',
-      banned_words: base.bannedWords || [],
+      // Daftar kata terlarang adalah konfigurasi moderasi internal: membocorkannya
+      // ke publik memudahkan penulis menyusun konten agar lolos filter.
+      ...(options.includeModeration ? { banned_words: base.bannedWords || [] } : {}),
       ...(options.includeHandleCooldown
         ? {
             handle_changed_at: base.handleChangedAt

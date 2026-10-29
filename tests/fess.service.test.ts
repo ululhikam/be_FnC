@@ -1906,3 +1906,30 @@ describe('FessService â€” Report & Manual IG Post', () => {
     });
   });
 });
+
+/* ================================================================
+ * PRIVASI METADATA MODERASI (SEC-18)
+ * ================================================================ */
+describe('FessService.serializeFess — metadata moderasi', () => {
+  const row = {
+    id: 'fess_flag_1',
+    baseHandle: '@codemine',
+    content: 'konten',
+    status: 'pending',
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+    autoFlagged: true,
+    flagReason: 'ujaran kebencian',
+  };
+
+  it('tidak mengirim auto_flagged/flag_reason ke publik', () => {
+    const result = FessService.serializeFess(row as any, null);
+    expect(result).not.toHaveProperty('auto_flagged');
+    expect(result).not.toHaveProperty('flag_reason');
+  });
+
+  it('mengirim metadata moderasi untuk admin pengelola', () => {
+    const result = FessService.serializeFess(row as any, null, { includeModeration: true });
+    expect(result.auto_flagged).toBe(true);
+    expect(result.flag_reason).toBe('ujaran kebencian');
+  });
+});

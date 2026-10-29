@@ -228,6 +228,7 @@ export class FessService {
       return this.serializeFess(f, voteMap.get(f.id) || null, {
         includeIgError: canManageInstagram,
         canManageInstagram,
+        includeModeration: canManageInstagram,
         isSaved: savedSet.has(f.id),
       });
     });
@@ -647,6 +648,7 @@ export class FessService {
     return this.serializeFess(fess, userVote, {
       includeIgError: canManageInstagram,
       canManageInstagram,
+      includeModeration: canManageInstagram,
       isSaved,
     });
   }
@@ -1499,6 +1501,7 @@ export class FessService {
       return this.serializeFess(row.fess, voteMap.get(row.fess.id) || null, {
         includeIgError: canManageInstagram,
         canManageInstagram,
+        includeModeration: canManageInstagram,
         isSaved: true,
       });
     });
@@ -1775,7 +1778,13 @@ export class FessService {
   static serializeFess(
     fess: any,
     userVote: string | null = null,
-    options: { includeIgError?: boolean; canManageInstagram?: boolean; isSaved?: boolean } = {}
+    options: {
+      includeIgError?: boolean;
+      canManageInstagram?: boolean;
+      isSaved?: boolean;
+      /** Sertakan metadata moderasi (auto_flagged/flag_reason) — hanya admin. */
+      includeModeration?: boolean;
+    } = {}
   ) {
     return {
       id: fess.id,
@@ -1820,8 +1829,16 @@ export class FessService {
       ...(options.canManageInstagram !== undefined
         ? { can_manage_instagram: Boolean(options.canManageInstagram) }
         : {}),
-      auto_flagged: fess.autoFlagged ?? false,
-      flag_reason: fess.flagReason || undefined,
+      // Metadata moderasi (hasil filter NLP + alasannya) adalah informasi
+      // internal: bila dikirim ke publik, penulis bisa mempelajari persis kata
+      // atau kategori apa yang memicu flag dan menyusun konten agar lolos.
+      // Hanya dikirim ke Super Admin / Base Admin pemilik base.
+      ...(options.includeModeration
+        ? {
+            auto_flagged: fess.autoFlagged ?? false,
+            flag_reason: fess.flagReason || undefined,
+          }
+        : {}),
       // Foto profil base untuk avatar kartu fess. `avatar` bisa berupa
       // URL/data-URL foto ATAU inisial teks — frontend membedakan keduanya.
       base_avatar: fess.base?.avatar || undefined,

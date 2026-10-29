@@ -387,3 +387,22 @@ describe('BaseService Unit Tests', () => {
     });
   });
 });
+
+describe('BaseService.serializeBase — privasi filter kata', () => {
+  const row = {
+    id: 'base_1',
+    name: 'Codebase',
+    handle: '@codebase',
+    bannedWords: ['judi', 'slot'],
+  };
+
+  it('tidak membocorkan banned_words ke publik', () => {
+    const result = BaseService.serializeBase(row as any);
+    expect(result).not.toHaveProperty('banned_words');
+  });
+
+  it('mengirim banned_words untuk pengelola base', () => {
+    const result = BaseService.serializeBase(row as any, false, { includeModeration: true });
+    expect(result.banned_words).toEqual(['judi', 'slot']);
+  });
+});

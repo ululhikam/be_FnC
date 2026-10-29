@@ -230,6 +230,7 @@ export class AdminService {
       FessService.serializeFess(f, null, {
         includeIgError: true,
         canManageInstagram: true,
+        includeModeration: true,
       })
     );
 

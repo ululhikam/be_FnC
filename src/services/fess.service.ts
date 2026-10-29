@@ -222,15 +222,30 @@ export class FessService {
    * Selama transisi ada dua sumber: tabel `Template` (12 desain SVG baru) dan
    * konstanta `TEMPLATES` (template generatif lama). Key yang tidak ada di
    * keduanya ditolak 422 supaya tidak ada fess dengan template tak bisa render.
+   *
+   * Base yang sudah punya template khusus tidak boleh memakai katalog umum:
+   * key generatif lama dan template bersama ditolak. Pengecualian hanya untuk
+   * `default` (klien belum tahu template base) — diganti template khusus
+   * pertama milik base agar publikasi tidak gagal.
    */
   static async resolveTemplateKey(raw?: string | null, baseId?: string): Promise<string> {
     const key = String(raw || '').trim() || 'default';
-    if (TEMPLATES.some((t) => t.key === key)) return key;
+    const hasOwn = baseId ? await TemplateService.hasOwnActive(baseId) : false;
 
-    const record = baseId
-      ? await TemplateService.getActiveForBase(key, baseId)
-      : await TemplateService.getActive(key);
-    if (record) return record.key;
+    if (TEMPLATES.some((t) => t.key === key)) {
+      // Template generatif lama = katalog umum; tertutup bila base punya template khusus.
+      if (!hasOwn) return key;
+    } else {
+      const record = baseId
+        ? await TemplateService.getActiveForBase(key, baseId)
+        : await TemplateService.getActive(key);
+      if (record) return record.key;
+    }
+
+    if (hasOwn && key === 'default' && baseId) {
+      const owned = await TemplateService.listActiveForBase(baseId);
+      if (owned.length) return owned[0].key;
+    }
 
     const err: any = new Error(`Template ${key} tidak tersedia`);
     err.status = 422;

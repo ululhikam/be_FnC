@@ -164,4 +164,5 @@ export const ENV = {
   ),
   AI_TITLE_ENABLED: process.env.AI_TITLE_ENABLED !== 'false',
   AI_TEMPLATE_METADATA_ENABLED: process.env.AI_TEMPLATE_METADATA_ENABLED !== 'false',
+  AI_DAILY_TEMPLATE_LIMIT: positiveInt(process.env.AI_DAILY_TEMPLATE_LIMIT, 200, 100_000),
 };

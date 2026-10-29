@@ -89,6 +89,27 @@ export class TemplateAdminController {
     }
   }
 
+  /** Usulkan metadata katalog dari SVG (tanpa menulis DB). */
+  static async suggestMetadata(req: Request, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) {
+        return errorResponse(res, 'Bukan admin', 403, 'FORBIDDEN');
+      }
+      const result = await TemplateAdminService.suggestMetadata(
+        req.user.id,
+        {
+          svg: req.body.svg,
+          key: req.body.key,
+          filename: req.body.filename,
+        },
+        requestMeta(req)
+      );
+      return successResponse(res, result, 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
   /** Render ulang thumbnail tanpa mengubah SVG/versi. */
   static async regenerateThumbnail(req: Request, res: Response, next: NextFunction) {
     try {

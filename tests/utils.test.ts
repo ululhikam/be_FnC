@@ -48,6 +48,14 @@ describe('Format Utilities', () => {
     expect(formatMembers(2000000)).toBe('2M');
   });
 
+  it('should never show a negative member count', () => {
+    // Penghitung bisa sempat minus setelah unfollow ganda; UI tidak boleh
+    // menampilkan "-1 member".
+    expect(formatMembers(-1)).toBe('0');
+    expect(formatMembers(-2500)).toBe('0');
+    expect(formatMembers(Number.NaN)).toBe('0');
+  });
+
   it('should extract correct initials from names', () => {
     expect(getInitials('Code Memes')).toBe('CM');
     expect(getInitials('Unair')).toBe('UN');

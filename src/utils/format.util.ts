@@ -4,13 +4,16 @@ export function normalizeHandle(handle: string): string {
 }
 
 export function formatMembers(count: number): string {
-  if (count >= 1000000) {
-    return (count / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+  // Penghitung bisa sempat minus (decrement ganda saat race unfollow); angka
+  // negatif di UI terlihat seperti bug dan bisa dipakai mengukur data internal.
+  const safe = Number.isFinite(count) ? Math.max(0, count) : 0;
+  if (safe >= 1000000) {
+    return (safe / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
   }
-  if (count >= 1000) {
-    return (count / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+  if (safe >= 1000) {
+    return (safe / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
   }
-  return count.toString();
+  return safe.toString();
 }
 
 export function getInitials(name: string): string {

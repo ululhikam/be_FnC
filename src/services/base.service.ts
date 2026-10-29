@@ -270,12 +270,14 @@ export class BaseService {
         prisma.follow.delete({
           where: { id: existingFollow.id },
         }),
-        prisma.base.update({
-          where: { id: base.id },
+        prisma.base.updateMany({
+          // `gt: 0` mencegah penghitung turun ke negatif bila dua request
+          // unfollow berjalan bersamaan atau data awal sudah tidak sinkron.
+          where: { id: base.id, membersCount: { gt: 0 } },
           data: { membersCount: { decrement: 1 } },
         }),
-        prisma.user.update({
-          where: { id: userId },
+        prisma.user.updateMany({
+          where: { id: userId, followingCount: { gt: 0 } },
           data: { followingCount: { decrement: 1 } },
         }),
       ]);

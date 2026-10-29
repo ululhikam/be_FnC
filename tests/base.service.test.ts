@@ -10,6 +10,7 @@ vi.mock('../src/config/prisma.js', () => ({
       findUnique: vi.fn(),
       findFirst: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     fess: {
       updateMany: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock('../src/config/prisma.js', () => ({
     user: {
       findFirst: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     platformConnection: {
       findUnique: vi.fn(),
@@ -388,7 +390,7 @@ describe('BaseService Unit Tests', () => {
   });
 });
 
-describe('BaseService.serializeBase — privasi filter kata', () => {
+describe('BaseService.serializeBase ï¿½ privasi filter kata', () => {
   const row = {
     id: 'base_1',
     name: 'Codebase',

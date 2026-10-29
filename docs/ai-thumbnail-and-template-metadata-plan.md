@@ -88,7 +88,7 @@ Konsekuensi penting:
 | D1 | Thumbnail dibuat **saat publish/render**, bukan saat upload | Render di klien, render saat upload | Judul butuh isi fess final + moderasi; upload bisa ditinggal (biaya sia-sia); klien tidak bisa dipercaya |
 | D2 | Thumbnail = slide ke-1 carousel | Post terpisah, story | Permintaan produk: "paling depan fess yang dipost di IG" |
 | D3 | Thumbnail **hanya** dibuat bila ada ≥1 foto gambar | Selalu, walau tanpa foto | Tanpa foto, cover hanyalah kartu teks duplikat |
-| D4 | Background = foto user (cover-crop + blur) + gradien dari **palet foto** | Putih polos, AI image generation | Murah, deterministik, on-brand, tanpa kirim foto ke pihak ketiga |
+| D4 | Komposisi dua zona: pita judul berwarna base/template + foto user utuh di bawah; letterbox memakai salinan foto blur | Putih polos, AI image generation | Murah, deterministik, on-brand, foto tidak tertutup/diblur, tanpa kirim foto ke pihak ketiga |
 | D5 | AI hanya untuk **teks** (judul + metadata), provider di balik interface | AI vision/gambar | Privasi, biaya, determinisme, audit lebih mudah |
 | D6 | AI selalu punya **fallback deterministik** | Blokir publish bila AI gagal | Publish tidak boleh gagal karena pihak ketiga |
 | D7 | Judul **final**, tidak bisa diedit; disimpan agar rendering & retry konsisten | Editor judul manual | Keputusan produk: judul murni hasil AI, tanpa kurasi per fess; mengurangi permukaan UI & audit |
@@ -140,8 +140,9 @@ exportFessCanvasUnsafe(fessId)
         │      │        ├─ thumbnail ready + foto sama → pakai judul tersimpan
         │      │        ├─ Base.thumbnailMode=auto & AI aktif → AiService.generateTitle(...)
         │      │        └─ no_ai / AI mati / gagal / timeout / kuota → fallbackTitle(content)
-        │      ├─ background: cover-crop + blur(28) + gradien palet foto
-        │      ├─ overlay teks + watermark (@handle, domain)
+        │      ├─ pita judul: warna template/base (fallback palet foto)
+        │      ├─ foto user: contain utuh di zona bawah, letterbox = salinan blur
+        │      ├─ overlay teks + watermark (hanya @handle base)
         │      ├─ resvg → JPEG 1080×1350 q90 → storage canvas-thumbnails/
         │      └─ update Fess (url, status, title, sourceMediaId, promptVersion)
         ├─ 3. susun postItems = [thumbnail, ...kartu, ...media] (maks 10)
@@ -174,41 +175,44 @@ createAdminTemplate / updateAdminTemplate  (validasi backend tetap berlaku)
 
 Kanvas **1080×1350** (4:5, sama dengan `ASPECTS.portrait`), output **JPEG q90** sRGB.
 
+Komposisi **dua zona**: judul di pita atas, foto user utuh di zona bawah. Foto
+tidak pernah ditutup judul dan tidak pernah diblur seluruhnya.
+
 | Layer | Isi | Aturan |
 |---|---|---|
-| L0 | Foto user | Cover-crop (fokus atas-tengah agar wajah tidak terpotong), blur 28 px, `brightness 0.72`, `saturation 1.05` |
-| L1 | Gradien 3 stop dari palet foto | Atas `alpha 0.12` → tengah `0.45` → bawah `0.94` (`0.94` di zona watermark), warna dominan digelapkan 40% |
-| L1b | Plat judul | Kapsul gelap `rgba` di belakang judul; alpha **0.32–0.86** hasil ukur rata-rata luminance foto di pita 25–75% tinggi |
-| L2 | Aksen | Satu ring + satu garis memakai warna aksen palet, opacity 0.28 / 0.60 |
-| L3 | Judul | Poppins **800** uppercase, auto-fit 92→44 px, maks 4 baris, hindari baris terakhir satu kata |
+| L0 | Pita judul (atas) | Gradien dari **warna base/template** (`Base.color`), fallback palet foto, fallback `#0055ff`. Tinggi 356–588 px mengikuti jumlah baris judul |
+| L1 | Foto user (bawah) | `fit: contain` — utuh, tanpa crop, tanpa blur. Area letterbox diisi salinan foto `cover` + `blur(40)` + `brightness 0.82`, jadi bingkai mengikuti warna foto (bukan putih polos) |
+| L2 | Aksen | Garis pendek di atas label + ring tipis + garis pemisah 3 px di batas pita judul, memakai warna aksen turunan base |
+| L3 | Judul | Poppins **800** uppercase, auto-fit 84→40 px, maks 3 baris, hindari baris terakhir satu kata |
 | L4 | Label base | Nama base kecil di atas judul, `Poppins 600`, 24 px, `letter-spacing 4` |
-| L5 | Watermark | Kiri-bawah `@handle` (Poppins 600, 34 px), kanan-bawah `fessncurious.vercel.app` (Fira Mono 25 px) |
-| L6 | Zona aman | Margin 72 px; judul tidak menyentuh area watermark (min. gap 32 px) |
+| L5 | Watermark | **Hanya** `@handle` base di pita bawah (`Poppins 700`, 36 px). Handle akun/domain platform tidak dirender |
+| L6 | Zona aman | Margin 72 px; judul tidak menyentuh foto (pita judul punya padding bawah 48 px) |
 
 Aturan tambahan:
 
-- **Kontras wajib** ≥ 4.5:1 (target 7:1). Karena foto user tidak bisa dikendalikan, kontras dijaga oleh **plat judul adaptif**: rata-rata luminance foto di pita judul diukur lebih dulu, lalu alpha plat dipilih (foto terang = plat lebih pekat). QA 4 foto (gelap, terang, potret, langit) menghasilkan **8,5–14:1** untuk judul putih.
-- **Tanpa hex baru di kode** hanya berlaku untuk frontend; backend menghitung warna dari foto, bukan dari konstanta tema.
+- **Kontras wajib** ≥ 4.5:1 (target 7:1). Karena judul kini berada di atas warna solid pita judul (bukan foto), kontras dijamin lewat `pickInkColor()` pada warna pita — tanpa plat semi-transparan.
+- **Tanpa hex baru di kode** hanya berlaku untuk frontend; backend menghitung warna dari base/foto, bukan dari konstanta tema.
 - **Determinisme**: palet dari downscale 24×30 + kuantisasi; tidak ada `Math.random()` — hasil untuk input sama harus sama (memudahkan uji & retry).
 - **Emoji** di judul maksimal 1, karena emoji dirender lewat `assets/emoji-paths.json` (Twemoji), bukan font sistem.
-- **Watermark** tidak boleh menutupi wajah: tanpa AI vision, zona watermark tetap di 18% bawah dan foto di-crop agar subjek di atas garis itu.
 - **Fallback tanpa foto** (hanya video, atau tanpa media sama sekali): **tidak ada** slide thumbnail. Publish berjalan seperti sebelum fitur ini (lihat §6 poin 4).
 - **Tipografi wajib lewat resvg**, bukan `sharp().composite(svg)`: sharp merender SVG dengan font sistem, sehingga Poppins hilang di Vercel. Overlay dirender ke PNG memakai `fonts/` yang sama dengan kartu.
 - **Pengukuran lebar teks** memakai `opentype.js` dengan margin aman 5% karena lebar glyph hasil resvg ±3% lebih besar dari hasil pengukuran.
 
-Contoh komposisi (bukan kode final):
+Contoh komposisi:
 
 ```text
 ┌──────────────────────────────┐
+│  ▬▬                          │
+│  UNERMEN FESS                │
+│  KANTIN KAMPUS               │
+│  TUTUP LEBIH AWAL            │
+├──────────────────────────────┤
 │                              │
-│   [foto blur + gradien]      │
+│        [foto user utuh]      │
+│   bingkai = salinan blur     │
 │                              │
-│      KETIKA KANTIN           │
-│      TUTUP LEBIH AWAL        │
-│                              │
-│                              │
-│  @unermenfess                │
-│                 fessncurious.vercel.app │
+├──────────────────────────────┤
+│  • @unermenfess              │
 └──────────────────────────────┘
 ```
 

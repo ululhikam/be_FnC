@@ -179,6 +179,82 @@ describe('ThumbnailService.ensure', () => {
   });
 });
 
+describe('ThumbnailService — komposisi dua zona', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /** Foto uji berwarna hijau tegas pada rasio tertentu (sharp asli). */
+  async function greenPhoto(width: number, height: number): Promise<Buffer> {
+    return sharp({
+      create: { width, height, channels: 3, background: { r: 0, g: 160, b: 0 } },
+    })
+      .jpeg()
+      .toBuffer();
+  }
+
+  async function render(width: number, height: number) {
+    vi.mocked(fetchRemoteImage).mockResolvedValue({
+      buffer: await greenPhoto(width, height),
+      contentType: 'image/jpeg',
+      finalUrl: 'https://cdn.test/foto.jpg',
+    });
+    const rendered = await ThumbnailService.renderCover(
+      {
+        id: 'preview',
+        content: 'Kantin kampus tutup lebih awal padahal banyak yang belum makan',
+        baseHandle: '@unermenfess',
+        media,
+        base: {
+          id: 'base_1',
+          name: 'UNERMEN FESS',
+          thumbnailMode: 'no_ai',
+          color: '#ff0055',
+        },
+      },
+      'https://cdn.test/foto.jpg'
+    );
+    const { data, info } = await sharp(rendered.buffer)
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const pixel = (x: number, y: number) => {
+      const offset = (y * info.width + x) * info.channels;
+      return { r: data[offset], g: data[offset + 1], b: data[offset + 2] };
+    };
+    return { rendered, pixel };
+  }
+
+  it('pita judul memakai warna base/template, bukan foto', async () => {
+    const { pixel } = await render(1600, 900);
+    const band = pixel(40, 200);
+    // Base ungu-pink digelapkan → merah lebih besar dari hijau.
+    expect(band.r).toBeGreaterThan(band.g);
+    expect(band.b).toBeGreaterThan(band.g);
+  });
+
+  it('foto tampil utuh (tidak di-crop/diblur) di zona bawah', async () => {
+    const { pixel } = await render(1600, 900);
+    // Titik tengah zona foto: warna asli foto (hijau), bukan warna pita judul.
+    const center = pixel(540, 900);
+    expect(center.g).toBeGreaterThan(120);
+    expect(center.r).toBeLessThan(60);
+  });
+
+  it('letterbox foto memakai salinan blur, bukan putih polos', async () => {
+    const { pixel } = await render(1080, 1350);
+    // Foto 4:5 di zona yang lebih lebar → ada bingkai kiri/kanan.
+    const edge = pixel(8, 900);
+    expect(Math.min(edge.r, edge.g, edge.b)).toBeLessThan(180);
+    expect(edge.g).toBeGreaterThan(edge.r);
+  });
+
+  it('footer hanya memuat pita watermark gelap di bawah foto', async () => {
+    const { pixel } = await render(1600, 900);
+    const footer = pixel(540, 1290);
+    expect(footer.r + footer.g + footer.b).toBeLessThan(200);
+  });
+});
+
 describe('ThumbnailService.renderPreview', () => {
   beforeEach(() => {
     vi.clearAllMocks();

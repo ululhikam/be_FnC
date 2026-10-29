@@ -1106,6 +1106,7 @@ export class CanvasService {
             id: fess.base.id,
             name: fess.base.name,
             thumbnailMode: fess.base.thumbnailMode,
+            color: fess.base.color,
             bannedWords: fess.base.bannedWords,
           }
         : null,

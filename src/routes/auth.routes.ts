@@ -458,7 +458,25 @@ router.get('/instagram/webhook', (req: Request, res: Response) => {
  * Meta / Instagram Webhook Event Receiver (POST)
  */
 router.post('/instagram/webhook', (req: Request, res: Response) => {
-  console.log('[Meta Webhook Event Received]:', JSON.stringify(req.body));
+  // Body webhook memuat id akun, media, dan komentar pengguna (PII). Cukup catat
+  // ringkasannya saja — log Vercel bisa dibaca banyak orang dan disimpan lama.
+  const body = (req.body || {}) as {
+    object?: unknown;
+    entry?: Array<{ id?: unknown; time?: unknown; changes?: Array<{ field?: unknown }> }>;
+  };
+  const entries = Array.isArray(body.entry) ? body.entry : [];
+  console.log(
+    '[Meta Webhook Event Received]',
+    JSON.stringify({
+      object: typeof body.object === 'string' ? body.object : undefined,
+      entries: entries.length,
+      entryIds: entries.slice(0, 5).map((entry) => String(entry?.id ?? '')),
+      fields: entries
+        .flatMap((entry) => (Array.isArray(entry?.changes) ? entry.changes : []))
+        .slice(0, 10)
+        .map((change) => String(change?.field ?? '')),
+    })
+  );
   return res.status(200).send('EVENT_RECEIVED');
 });
 

@@ -6,8 +6,15 @@ import { WelcomeBonusService } from '../src/services/welcome-bonus.service.js';
 import { prisma } from '../src/config/prisma.js';
 import * as passwordUtil from '../src/utils/password.util.js';
 import { generateEmailVerificationTicket } from '../src/utils/jwt.util.js';
+import { RateLimitService } from '../src/services/rate-limit.service.js';
 
 const testSha256 = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
+
+vi.mock('../src/services/rate-limit.service.js', () => ({
+  RateLimitService: {
+    consume: vi.fn(),
+  },
+}));
 
 vi.mock('../src/config/prisma.js', () => ({
   prisma: {
@@ -41,14 +48,23 @@ vi.mock('../src/config/prisma.js', () => ({
 describe('AuthService Unit Tests', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: kuota OTP masih tersedia.
+    vi.mocked(RateLimitService.consume).mockResolvedValue({
+      allowed: true,
+      count: 1,
+      limit: 3,
+      remaining: 2,
+      resetAt: new Date(Date.now() + 900_000),
+      retryAfterSeconds: 900,
+    });
   });
 
   describe('login', () => {
-    it('should throw error when user is not found', async () => {
+    it('should throw a uniform error when user is not found', async () => {
       vi.mocked(prisma.user.findFirst).mockResolvedValueOnce(null);
 
       await expect(AuthService.login('notfound@mail.com', 'password123', 'User')).rejects.toThrow(
-        'Email atau username tidak ditemukan'
+        'Email/username atau kata sandi salah.'
       );
     });
 
@@ -77,7 +93,7 @@ describe('AuthService Unit Tests', () => {
       vi.spyOn(passwordUtil, 'comparePassword').mockResolvedValueOnce(false);
 
       await expect(AuthService.login('user@mail.com', 'wrongpassword', 'User')).rejects.toThrow(
-        'Password yang dimasukkan salah'
+        'Email/username atau kata sandi salah.'
       );
     });
 
@@ -326,6 +342,53 @@ describe('AuthService Unit Tests', () => {
       expect(upsertCall.update.otpHash).toBeDefined();
 
       expect(emailSpy).toHaveBeenCalledWith('alex@mail.com', expect.stringMatching(/^\d{6}$/));
+      emailSpy.mockRestore();
+    });
+
+    it('should not reset the attempt counter when an OTP is still active', async () => {
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({
+        id: 'usr_1',
+        email: 'alex@mail.com',
+      } as any);
+      vi.mocked(prisma.passwordReset.findUnique).mockResolvedValueOnce({
+        otpExpiresAt: new Date(Date.now() + 5 * 60 * 1000),
+      } as any);
+      vi.mocked(prisma.passwordReset.upsert).mockResolvedValueOnce({} as any);
+      const emailSpy = vi
+        .spyOn(EmailService, 'sendPasswordResetOtp')
+        .mockResolvedValueOnce(undefined as any);
+
+      await AuthService.forgotPassword('alex@mail.com');
+
+      const upsertCall: any = vi.mocked(prisma.passwordReset.upsert).mock.calls[0][0];
+      // Tanpa ini, minta ulang OTP menghapus jejak tebakan salah.
+      expect(upsertCall.update).not.toHaveProperty('attempts');
+      emailSpy.mockRestore();
+    });
+
+    it('should stop sending OTP once the per-account quota is exhausted', async () => {
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({
+        id: 'usr_1',
+        email: 'alex@mail.com',
+      } as any);
+      vi.mocked(RateLimitService.consume).mockResolvedValueOnce({
+        allowed: false,
+        count: 4,
+        limit: 3,
+        remaining: 0,
+        resetAt: new Date(Date.now() + 900_000),
+        retryAfterSeconds: 900,
+      });
+      const emailSpy = vi
+        .spyOn(EmailService, 'sendPasswordResetOtp')
+        .mockResolvedValueOnce(undefined as any);
+
+      const res: any = await AuthService.forgotPassword('alex@mail.com');
+
+      // Tetap generik agar tidak membocorkan keberadaan akun.
+      expect(res.message).toContain('Jika email tersebut terdaftar');
+      expect(prisma.passwordReset.upsert).not.toHaveBeenCalled();
+      expect(emailSpy).not.toHaveBeenCalled();
       emailSpy.mockRestore();
     });
 

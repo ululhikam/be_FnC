@@ -31,6 +31,24 @@ function sha256(value: string): string {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
 
+/**
+ * Hash bcrypt dummy untuk menyamakan waktu respons saat akun tidak ditemukan.
+ * Nilainya tidak pernah cocok dengan kata sandi apa pun.
+ */
+const DUMMY_PASSWORD_HASH =
+  '$2a$10$bo3cFxTX4XZ58KWitQFeFOWxgOe/8ggSGIji6rvrxxgrI0tJYohFu';
+
+/**
+ * Satu pesan untuk semua kegagalan kredensial (akun tidak ada, kata sandi
+ * salah, kata sandi kosong). Membedakannya memungkinkan enumerasi akun.
+ */
+function invalidCredentials() {
+  const err: any = new Error('Email/username atau kata sandi salah.');
+  err.status = 401;
+  err.code = 'INVALID_CREDENTIALS';
+  return err;
+}
+
 export class AuthService {
   /**
    * Login user or admin by identifier (email/handle) and password
@@ -57,10 +75,13 @@ export class AuthService {
     });
 
     if (!user) {
-      const err: any = new Error('Email atau username tidak ditemukan');
-      err.status = 401;
-      err.code = 'INVALID_CREDENTIALS';
-      throw err;
+      // Pesan & kode seragam untuk semua kegagalan kredensial. Sebelumnya
+      // "tidak ditemukan" berbeda dari "password salah", sehingga endpoint ini
+      // bisa dipakai memetakan email/handle mana yang terdaftar.
+      // Bandingkan juga terhadap hash dummy agar waktu respons tidak
+      // membocorkan keberadaan akun.
+      await comparePassword(password || '', DUMMY_PASSWORD_HASH);
+      throw invalidCredentials();
     }
 
     if (user.isBanned) {
@@ -72,17 +93,11 @@ export class AuthService {
 
     if (user.password) {
       if (!password) {
-        const err: any = new Error('Password wajib diisi');
-        err.status = 401;
-        err.code = 'INVALID_CREDENTIALS';
-        throw err;
+        throw invalidCredentials();
       }
       const isMatch = await comparePassword(password, user.password);
       if (!isMatch) {
-        const err: any = new Error('Password yang dimasukkan salah');
-        err.status = 401;
-        err.code = 'INVALID_CREDENTIALS';
-        throw err;
+        throw invalidCredentials();
       }
     } else if (user.googleId) {
       // Akun Google tidak punya kata sandi — jangan pernah meloloskan login apa pun.
@@ -760,6 +775,29 @@ export class AuthService {
   }
 
   /**
+   * Kuota pengiriman OTP per akun, disimpan di Postgres agar berlaku lintas
+   * instance serverless. Gagal-cek (DB error) sengaja dianggap boleh supaya
+   * gangguan database tidak mematikan alur reset sandi; kegagalannya dicatat.
+   */
+  private static async tryConsumeOtpQuota(
+    userId: string,
+    action: string,
+    limit: number,
+    windowSeconds: number
+  ): Promise<boolean> {
+    try {
+      const { RateLimitService } = await import('./rate-limit.service.js');
+      const result = await RateLimitService.consume(`otp:${action}:${userId}`, limit, windowSeconds);
+      return result.allowed;
+    } catch (error) {
+      if (ENV.NODE_ENV !== 'test') {
+        console.error(`[Auth] Gagal memeriksa kuota OTP (${action}):`, error);
+      }
+      return true;
+    }
+  }
+
+  /**
    * Langkah 1 reset kata sandi: buat kode OTP & kirim ke email.
    *
    * Selalu mengembalikan pesan generik yang sama agar penyerang tidak bisa
@@ -776,17 +814,34 @@ export class AuthService {
     });
     if (!user?.email) return { message: genericMessage };
 
+    // Kuota per akun: tanpa ini endpoint bisa dipakai membanjiri inbox korban
+    // dengan OTP (email bombing) sekaligus membakar kuota layanan email.
+    // Bila kuota habis, tetap balas pesan generik agar tidak membocorkan
+    // keberadaan akun.
+    const withinQuota = await this.tryConsumeOtpQuota(user.id, 'forgot-password', 3, 15 * 60);
+    if (!withinQuota) return { message: genericMessage };
+
     const otp = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
     const otpExpiresAt = new Date(Date.now() + OTP_TTL_MS);
 
-    // Satu baris per user: minta ulang OTP = timpa kode lama + reset percobaan.
+    // Satu baris per user: minta ulang OTP = timpa kode lama. Hitungan percobaan
+    // hanya direset bila OTP sebelumnya sudah kedaluwarsa — kalau tidak, minta
+    // ulang kode akan menghapus jejak tebakan dan OTP 6 digit bisa di-brute-force
+    // tanpa batas total.
+    const existingReset = await prisma.passwordReset.findUnique({
+      where: { userId: user.id },
+      select: { otpExpiresAt: true },
+    });
+    const previousOtpExpired =
+      !existingReset?.otpExpiresAt || existingReset.otpExpiresAt.getTime() <= Date.now();
+
     await prisma.passwordReset.upsert({
       where: { userId: user.id },
       create: { userId: user.id, otpHash: sha256(otp), otpExpiresAt },
       update: {
         otpHash: sha256(otp),
         otpExpiresAt,
-        attempts: 0,
+        ...(previousOtpExpired ? { attempts: 0 } : {}),
         resetTokenHash: null,
         resetTokenExpiresAt: null,
       },

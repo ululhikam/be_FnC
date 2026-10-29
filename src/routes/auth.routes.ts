@@ -24,6 +24,7 @@ import { AuthService } from '../services/auth.service.js';
 import { prisma } from '../config/prisma.js';
 import { parseSignedRequest } from '../utils/meta-signed-request.util.js';
 import { signOAuthState, verifyOAuthState } from '../utils/oauth-state.util.js';
+import { authRateLimit, bodyIdentity } from '../middlewares/authRateLimit.middleware.js';
 
 const router = Router();
 
@@ -42,22 +43,102 @@ function emailVerificationRedirectUrl(
 }
 
 // Standard API Contract Endpoints
-router.post('/login', validateBody(LoginSchema), AuthController.login);
+// Kuota percobaan disimpan di Postgres (bukan memori instance) supaya lockout
+// tetap berlaku walau request tersebar ke banyak invocation serverless.
+// Batas IP sengaja lebih longgar daripada batas identitas: banyak pengguna sah
+// bisa berada di balik satu IP (kantor/kos), sedangkan brute force menyasar
+// satu akun sehingga tertahan oleh batas identitas.
+router.post(
+  '/login',
+  authRateLimit({
+    name: 'login',
+    ipLimit: 60,
+    identityLimit: 10,
+    windowSeconds: 15 * 60,
+    identify: bodyIdentity,
+    message: 'Terlalu banyak percobaan masuk. Tunggu 15 menit sebelum mencoba lagi.',
+    code: 'LOGIN_RATE_LIMITED',
+  }),
+  validateBody(LoginSchema),
+  AuthController.login
+);
 router.post('/login/google', validateBody(GoogleAuthSchema), AuthController.loginGoogle);
-router.post('/register/user', validateBody(RegisterUserSchema), AuthController.registerUser);
-router.post('/register/base', validateBody(RegisterBaseSchema), AuthController.registerBase);
+router.post(
+  '/register/user',
+  authRateLimit({ name: 'register', ipLimit: 10, windowSeconds: 60 * 60 }),
+  validateBody(RegisterUserSchema),
+  AuthController.registerUser
+);
+router.post(
+  '/register/base',
+  authRateLimit({ name: 'register', ipLimit: 10, windowSeconds: 60 * 60 }),
+  validateBody(RegisterBaseSchema),
+  AuthController.registerBase
+);
 router.post('/logout', requireAuth, AuthController.logout);
 router.get('/me', requireAuth, AuthController.getMe);
 router.post('/refresh', requireAuth, AuthController.refreshToken);
 
 // Reset kata sandi via kode OTP email (3 langkah, tanpa sesi login)
-router.post('/forgot-password', validateBody(ForgotPasswordSchema), AuthController.forgotPassword);
-router.post('/verify-reset-otp', validateBody(VerifyResetOtpSchema), AuthController.verifyResetOtp);
+router.post(
+  '/forgot-password',
+  authRateLimit({
+    name: 'forgot-password',
+    ipLimit: 10,
+    identityLimit: 3,
+    windowSeconds: 15 * 60,
+    identify: bodyIdentity,
+    message: 'Terlalu banyak permintaan kode OTP. Tunggu 15 menit sebelum mencoba lagi.',
+    code: 'OTP_RATE_LIMITED',
+  }),
+  validateBody(ForgotPasswordSchema),
+  AuthController.forgotPassword
+);
+router.post(
+  '/verify-reset-otp',
+  authRateLimit({
+    name: 'verify-reset-otp',
+    ipLimit: 20,
+    identityLimit: 10,
+    windowSeconds: 15 * 60,
+    identify: bodyIdentity,
+    message: 'Terlalu banyak percobaan kode OTP. Tunggu 15 menit sebelum mencoba lagi.',
+    code: 'OTP_RATE_LIMITED',
+  }),
+  validateBody(VerifyResetOtpSchema),
+  AuthController.verifyResetOtp
+);
 router.post('/reset-password', validateBody(ResetPasswordSchema), AuthController.resetPassword);
 
 // Verifikasi email akun (OTP via Resend) — tanpa sesi login.
-router.post('/email-verification/verify', validateBody(VerifyEmailSchema), AuthController.verifyEmail);
-router.post('/email-verification/resend', validateBody(ResendEmailVerificationSchema), AuthController.resendEmailVerification);
+router.post(
+  '/email-verification/verify',
+  authRateLimit({
+    name: 'verify-email',
+    ipLimit: 20,
+    identityLimit: 10,
+    windowSeconds: 15 * 60,
+    identify: bodyIdentity,
+    message: 'Terlalu banyak percobaan kode verifikasi. Tunggu 15 menit sebelum mencoba lagi.',
+    code: 'OTP_RATE_LIMITED',
+  }),
+  validateBody(VerifyEmailSchema),
+  AuthController.verifyEmail
+);
+router.post(
+  '/email-verification/resend',
+  authRateLimit({
+    name: 'resend-verification',
+    ipLimit: 10,
+    identityLimit: 3,
+    windowSeconds: 15 * 60,
+    identify: bodyIdentity,
+    message: 'Terlalu banyak permintaan kirim ulang. Tunggu 15 menit sebelum mencoba lagi.',
+    code: 'OTP_RATE_LIMITED',
+  }),
+  validateBody(ResendEmailVerificationSchema),
+  AuthController.resendEmailVerification
+);
 router.post('/email-verification/change-email', validateBody(ChangeVerificationEmailSchema), AuthController.changeVerificationEmail);
 
 // Instagram Verification via Meta for Developers App

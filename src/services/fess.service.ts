@@ -346,6 +346,10 @@ export class FessService {
     // dengan template yang benar-benar bisa dirender.
     const templateKey = await FessService.resolveTemplateKey(payload.template, base.id);
 
+    // Kutipan tidak dipercaya dari klien: isi & handle diambil ulang dari fess
+    // sumber, sehingga tidak mungkin mengarang kutipan atas nama base lain.
+    const quotedFess = await this.resolveQuotedFess(payload.quoted_fess);
+
     // Paid bases require a signed-in account with a verified email. During the
     // trial anonymous posting stays available; after the trial it does not.
     if (billing.requiresPayment) {
@@ -417,7 +421,7 @@ export class FessService {
               scheduledAt: scheduledDate,
               song: payload.song || undefined,
               template: templateKey,
-              quotedFess: payload.quoted_fess || undefined,
+              quotedFess: quotedFess || undefined,
               tag: payload.tag || null,
               status: initialStatus,
               autoFlagged,
@@ -654,6 +658,59 @@ export class FessService {
   }
 
   /**
+   * Bangun snapshot kutipan dari fess sumber, bukan dari body klien.
+   *
+   * Sebelumnya `quoted_fess` disimpan apa adanya, sehingga siapa pun bisa
+   * membuat kartu yang mengutip base lain dengan isi karangan. Sekarang hanya
+   * `id` yang dipakai: isi, handle, dan waktu diambil dari baris aslinya, dan
+   * fess yang belum terbit tidak bisa dikutip (isinya belum publik).
+   */
+  private static async resolveQuotedFess(raw: unknown) {
+    const id = String((raw as { id?: unknown } | null)?.id ?? '').trim();
+    if (!id) return null;
+
+    const source = await prisma.fess.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        baseHandle: true,
+        content: true,
+        createdAt: true,
+        status: true,
+        base: { select: { avatar: true, color: true, initial: true } },
+      },
+    });
+
+    if (!source || !this.isPubliclyVisible(source)) {
+      const err: any = new Error('Fess yang dikutip tidak ditemukan atau belum terbit');
+      err.status = 422;
+      err.code = 'VALIDATION_ERROR';
+      err.errors = { quoted_fess: 'Fess yang dikutip tidak tersedia' };
+      throw err;
+    }
+
+    const handle = normalizeHandle(source.baseHandle);
+    const avatar = source.base?.avatar || '';
+
+    return {
+      id: source.id,
+      handle,
+      senderHandle: handle,
+      content: source.content,
+      time: new Date(source.createdAt).toISOString(),
+      // `avatar` bisa URL/data-URL foto atau inisial; renderer hanya memakai
+      // warna & teks, jadi fallback ke warna base dan inisial handle.
+      avatar_bg: source.base?.color || '#0055FF',
+      avatar_text: (source.base?.initial || handle.replace(/^@/, '').slice(0, 2) || 'FS').toUpperCase(),
+      avatarBg: source.base?.color || '#0055FF',
+      avatarText: (source.base?.initial || handle.replace(/^@/, '').slice(0, 2) || 'FS').toUpperCase(),
+      ...(avatar.startsWith('http') || avatar.startsWith('data:') || avatar.startsWith('/')
+        ? { avatar_url: avatar }
+        : {}),
+    };
+  }
+
+  /**
    * Status Instagram ringan untuk polling UI. Sengaja tidak memuat komentar
    * agar aman dipanggil berkala saat badge masih processing/pending.
    */
@@ -666,6 +723,7 @@ export class FessService {
       select: {
         id: true,
         baseHandle: true,
+        status: true,
         postedToIg: true,
         igStatus: true,
         igError: true,
@@ -683,6 +741,15 @@ export class FessService {
     }
 
     const canManageInstagram = this.canManageBaseFess(fess, viewer);
+
+    // Status publikasi fess non-terbit bukan informasi publik: menjawabnya
+    // berarti mengonfirmasi keberadaan konten yang belum lolos moderasi.
+    if (!canManageInstagram && !this.isPubliclyVisible(fess)) {
+      const err: any = new Error('Fess tidak ditemukan');
+      err.status = 404;
+      err.code = 'NOT_FOUND';
+      throw err;
+    }
 
     return {
       id: fess.id,

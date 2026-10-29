@@ -70,6 +70,10 @@ export const CanvasPreviewSchema = z.object({
     })
     .optional()
     .nullable(),
+  // Pratinjau carousel lengkap dengan slide cover thumbnail di indeks 0.
+  // Thumbnail tidak dibuat bila base opt-out atau tidak ada foto.
+  with_thumbnail: z.boolean().optional().default(false),
+  media: z.array(MediaItemSchema).max(4, 'Maksimal 4 file media').optional().default([]),
 });
 
 export const CreateFessSchema = z.object({

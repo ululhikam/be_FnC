@@ -81,6 +81,9 @@ model Base {
   igAccount                   String?
   postMode                    String    @default("moderated") // "auto" (langsung terbit + filter NLP) | "moderated" (antrean review)
   bannedWords                 String[]  @default([]) // blacklist kata ala admin (dicek filter NLP saat auto post)
+  // Opt-out thumbnail Instagram per base: "auto" (thumbnail + judul AI),
+  // "no_ai" (thumbnail tetap, judul deterministik), "off" (tanpa thumbnail).
+  thumbnailMode               String    @default("auto")
   verified                    Boolean   @default(false)
   established                 String?   @default("2024")
   membersCount                Int       @default(0)
@@ -162,6 +165,16 @@ model Fess {
   igPostMethod   String? // "auto" | "manual"
   igPostedAt     DateTime? // timestamp kapan postingan IG terbit (manual atau auto)
   igPayload      Json? // item carousel + caption yang sudah dinormalisasi
+  // Slide cover (indeks 0) yang dirender saat publish: foto user + judul +
+  // watermark. Hanya untuk Instagram, bukan cover feed web.
+  thumbnailUrl           String?
+  thumbnailTitle         String?
+  thumbnailSourceMediaId String?
+  thumbnailStatus        String    @default("idle") // idle|processing|ready|failed|skipped
+  thumbnailError         String?
+  thumbnailPromptVersion String? // "v1" | "fallback"
+  thumbnailGeneratedAt   DateTime?
+  thumbnailVersion       Int       @default(0) // cache-buster URL (?v=)
   autoFlagged    Boolean   @default(false) // terindikasi konten negatif oleh filter NLP saat auto post
   flagReason     String? // alasan flag dari filter NLP (mis. "ujaran kebencian, ancaman")
   scheduledAt    DateTime?
@@ -188,6 +201,7 @@ model Fess {
   @@index([status, createdAt])
   @@index([userId])
   @@index([igStatus])
+  @@index([thumbnailStatus])
   @@index([upvotes(sort: Desc)])
 }
 
@@ -789,4 +803,29 @@ model RateLimitBucket {
   updatedAt DateTime @updatedAt
 
   @@index([resetAt])
+}
+
+// Ledger panggilan AI (judul cover & metadata template). Dipakai untuk cache
+// (inputHash unik), kuota, dan laporan fallback/latensi tanpa endpoint baru.
+model AiGeneration {
+  id            String   @id @default(cuid())
+  kind          String // "fess_title" | "template_metadata"
+  provider      String
+  model         String
+  promptVersion String
+  inputHash     String
+  targetType    String? // "Fess" | "Template"
+  targetId      String?
+  output        Json
+  inputTokens   Int      @default(0)
+  outputTokens  Int      @default(0)
+  costUsd       Decimal? @db.Decimal(10, 6)
+  latencyMs     Int      @default(0)
+  status        String // "ok" | "cached" | "fallback" | "error"
+  error         String?
+  createdAt     DateTime @default(now())
+
+  @@unique([kind, inputHash])
+  @@index([kind, createdAt])
+  @@index([targetType, targetId])
 }

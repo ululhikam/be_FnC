@@ -320,6 +320,7 @@ export class BaseService {
       color?: string;
       rules?: string[];
       postMode?: 'auto' | 'moderated';
+      thumbnail_mode?: 'auto' | 'no_ai' | 'off';
       bannedWords?: string[];
     }
   ) {
@@ -429,6 +430,7 @@ export class BaseService {
       ...(data.color ? { color: data.color } : {}),
       ...(data.rules ? { rules: data.rules } : {}),
       ...(data.postMode ? { postMode: data.postMode } : {}),
+      ...(data.thumbnail_mode ? { thumbnailMode: data.thumbnail_mode } : {}),
       ...(bannedWords !== undefined ? { bannedWords } : {}),
     };
 
@@ -645,6 +647,7 @@ export class BaseService {
       established: base.established || '2024',
       initial: base.initial || 'BA',
       post_mode: base.postMode || 'moderated',
+      thumbnail_mode: base.thumbnailMode || 'auto',
       banned_words: base.bannedWords || [],
       ...(options.includeHandleCooldown
         ? {

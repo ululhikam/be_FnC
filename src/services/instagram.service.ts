@@ -6,7 +6,10 @@ import {
   assertCarouselGeometry,
   ensureIgImageUrl,
   IG_CAROUSEL_TARGET,
+  type IgWatermark,
 } from '../utils/instagram-media.util.js';
+import { frontendHost } from '../utils/frontend-host.util.js';
+import { watermarkLabel } from '../utils/thumbnail.util.js';
 
 const API_VERSION = ENV.INSTAGRAM_API_VERSION || 'v25.0';
 const API_BASE = `https://graph.instagram.com/${API_VERSION}`;
@@ -1291,8 +1294,11 @@ export class InstagramService {
 
       // Semua item carousel wajib 1080×1350 (4:5). Gambar dinormalisasi di
       // sini; video harus sudah dinormalisasi oleh klien/komposer.
+      // Foto user diberi watermark handle base (atas) + host platform (bawah);
+      // card & thumbnail sudah `normalized` dan tidak diberi watermark ganda.
+      const watermark = watermarkLabel(baseHandle, frontendHost());
       try {
-        items = await InstagramService.prepareCarouselItems(items);
+        items = await InstagramService.prepareCarouselItems(items, watermark);
       } catch (prepareErr: any) {
         const detail = prepareErr?.message || 'Media carousel tidak valid.';
         // Error unduhan/upload sementara tetap layak retry; error format,
@@ -1536,7 +1542,10 @@ export class InstagramService {
   }
 
   /** Normalisasi gambar & validasi geometri semua item carousel. */
-  private static async prepareCarouselItems(items: PostMediaItem[]): Promise<PostMediaItem[]> {
+  private static async prepareCarouselItems(
+    items: PostMediaItem[],
+    watermark?: IgWatermark | null
+  ): Promise<PostMediaItem[]> {
     const prepared: PostMediaItem[] = [];
 
     for (let index = 0; index < items.length; index++) {
@@ -1577,7 +1586,7 @@ export class InstagramService {
         continue;
       }
 
-      const normalized = await ensureIgImageUrl(item.url, IG_CAROUSEL_TARGET);
+      const normalized = await ensureIgImageUrl(item.url, IG_CAROUSEL_TARGET, { watermark });
       prepared.push({
         ...item,
         url: normalized.url,

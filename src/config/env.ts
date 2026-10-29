@@ -50,6 +50,12 @@ const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
 const defaultAllowedOrigins =
   nodeEnv === 'production' ? frontendUrl : `${frontendUrl},http://localhost:5173`;
 
+/** Baca bilangan bulat positif dari env; nilai tidak valid jatuh ke default. */
+function positiveInt(raw: string | undefined, fallback: number, max = Number.MAX_SAFE_INTEGER): number {
+  const parsed = parseInt(String(raw ?? ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 && parsed <= max ? parsed : fallback;
+}
+
 export const ENV = {
   PORT: parseInt(process.env.PORT || '3000', 10),
   NODE_ENV: nodeEnv,
@@ -120,4 +126,43 @@ export const ENV = {
   MIDTRANS_CLIENT_KEY: process.env.MIDTRANS_CLIENT_KEY || '',
   MIDTRANS_MERCHANT_ID: process.env.MIDTRANS_MERCHANT_ID || '',
   PAYMENT_RECONCILE_SECRET: process.env.PAYMENT_RECONCILE_SECRET || '',
+
+  // Thumbnail Instagram (render lokal, tanpa AI). Default OFF sampai QA selesai.
+  THUMBNAIL_ENABLED: process.env.THUMBNAIL_ENABLED === 'true',
+  THUMBNAIL_MAX_MEDIA_FETCH_BYTES: positiveInt(
+    process.env.THUMBNAIL_MAX_MEDIA_FETCH_BYTES,
+    8 * 1024 * 1024,
+    20 * 1024 * 1024
+  ),
+  THUMBNAIL_FETCH_TIMEOUT_MS: positiveInt(process.env.THUMBNAIL_FETCH_TIMEOUT_MS, 8000, 30000),
+
+  // AI (judul cover & metadata template). Adapter OpenAI-compatible; provider
+  // ditentukan base URL + model. Kill switch: AI_ENABLED=false, dan key kosong
+  // otomatis mematikan fitur (fail-safe, bukan error saat boot).
+  AI_ENABLED: process.env.AI_ENABLED === 'true' && !!process.env.AI_API_KEY,
+  AI_BASE_URL:
+    process.env.AI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai',
+  AI_API_KEY: process.env.AI_API_KEY || '',
+  // Model lite dipilih karena murah/cepat; `gemini-2.5-flash-lite` sudah tidak
+  // tersedia untuk key baru (Google menyarankan `gemini-3.5-flash-lite`).
+  AI_MODEL: process.env.AI_MODEL || 'gemini-3.5-flash-lite',
+  AI_TIMEOUT_MS: positiveInt(process.env.AI_TIMEOUT_MS, 6000, 30000),
+  AI_MAX_INPUT_CHARS: positiveInt(process.env.AI_MAX_INPUT_CHARS, 6000, 20000),
+
+  // Cadangan opsional: dicoba sekali bila provider utama 429/5xx/timeout.
+  AI_FALLBACK_BASE_URL: process.env.AI_FALLBACK_BASE_URL || '',
+  AI_FALLBACK_API_KEY: process.env.AI_FALLBACK_API_KEY || '',
+  AI_FALLBACK_MODEL: process.env.AI_FALLBACK_MODEL || '',
+
+  // Plafon internal (kuota permintaan, bukan dolar). Plafon nyata milik provider.
+  AI_RPM_LIMIT: positiveInt(process.env.AI_RPM_LIMIT, 10, 600),
+  AI_DAILY_TITLE_LIMIT: positiveInt(process.env.AI_DAILY_TITLE_LIMIT, 1000, 1_000_000),
+  AI_DAILY_TITLE_LIMIT_PER_BASE: positiveInt(
+    process.env.AI_DAILY_TITLE_LIMIT_PER_BASE,
+    200,
+    100_000
+  ),
+  AI_TITLE_ENABLED: process.env.AI_TITLE_ENABLED !== 'false',
+  AI_TEMPLATE_METADATA_ENABLED: process.env.AI_TEMPLATE_METADATA_ENABLED !== 'false',
+  AI_DAILY_TEMPLATE_LIMIT: positiveInt(process.env.AI_DAILY_TEMPLATE_LIMIT, 200, 100_000),
 };

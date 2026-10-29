@@ -41,6 +41,7 @@ import {
 import {
   CreateTemplateSchema,
   ReplaceTemplateSvgSchema,
+  SuggestTemplateMetadataSchema,
   UpdateTemplateSchema,
 } from '../validators/template-admin.validator.js';
 
@@ -241,6 +242,21 @@ router.post(
   }),
   validateBody(CreateTemplateSchema),
   TemplateAdminController.create
+);
+
+router.post(
+  '/templates/suggest-metadata',
+  requireAuth,
+  requireRole('Super Admin'),
+  paymentRateLimit({
+    name: 'template-admin-suggest',
+    limit: 10,
+    windowSeconds: 60,
+    message: 'Terlalu banyak permintaan usulan AI. Coba lagi beberapa saat.',
+    code: 'TEMPLATE_AI_RATE_LIMITED',
+  }),
+  validateBody(SuggestTemplateMetadataSchema),
+  TemplateAdminController.suggestMetadata
 );
 
 router.patch(

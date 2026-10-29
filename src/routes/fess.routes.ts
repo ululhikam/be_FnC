@@ -30,6 +30,8 @@ router.post(
   FessController.previewCanvas
 );
 router.get('/:id/instagram-status', optionalAuth, FessController.getInstagramStatus);
+// Pemulihan thumbnail cover (hanya `failed`/`idle`; judul tidak bisa diedit).
+router.post('/:id/thumbnail', requireAuth, FessController.regenerateThumbnail);
 router.get('/:id', optionalAuth, FessController.getFess);
 router.post('/:id/vote', requireAuth, validateBody(VoteSchema), FessController.voteFess);
 router.post('/:id/bookmark', requireAuth, FessController.bookmarkFess);

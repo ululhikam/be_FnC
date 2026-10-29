@@ -2,10 +2,12 @@ import { Prisma } from '@prisma/client';
 import sharp from 'sharp';
 import { prisma } from '../config/prisma.js';
 import { AdminSecurityService } from './admin-security.service.js';
+import { AiService } from './ai/ai.service.js';
 import { CanvasService } from './canvas.service.js';
 import { StorageService } from './storage.service.js';
 import { TemplateService, type TemplateRecord, type TemplateSlots } from './template.service.js';
 import { normalizeHandle } from '../utils/format.util.js';
+import { extractTemplateTexts } from '../utils/template-extract.util.js';
 import {
   analyzeTemplateSvg,
   TemplateAdminError,
@@ -562,6 +564,81 @@ export class TemplateAdminService {
 
     TemplateService.invalidate(key);
     return serialise(updated);
+  }
+
+  /**
+   * Usulkan metadata katalog (label/deskripsi/kategori) dari SVG yang sedang
+   * diimpor. Tidak menyimpan apa pun: hasilnya hanya ditampilkan di konsol,
+   * penyimpanan tetap lewat `create`/`update` dengan validasi Zod yang sama.
+   */
+  static async suggestMetadata(
+    actorId: string,
+    input: { svg: string; key?: string | null; filename?: string | null },
+    meta: TemplateRequestMeta = {}
+  ) {
+    const rawKey = String(input.key || '').trim();
+    // Key boleh belum ada saat admin baru mengunggah SVG; analisis tetap butuh
+    // key valid untuk pesan error, jadi dipakai placeholder yang aman.
+    const analysisKey = /^[a-z0-9][a-z0-9-]{1,63}$/.test(rawKey) && !rawKey.endsWith('-')
+      ? rawKey
+      : 'draft-template';
+
+    const analysis = await analyzeTemplateSvg(input.svg, analysisKey);
+    const texts = extractTemplateTexts(analysis.normalized);
+
+    const suggestion = await AiService.suggestTemplateMetadata({
+      key: analysisKey,
+      filename: input.filename ?? null,
+      width: analysis.width,
+      height: analysis.height,
+      palette: analysis.palette,
+      slotsSummary: {
+        max_lines: asSlots(analysis.slots).message?.maxLines ?? 0,
+        has_quote: Boolean(asSlots(analysis.slots).quote),
+        has_user: Boolean(asSlots(analysis.slots).user),
+        has_time: Boolean(asSlots(analysis.slots).time),
+        has_footer: Boolean(asSlots(analysis.slots).footer),
+        warnings: asSlots(analysis.slots).flagged ?? [],
+      },
+      texts,
+    });
+
+    if (!suggestion) {
+      const enabled = AiService.isTemplateMetadataEnabled();
+      throw new TemplateAdminError(
+        enabled ? 'TEMPLATE_AI_FAILED' : 'TEMPLATE_AI_DISABLED',
+        enabled
+          ? 'Usulan AI gagal dibuat. Coba lagi atau isi metadata secara manual.'
+          : 'Fitur AI metadata sedang dimatikan.',
+        enabled ? 502 : 409
+      );
+    }
+
+    await AdminSecurityService.writeAudit({
+      actorId,
+      action: 'TEMPLATE_AI_SUGGESTED',
+      targetType: 'Template',
+      targetId: analysisKey,
+      metadata: {
+        key: rawKey || null,
+        provider: suggestion.provider,
+        model: suggestion.model,
+        cached: suggestion.cached,
+        confidence: suggestion.confidence,
+        category: suggestion.category,
+        texts_used: texts.length,
+      },
+      ipAddress: meta.ipAddress,
+      userAgent: meta.userAgent,
+    });
+
+    return {
+      data: {
+        ...suggestion,
+        key: rawKey || null,
+        texts_used: texts.length,
+      },
+    };
   }
 
   /** Render ulang thumbnail (mis. setelah environment/footer berubah). */

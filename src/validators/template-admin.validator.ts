@@ -52,3 +52,13 @@ export const UpdateTemplateSchema = z
 export const ReplaceTemplateSvgSchema = z.object({
   svg: z.string().min(1, 'Isi SVG wajib dikirim'),
 });
+
+/**
+ * Usulan metadata AI. `key` dan `filename` opsional karena admin bisa meminta
+ * usulan tepat setelah memilih file, sebelum key diisi.
+ */
+export const SuggestTemplateMetadataSchema = z.object({
+  svg: z.string().min(1, 'Isi SVG wajib dikirim'),
+  key: z.string().trim().max(64, 'Key maksimal 64 karakter').optional(),
+  filename: z.string().trim().max(200, 'Nama file maksimal 200 karakter').optional(),
+});

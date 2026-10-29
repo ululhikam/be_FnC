@@ -603,6 +603,7 @@ Aturan:
 | Prompt injection dari SVG admin | Hanya teks terekstrak dikirim; SVG sudah lolos `assertSafeSvg`; tidak ada auto-save |
 | SSRF saat mengambil foto | Pakai guard yang sudah ada (`canvas.service.ts:1101-1142`): hanya http(s), tolak IP privat/loopback, batas 8MB & timeout |
 | Penyalahgunaan biaya | Kuota harian per base + anggaran bulanan global di Postgres (`RateLimitService`) + cache hash konten |
+| Endpoint pratinjau publik memicu panggilan AI | `POST /api/fesses/canvas/preview` bersifat `optionalAuth`; dibatasi RPM global (`AI_RPM_LIMIT`) + kuota per base, dan kehabisan kuota hanya menurunkan judul ke `fallbackTitle()` — publish tetap jalan |
 | Kebocoran API key | Hanya env server; tidak ada endpoint yang mengembalikan key/URL provider |
 | Retensi data provider | Gemini free tier dipakai untuk peningkatan produk; model `:free` OpenRouter juga dapat mencatat/menerbitkan prompt. Mitigasi: kirim teks saja, scrub PII, pilih model dengan kebijakan paling ketat, dan opsi ganti ke model berbayar tanpa ubah kode |
 | Konten tidak pantas lolos ke cover | Judul tetap melewati `ModerationService`/banned words sebelum disimpan |

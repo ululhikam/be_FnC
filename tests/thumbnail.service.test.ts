@@ -5,6 +5,7 @@ import { prisma } from '../src/config/prisma.js';
 import { StorageService } from '../src/services/storage.service.js';
 import { fetchRemoteImage } from '../src/utils/remote-image.util.js';
 import { ThumbnailService } from '../src/services/thumbnail.service.js';
+import { AiService } from '../src/services/ai/ai.service.js';
 
 vi.mock('../src/config/prisma.js', () => ({
   prisma: {
@@ -209,5 +210,158 @@ describe('ThumbnailService.renderPreview', () => {
     expect(meta.height).toBe(1350);
     expect(StorageService.uploadBuffer).not.toHaveBeenCalled();
     expect(prisma.fess.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('ThumbnailService — judul cover dari AI', () => {
+  const originalAiEnabled = ENV.AI_ENABLED;
+  const originalTitleEnabled = ENV.AI_TITLE_ENABLED;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    uploaded.length = 0;
+    ENV.THUMBNAIL_ENABLED = true;
+    vi.mocked(fetchRemoteImage).mockImplementation(async () => ({
+      buffer: await samplePhoto(),
+      contentType: 'image/jpeg',
+      finalUrl: 'https://cdn.test/foto.jpg',
+    }));
+    vi.mocked(prisma.fess.update).mockResolvedValue({} as any);
+  });
+
+  afterEach(() => {
+    ENV.THUMBNAIL_ENABLED = originalEnabled;
+    ENV.AI_ENABLED = originalAiEnabled;
+    ENV.AI_TITLE_ENABLED = originalTitleEnabled;
+    vi.restoreAllMocks();
+  });
+
+  it('memakai judul AI untuk base mode auto dan menyimpan versi prompt', async () => {
+    ENV.AI_ENABLED = true;
+    ENV.AI_TITLE_ENABLED = true;
+    const spy = vi.spyOn(AiService, 'generateTitle').mockResolvedValue({
+      title: 'Kantin Tutup Lebih Awal',
+      source: 'ai',
+      promptVersion: 'v1',
+      provider: 'gemini',
+      model: 'gemini-test',
+      latencyMs: 10,
+    });
+
+    const result = await ThumbnailService.ensure({
+      id: 'fess_ai',
+      content: 'Kantin kampus tutup lebih awal padahal banyak yang belum makan',
+      baseHandle: '@unermenfess',
+      media,
+      base: { id: 'base_1', name: 'UNERMEN FESS', thumbnailMode: 'auto', bannedWords: ['bocor'] },
+      topic: 'Kampus',
+      tag: 'Cerita',
+      thumbnailVersion: 0,
+    });
+
+    expect(result!.title).toBe('Kantin Tutup Lebih Awal');
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseId: 'base_1',
+        baseHandle: '@unermenfess',
+        topic: 'Kampus',
+        tag: 'Cerita',
+        bannedWords: ['bocor'],
+        targetId: 'fess_ai',
+      })
+    );
+    expect(prisma.fess.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ thumbnailPromptVersion: 'v1' }),
+      })
+    );
+  });
+
+  it('tidak memanggil AI untuk base mode no_ai', async () => {
+    ENV.AI_ENABLED = true;
+    ENV.AI_TITLE_ENABLED = true;
+    const spy = vi.spyOn(AiService, 'generateTitle');
+
+    const result = await ThumbnailService.ensure({
+      id: 'fess_noai',
+      content: 'Kantin kampus tutup lebih awal',
+      baseHandle: '@unermenfess',
+      media,
+      base: { id: 'base_1', name: 'Base', thumbnailMode: 'no_ai' },
+      thumbnailVersion: 0,
+    });
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(prisma.fess.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ thumbnailPromptVersion: 'fallback' }),
+      })
+    );
+  });
+
+  it('jatuh ke judul deterministik bila AI mengembalikan fallback', async () => {
+    ENV.AI_ENABLED = true;
+    ENV.AI_TITLE_ENABLED = true;
+    vi.spyOn(AiService, 'generateTitle').mockResolvedValue({
+      title: 'Judul Deterministik',
+      source: 'fallback',
+      promptVersion: 'v1',
+      latencyMs: 0,
+    });
+
+    await ThumbnailService.ensure({
+      id: 'fess_fb',
+      content: 'Kantin kampus tutup lebih awal',
+      baseHandle: '@unermenfess',
+      media,
+      base: { id: 'base_1', thumbnailMode: 'auto' },
+      thumbnailVersion: 0,
+    });
+
+    expect(prisma.fess.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ thumbnailPromptVersion: 'fallback' }),
+      })
+    );
+  });
+
+  it('tetap merender thumbnail bila pemanggilan AI melempar error', async () => {
+    ENV.AI_ENABLED = true;
+    ENV.AI_TITLE_ENABLED = true;
+    vi.spyOn(AiService, 'generateTitle').mockRejectedValue(new Error('provider mati'));
+
+    const result = await ThumbnailService.ensure({
+      id: 'fess_err',
+      content: 'Kantin kampus tutup lebih awal',
+      baseHandle: '@unermenfess',
+      media,
+      base: { id: 'base_1', thumbnailMode: 'auto' },
+      thumbnailVersion: 0,
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.title.length).toBeGreaterThan(0);
+    expect(StorageService.uploadBuffer).toHaveBeenCalledTimes(1);
+  });
+
+  it('tidak menulis ledger untuk pratinjau composer', async () => {
+    ENV.AI_ENABLED = true;
+    ENV.AI_TITLE_ENABLED = true;
+    const spy = vi.spyOn(AiService, 'generateTitle').mockResolvedValue({
+      title: 'Judul Pratinjau',
+      source: 'ai',
+      promptVersion: 'v1',
+      latencyMs: 5,
+    });
+
+    await ThumbnailService.renderPreview({
+      id: 'preview',
+      content: 'Kantin kampus tutup lebih awal',
+      baseHandle: '@unermenfess',
+      media,
+      base: { id: 'base_1', name: 'Base', thumbnailMode: 'auto' },
+    });
+
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ targetId: null }));
   });
 });

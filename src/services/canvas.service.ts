@@ -14,7 +14,7 @@ import { StorageService } from './storage.service.js';
 import { TemplateService, type TemplateRecord, type TemplateSlots } from './template.service.js';
 import { prisma } from '../config/prisma.js';
 import { InstagramService } from './instagram.service.js';
-import { ThumbnailService, type ThumbnailResult } from './thumbnail.service.js';
+import { ThumbnailService, PREVIEW_FESS_ID, type ThumbnailResult } from './thumbnail.service.js';
 import {
   getFontFiles,
   getFontFileFor,
@@ -116,6 +116,8 @@ export interface FessLike {
   /** Media composer (dipakai pemilih foto cover thumbnail). */
   media?: unknown;
   base?: {
+    /** Dipakai kuota judul AI per base (bukan identitas visual). */
+    id?: string | null;
     name?: string | null;
     initial?: string | null;
     igAccount?: string | null;
@@ -124,6 +126,8 @@ export interface FessLike {
     avatarDataUri?: string | null;
     color?: string | null;
     thumbnailMode?: string | null;
+    /** Blacklist kata base; menolak judul AI yang tidak pantas. */
+    bannedWords?: string[] | null;
   } | null;
 }
 
@@ -262,6 +266,8 @@ export class CanvasService {
         baseHandle: fess.baseHandle,
         media: fess.media,
         base: (fess as any).base,
+        topic: (fess as any).topic,
+        tag: (fess as any).tag,
         thumbnailUrl: (fess as any).thumbnailUrl,
         thumbnailStatus: (fess as any).thumbnailStatus,
         thumbnailSourceMediaId: (fess as any).thumbnailSourceMediaId,
@@ -1089,12 +1095,19 @@ export class CanvasService {
     if (!options.withThumbnail) return { images, hasThumbnail: false };
 
     const cover = await ThumbnailService.renderPreview({
-      id: String(fess.id || 'preview'),
+      id: PREVIEW_FESS_ID,
       content: fess.content,
       baseHandle: fess.baseHandle,
       media: options.media ?? fess.media,
+      topic: fess.topic,
+      tag: fess.tag,
       base: fess.base
-        ? { name: fess.base.name, thumbnailMode: fess.base.thumbnailMode }
+        ? {
+            id: fess.base.id,
+            name: fess.base.name,
+            thumbnailMode: fess.base.thumbnailMode,
+            bannedWords: fess.base.bannedWords,
+          }
         : null,
     });
     if (!cover) return { images, hasThumbnail: false };

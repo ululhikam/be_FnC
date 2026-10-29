@@ -136,12 +136,14 @@ exportFessCanvasUnsafe(fessId)
         ├─ 1. render kartu (seperti sekarang)
         ├─ 2. ThumbnailService.ensure(fess)
         │      ├─ pilih foto: media gambar pertama (atau carouselOrder bila ada)
-        │      ├─ judul: Fess.thumbnailTitle || AiService.generateTitle(...)
-        │      │        └─ gagal/timeout/kuota → fallbackTitle(content)
+        │      ├─ judul: resolveCoverTitle()
+        │      │        ├─ thumbnail ready + foto sama → pakai judul tersimpan
+        │      │        ├─ Base.thumbnailMode=auto & AI aktif → AiService.generateTitle(...)
+        │      │        └─ no_ai / AI mati / gagal / timeout / kuota → fallbackTitle(content)
         │      ├─ background: cover-crop + blur(28) + gradien palet foto
         │      ├─ overlay teks + watermark (@handle, domain)
-        │      ├─ resvg → JPEG 1080×1350 q90 → storage canvas-exports/
-        │      └─ update Fess (url, status, title, sourceMediaId, generatedAt)
+        │      ├─ resvg → JPEG 1080×1350 q90 → storage canvas-thumbnails/
+        │      └─ update Fess (url, status, title, sourceMediaId, promptVersion)
         ├─ 3. susun postItems = [thumbnail, ...kartu, ...media] (maks 10)
         ├─ 4. persistIgState({ igPayload.items: postItems, igStatus: 'processing' })
         └─ 5. InstagramService.autoPostFess(...)
@@ -319,7 +321,7 @@ Urutan pipeline `sanitizeTitle(raw, ctx)`:
 3. Tolak/bersihkan: URL, `@mention`, `#hashtag`, email, deretan digit ≥ 8 (telepon/NIM), `<...>`.
 4. Cek `Base.bannedWords` (sudah ada di model `Base`) → fallback bila kena.
 5. Panjang grapheme 8–60; potong di batas kata, buang tanda baca akhir (`.,;:!?`).
-6. Maksimal 1 emoji; emoji di luar set Twemoji dibuang.
+6. Emoji **dibuang seluruhnya** pada implementasi P2 (renderer Twemoji belum ada, sehingga emoji akan tampil sebagai tofu di resvg). Bila renderer Twemoji ditambahkan, aturan bisa kembali ke maksimal 1 emoji.
 7. Huruf awal kapital; jangan ALL CAPS (>70% huruf besar) → Title Case-kan.
 8. Tolak daftar kata klikbait internal (`viral`, `auto viral`, `bocor`, `wajib nonton`) → fallback.
 
@@ -350,7 +352,7 @@ Karena memakai tier gratis, yang dijaga adalah **jumlah permintaan**. Ada dua la
 - Perilaku saat kena batas (internal atau provider 429): coba provider cadangan **sekali** (bila dikonfigurasi), lalu `fallbackTitle()` + `SystemLog` tone `error` (`source: AI_TITLE`); publish tetap jalan. Tidak ada retry beruntun yang memperburuk 429.
 - Bila 429 > 5% permintaan selama 3 hari → tindakan berurutan: (a) turunkan `AI_DAILY_TITLE_LIMIT` mendekati plafon provider, (b) aktifkan provider cadangan (OpenRouter) atau top-up sekali US$10 untuk membuka ±1.000/hari, (c) ganti `AI_MODEL` ke model berbayar murah (≈US$0,0001 per judul).
 - Bila provider berbayar dipakai, aktifkan `AI_MONTHLY_BUDGET_USD` sebagai pengaman tambahan: `RateLimitService.consume('ai:budget:<yyyy-mm>', <token budget>, 32 hari)`.
-- Semua hasil (ok/fallback/error) dicatat di `AiGeneration` (token, latensi, `status`) untuk laporan di engine log tanpa endpoint baru.
+- Ledger `AiGeneration` **hanya ditulis untuk hasil `ok`** (token, latensi, `status`, `provider`, `model`). Kegagalan, kuota habis, dan fallback dicatat di `SystemLog` (`source: AI_TITLE`) agar tidak membuat baris cache palsu — `@@unique([kind, inputHash])` akan menghalangi percobaan ulang setelah kegagalan sesaat.
 
 ### 7.6 Waktu & ketahanan
 
@@ -470,6 +472,7 @@ Catatan:
 - `Base.thumbnailMode` adalah **opt-out per base** dan **aktif sejak rilis pertama**: `auto` = thumbnail + judul AI (perilaku bawaan), `no_ai` = thumbnail tetap dibuat tetapi judul deterministik (tanpa panggilan AI), `off` = tanpa thumbnail sama sekali. Nilainya bisa diubah lewat `PATCH /api/bases/:handle/settings` (validator `UpdateBaseSettingsSchema`). **Catatan:** belum ada halaman pengaturan base di frontend yang memanggil endpoint itu, jadi pada rilis pertama nilainya dikelola lewat API/DB (Super Admin); UI masuk fase P4.
 - `thumbnailVersion` dipakai sebagai `?v=` pada URL thumbnail saat thumbnail **diregenerasi** (kasus gagal/kosong). Judul tidak bisa diedit, jadi URL stabil pada kondisi normal — ini juga yang membuat CDN Instagram aman dari gambar lama.
 - `thumbnailError` dipotong 500 char (mengikuti pola `igError`).
+- `AiGeneration.status` pada P2 hanya berisi `ok`; nilai `cached`/`fallback`/`error` disiapkan untuk fase berikutnya. Kegagalan, kuota habis, dan fallback dicatat di `SystemLog` (`source: AI_TITLE`) agar baris cache tidak menghalangi percobaan ulang (`@@unique([kind, inputHash])`).
 - Tidak ada backfill: fess lama `thumbnailStatus = 'idle'` dan tetap diposting seperti sekarang.
 
 ---
@@ -520,10 +523,12 @@ ThumbnailPreviewSchema = { base_handle, content, template?, with_thumbnail?, med
 | `prisma/migrations/<ts>_ai_thumbnail/` | baru | SQL additive |
 | `vercel.json` | **tidak** | Font/asset sudah masuk `includeFiles`; prompt disimpan di TS, bukan file |
 | `tests/thumbnail.util.test.ts` | baru | Palet, kontras, auto-fit, slot math |
-| `tests/thumbnail.service.test.ts` | baru | Pilih foto, fallback, persist, storage (mock) |
-| `tests/ai.service.test.ts` | baru | Provider sukses/timeout/429/JSON invalid, fallback, cache, kuota |
+| `tests/thumbnail.service.test.ts` | baru | Pilih foto, judul AI/fallback, preview tanpa ledger, persist, storage (mock) |
+| `tests/ai.sanitize.test.ts` | baru | Scrub input (PII), parser JSON toleran, banned words/klikbait, panjang & jumlah kata, Title Case |
+| `tests/ai.provider.test.ts` | baru | Sukses, konten array, 429/5xx retryable, 4xx final, timeout/AbortError, body bukan JSON, respons kebesaran |
+| `tests/ai.service.test.ts` | baru | Cache hit, kuota habis, failover 429, 4xx tanpa failover, keluaran invalid, ledger `ok`, error ledger |
 | `tests/template-ai-suggest.test.ts` | baru | Injeksi prompt, allowlist kategori, panjang keluaran |
-| `tests/canvas.service.test.ts` | ubah | Kasus thumbnail di indeks 0, batas 10 item, `igPayload` |
+| `tests/canvas.thumbnail.test.ts` | baru | Thumbnail di indeks 0, batas 10 item, `igPayload`, opt-out base |
 
 ### Frontend
 
@@ -680,6 +685,29 @@ Rilis production mengikuti aturan repo: PR draft → review → merge ke `main` 
 | Belum | Aktifkan `THUMBNAIL_ENABLED=true` di project dev, QA visual di UI, P2 judul AI |
 
 Catatan QA visual P1 (4 foto uji, picsum): kontras judul 8,5–14:1; watermark bawah 4,9–14:1. Iterasi yang dilakukan: plat judul adaptif, blur 28 px + `brightness 0.72`, gradient 0.12/0.45/0.94, margin aman 5% untuk pengukuran lebar, dan penghindaran baris terakhir satu kata.
+
+### 16.2 Status implementasi P2 (judul AI)
+
+| Area | Status |
+|---|---|
+| `src/services/ai/provider.ts` (kontrak + `AiProviderError.retryable`) | ✅ |
+| `src/services/ai/openai-compatible.provider.ts` (`fetch` + AbortController, batas body 64 KB) | ✅ |
+| `src/services/ai/prompts.ts` (`TITLE_PROMPT_VERSION='v1'`, prompt sistem + user) | ✅ |
+| `src/services/ai/sanitize.ts` (`scrubPromptInput`, `parseJsonObject`, `sanitizeTitle`, Title Case) | ✅ |
+| `src/services/ai/ai.service.ts` (cache → kuota → provider utama → cadangan → fallback, ledger, log) | ✅ |
+| Integrasi `thumbnail.service` (`resolveCoverTitle`, judul paralel dengan render background) | ✅ |
+| `fess.controller` preview & regenerate meneruskan `base.id`, `bannedWords`, `topic`, `tag` | ✅ |
+| Preview composer memakai AI (cache hit saat publish, ledger tidak ditulis untuk id `preview`) | ✅ |
+| Test | ✅ 43 file / 530 test hijau; `tsc` build bersih |
+| Belum | Isi `AI_API_KEY` di project dev, aktifkan `AI_ENABLED=true`, ukur fallback rate di data nyata |
+
+Catatan P2:
+
+- Emoji dibuang dari judul (lihat §7.3 poin 6) karena renderer Twemoji belum ada.
+- `AiGeneration` hanya menyimpan hasil `ok`; kegagalan masuk `SystemLog` supaya cache tidak "mengunci" kegagalan sesaat.
+- Judul preview dan publish memakai hash yang sama (`promptVersion + handle + content`), jadi publish setelah preview adalah cache hit tanpa panggilan provider baru.
+- Provider OpenAI-compatible tidak mendukung `response_format`, sehingga JSON dipaksa lewat prompt dan dibaca `parseJsonObject` yang toleran (pagar kode/teks pengantar).
+- `AI_ENABLED=false` atau `AI_API_KEY` kosong → seluruh fitur judul mati dan thumbnail memakai `fallbackTitle()`; `Base.thumbnailMode=no_ai` juga melewati AI tanpa memanggil provider.
 
 ---
 

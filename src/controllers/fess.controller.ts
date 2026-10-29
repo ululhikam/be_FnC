@@ -70,12 +70,14 @@ export class FessController {
           quotedFess: quoted_fess || null,
           media: media || [],
           base: {
+            id: base.id,
             name: base.name,
             initial: base.initial,
             igAccount: base.igAccount,
             avatar: base.avatar,
             color: base.color,
             thumbnailMode: (base as any).thumbnailMode,
+            bannedWords: (base as any).bannedWords,
           },
         },
         templateKey,
@@ -112,7 +114,17 @@ export class FessController {
 
       const fess = await prisma.fess.findUnique({
         where: { id },
-        include: { base: { select: { creatorId: true } } },
+        include: {
+          base: {
+            select: {
+              creatorId: true,
+              id: true,
+              name: true,
+              thumbnailMode: true,
+              bannedWords: true,
+            },
+          },
+        },
       });
       if (!fess) {
         return errorResponse(res, 'Fess tidak ditemukan', 404, 'NOT_FOUND');
@@ -168,6 +180,8 @@ export class FessController {
         baseHandle: fess.baseHandle,
         media: fess.media,
         base: fess.base as any,
+        topic: (fess as any).topic,
+        tag: (fess as any).tag,
         thumbnailUrl: fess.thumbnailUrl,
         thumbnailStatus: fess.thumbnailStatus,
         thumbnailSourceMediaId: fess.thumbnailSourceMediaId,

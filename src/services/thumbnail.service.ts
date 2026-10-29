@@ -5,8 +5,8 @@
  * → watermark handle base + host frontend. Dirender saat publish (bukan saat
  * upload) supaya isi fess final yang dipakai dan retry worker konsisten.
  *
- * Fase P1: judul deterministik (`fallbackTitle`) tanpa panggilan AI. P2 akan
- * mengganti sumber judul tanpa mengubah renderer.
+ * Judul: dibuat AI (P2) bila base memakai mode `auto` dan AI aktif; selain itu
+ * `fallbackTitle()` deterministik. Judul bersifat final — tidak bisa diedit.
  */
 import { Resvg } from '@resvg/resvg-js';
 import sharp from 'sharp';
@@ -16,6 +16,7 @@ import { ENV } from '../config/env.js';
 import { prisma } from '../config/prisma.js';
 import { getFontFileFor, getFontFiles } from '../config/fonts.js';
 import { StorageService } from './storage.service.js';
+import { AiService } from './ai/ai.service.js';
 import { fetchRemoteImage } from '../utils/remote-image.util.js';
 import {
   THUMBNAIL_HEIGHT,
@@ -37,7 +38,15 @@ import {
   type CarouselSlotPlan,
 } from '../utils/thumbnail.util.js';
 
-export const THUMBNAIL_PROMPT_VERSION = 'fallback';
+export const FALLBACK_PROMPT_VERSION = 'fallback';
+
+/**
+ * Id semu untuk pratinjau composer: tidak pernah ditulis ke ledger
+ * `AiGeneration` (`targetId`), karena baris itu bukan fess nyata. Cache judul
+ * tetap bekerja sehingga publish memakai hasil yang sama tanpa panggilan baru.
+ */
+export const PREVIEW_FESS_ID = 'preview';
+
 const TITLE_MARGIN_X = 72;
 const WATERMARK_Y = 1282;
 const TITLE_MIN_TOP = 196;
@@ -50,7 +59,17 @@ export interface ThumbnailFessInput {
   content: string;
   baseHandle: string;
   media?: unknown;
-  base?: { name?: string | null; thumbnailMode?: string | null; color?: string | null } | null;
+  base?: {
+    id?: string | null;
+    name?: string | null;
+    thumbnailMode?: string | null;
+    color?: string | null;
+    /** Blacklist kata base; dipakai menolak judul AI yang tidak pantas. */
+    bannedWords?: string[] | null;
+  } | null;
+  /** Topik & tag composer, hanya untuk konteks prompt AI. */
+  topic?: string | null;
+  tag?: string | null;
   thumbnailUrl?: string | null;
   thumbnailStatus?: string | null;
   thumbnailSourceMediaId?: string | null;
@@ -75,6 +94,8 @@ interface RenderedCover {
   buffer: Buffer;
   dominant: string | null;
   title: string;
+  /** `v1` (AI) atau `fallback` — dipakai mengukur rasio fallback. */
+  promptVersion: string;
 }
 
 export class ThumbnailService {
@@ -146,7 +167,7 @@ export class ThumbnailService {
           thumbnailSourceMediaId: cover.id,
           thumbnailStatus: 'ready',
           thumbnailError: null,
-          thumbnailPromptVersion: THUMBNAIL_PROMPT_VERSION,
+          thumbnailPromptVersion: rendered.promptVersion,
           thumbnailGeneratedAt: new Date(),
           thumbnailVersion: nextVersion,
         },
@@ -199,6 +220,10 @@ export class ThumbnailService {
 
   /** Render 1080×1350 JPEG. Melempar error agar pemanggil bisa mencatat status. */
   static async renderCover(input: ThumbnailFessInput, photoUrl: string): Promise<RenderedCover> {
+    // Judul AI dimulai lebih dulu dan berjalan paralel dengan unduh foto +
+    // render background, supaya publish tidak menunggu dua proses berurutan.
+    const titlePromise = resolveCoverTitle(input);
+
     const { buffer: photo } = await fetchRemoteImage(photoUrl, {
       maxBytes: ENV.THUMBNAIL_MAX_MEDIA_FETCH_BYTES,
       timeoutMs: ENV.THUMBNAIL_FETCH_TIMEOUT_MS,
@@ -238,7 +263,7 @@ export class ThumbnailService {
       .toBuffer();
     const panelAlpha = panelAlphaForLuminance(meanGammaLuminance(luminancePixels));
 
-    const title = fallbackTitle(input.content);
+    const { title, promptVersion } = await titlePromise;
     const overlay = buildOverlaySvg({
       title,
       baseName: input.base?.name || input.baseHandle,
@@ -252,7 +277,46 @@ export class ThumbnailService {
       .jpeg({ quality: 90, mozjpeg: true })
       .toBuffer();
 
-    return { buffer, dominant, title };
+    return { buffer, dominant, title, promptVersion };
+  }
+}
+
+/**
+ * Judul cover: AI untuk base mode `auto`, fallback deterministik untuk `no_ai`
+ * atau saat AI mati/gagal. Tidak pernah melempar — publish tidak boleh gagal
+ * karena judul.
+ */
+async function resolveCoverTitle(
+  input: ThumbnailFessInput
+): Promise<{ title: string; promptVersion: string }> {
+  const mode = String(input.base?.thumbnailMode || 'auto')
+    .trim()
+    .toLowerCase();
+
+  if (mode !== 'auto' || !AiService.isTitleEnabled()) {
+    return { title: fallbackTitle(input.content), promptVersion: FALLBACK_PROMPT_VERSION };
+  }
+
+  try {
+    const result = await AiService.generateTitle({
+      // Kuota dihitung per base; pratinjau memakai handle bila `base.id` tidak ada.
+      baseId: String(input.base?.id || input.baseHandle || 'base'),
+      baseHandle: input.baseHandle,
+      baseName: input.base?.name || null,
+      content: input.content,
+      topic: input.topic || null,
+      tag: input.tag || null,
+      bannedWords: input.base?.bannedWords || [],
+      // Ledger hanya untuk fess nyata; `PREVIEW_FESS_ID` bukan baris DB.
+      targetId: input.id && input.id !== PREVIEW_FESS_ID ? input.id : null,
+    });
+    return {
+      title: result.title,
+      promptVersion: result.source === 'fallback' ? FALLBACK_PROMPT_VERSION : result.promptVersion,
+    };
+  } catch (err: any) {
+    console.warn('[Thumbnail] Judul AI gagal, memakai fallback:', err?.message || err);
+    return { title: fallbackTitle(input.content), promptVersion: FALLBACK_PROMPT_VERSION };
   }
 }
 

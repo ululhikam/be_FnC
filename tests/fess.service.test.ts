@@ -164,7 +164,8 @@ describe('FessService Unit Tests', () => {
 
       const result = await FessService.getFesses(
         { base: '@concern_fess', reported: 'true', page: 1, limit: 10 },
-        'usr_mod'
+        'usr_mod',
+        { id: 'usr_mod', role: 'Base Admin', managedBases: ['@concern_fess'] }
       );
 
       expect(prisma.fess.count).toHaveBeenCalledWith({
@@ -175,6 +176,48 @@ describe('FessService Unit Tests', () => {
       });
       expect(result.total).toBe(1);
       expect(result.data[0].id).toBe('fess_reported');
+    });
+
+    it('menolak reported=true bagi pengunjung tanpa akses base', async () => {
+      await expect(
+        FessService.getFesses({ base: '@concern_fess', reported: 'true', page: 1, limit: 10 })
+      ).rejects.toMatchObject({ status: 403, code: 'FORBIDDEN' });
+    });
+
+    it('menolak status non-terbit bagi pengunjung anonim', async () => {
+      await expect(
+        FessService.getFesses({ status: 'pending', page: 1, limit: 10 })
+      ).rejects.toMatchObject({ status: 403, code: 'FORBIDDEN' });
+
+      await expect(
+        FessService.getFesses({ status: 'rejected', page: 1, limit: 10 })
+      ).rejects.toMatchObject({ status: 403, code: 'FORBIDDEN' });
+    });
+
+    it('feed base tanpa status hanya menampilkan fess terbit', async () => {
+      vi.mocked(prisma.fess.count).mockResolvedValueOnce(0);
+      vi.mocked(prisma.fess.findMany).mockResolvedValueOnce([]);
+
+      await FessService.getFesses({ base: '@codememfess', page: 1, limit: 10 });
+
+      expect(prisma.fess.count).toHaveBeenCalledWith({
+        where: expect.objectContaining({ status: { in: ['published', 'approved'] } }),
+      });
+    });
+
+    it('admin base boleh meminta antrean pending untuk base yang dikelolanya', async () => {
+      vi.mocked(prisma.fess.count).mockResolvedValueOnce(0);
+      vi.mocked(prisma.fess.findMany).mockResolvedValueOnce([]);
+
+      await FessService.getFesses(
+        { base: '@codememfess', status: 'pending', page: 1, limit: 10 },
+        'usr_mod',
+        { id: 'usr_mod', role: 'Base Admin', managedBases: ['@codememfess'] }
+      );
+
+      expect(prisma.fess.count).toHaveBeenCalledWith({
+        where: expect.objectContaining({ status: 'pending' }),
+      });
     });
 
     it('should restrict to followed bases when following=true', async () => {

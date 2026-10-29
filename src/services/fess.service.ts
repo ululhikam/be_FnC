@@ -89,11 +89,28 @@ export class FessService {
       where.baseHandle = normalizeHandle(params.base);
     }
 
+    // Siapa yang boleh melihat konten non-terbit: hanya admin base terkait
+    // (atau Super Admin). Tanpa gerbang ini `?status=pending` membuka antrean
+    // moderasi seluruh platform, dan `?base=@x` membocorkan antrean base itu.
+    const canViewUnpublished = this.canViewUnpublishedFess(params.base, viewer);
+
+    if (
+      params.status &&
+      params.status !== 'published' &&
+      params.status !== 'approved' &&
+      !canViewUnpublished
+    ) {
+      const err: any = new Error('Status fess ini hanya dapat dilihat oleh admin base.');
+      err.status = 403;
+      err.code = 'FORBIDDEN';
+      throw err;
+    }
+
     // Default status for public feed is 'published' unless explicitly requested
     if (params.status) {
       where.status = params.status === 'approved' ? { in: ['published', 'approved'] } : params.status;
-    } else if (!params.base) {
-      // General feed shows published posts
+    } else if (!canViewUnpublished) {
+      // Termasuk saat `base` diisi: feed publik base juga hanya fess terbit.
       where.status = { in: ['published', 'approved'] };
     }
 
@@ -104,6 +121,12 @@ export class FessService {
     // Filter khusus admin base: fess yang punya laporan berstatus pending.
     // Endpoint publik dilindungi oleh BaseController.getBaseFesses.
     if (params.reported === 'true') {
+      if (!canViewUnpublished) {
+        const err: any = new Error('Hanya admin base yang dapat melihat fess yang dilaporkan.');
+        err.status = 403;
+        err.code = 'FORBIDDEN';
+        throw err;
+      }
       where.reports = { some: { status: 'pending' } };
     }
 
@@ -127,7 +150,9 @@ export class FessService {
         ? [{ upvotes: 'desc' }, { createdAt: 'desc' }]
         : [{ createdAt: 'desc' }];
 
-    const isPublicQuery = !params.query && params.following !== 'true';
+    // Cache hanya untuk query publik. Hasil untuk admin base tidak boleh
+    // disajikan ke pengunjung lain (dan sebaliknya).
+    const isPublicQuery = !params.query && params.following !== 'true' && !canViewUnpublished;
     const cacheKey = isPublicQuery
       ? `fesses:${params.base || 'all'}:${params.status || 'published'}:${params.reported || 'false'}:${params.sort || 'newest'}:${page}:${limit}`
       : null;
@@ -597,6 +622,24 @@ export class FessService {
       throw err;
     }
 
+    // Konten yang belum/tidak terbit tidak boleh dibuka lewat link langsung —
+    // kalau tidak, take-down tidak efektif dan antrean moderasi bisa dienumerasi.
+    const isPubliclyVisible = fess.status === 'published' || fess.status === 'approved';
+    const isAuthor = Boolean(viewer?.id && (fess as any).userId === viewer.id);
+    const canView =
+      isPubliclyVisible ||
+      isAuthor ||
+      viewer?.role === 'Super Admin' ||
+      this.canManageBaseFess(fess, viewer);
+
+    if (!canView) {
+      // 404 (bukan 403) agar keberadaan fess non-terbit tidak bisa ditebak.
+      const err: any = new Error('Fess tidak ditemukan');
+      err.status = 404;
+      err.code = 'NOT_FOUND';
+      throw err;
+    }
+
     const userVote = vote?.type || null;
     const isSaved = Boolean(bookmark);
 
@@ -666,6 +709,28 @@ export class FessService {
     );
     const ownsBase = Boolean(viewer.id && fess.base?.creatorId === viewer.id);
     return managesBase || ownsBase;
+  }
+
+  /**
+   * Viewer boleh melihat konten non-terbit (pending/rejected) hanya bila ia
+   * mengelola base tersebut, atau Super Admin untuk dukungan.
+   *
+   * Dipakai agar moderasi base benar-benar menegakkan sesuatu: sebelumnya
+   * `?status=pending` dan `GET /bases/:handle/fesses` membuka antrean moderasi
+   * ke publik.
+   */
+  private static canViewUnpublishedFess(
+    baseHandle: string | null | undefined,
+    viewer?: { id?: string; role?: string; managedBases?: string[] }
+  ): boolean {
+    if (!viewer) return false;
+    if (viewer.role === 'Super Admin') return true;
+    if (!baseHandle) return false;
+
+    const target = String(baseHandle).replace(/^@/, '').toLowerCase();
+    return (viewer.managedBases || []).some(
+      (handle) => String(handle).replace(/^@/, '').toLowerCase() === target
+    );
   }
 
   /** Pastikan user berhak memposting fess ini ke Instagram. */

@@ -15,6 +15,8 @@ vi.mock('../src/config/prisma.js', () => ({
     },
     base: {
       findUnique: vi.fn(),
+      findFirst: vi.fn(),
+      update: vi.fn(),
       updateMany: vi.fn(),
     },
     systemLog: {
@@ -55,14 +57,42 @@ describe('InstagramService Unit Tests (Meta for Developers Graph API)', () => {
     } as any);
 
     const result = await InstagramService.verifyAndLinkAccount('usr_mod', {
-      handle: '@codememfess_ig',
+      token: 'mock_token_123',
     });
 
     expect(result.verified).toBe(true);
-    expect(result.profile.username).toBe('@codememfess_ig');
+    expect(result.profile.username).toBeDefined();
     expect(prisma.user.update).toHaveBeenCalled();
     expect(prisma.platformConnection.upsert).toHaveBeenCalled();
     expect(prisma.systemLog.create).toHaveBeenCalled();
+  });
+
+  it('tidak menautkan base yang bukan milik user saat OAuth', async () => {
+    vi.mocked(prisma.user.update).mockResolvedValueOnce({ id: 'usr_mod' } as any);
+    vi.mocked(prisma.base.findFirst).mockResolvedValueOnce(null);
+
+    await InstagramService.verifyAndLinkAccount('usr_mod', {
+      token: 'mock_token_123',
+      baseHandle: '@base_tenant_lain',
+    });
+
+    expect(prisma.base.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ creatorId: 'usr_mod' }),
+      })
+    );
+    expect(prisma.base.update).not.toHaveBeenCalled();
+  });
+
+  // Handle bukan bukti kepemilikan akun Instagram: sebelumnya service mengarang
+  // profil "verified" dari string handle, sehingga siapa pun bisa mengklaim
+  // handle orang lain dan merebut binding IG-nya.
+  it('menolak verifikasi berbasis handle tanpa OAuth Meta', async () => {
+    await expect(
+      InstagramService.verifyAndLinkAccount('usr_mod', { handle: '@korban' } as any)
+    ).rejects.toMatchObject({ status: 400, code: 'INSTAGRAM_OAUTH_REQUIRED' });
+
+    expect(prisma.user.update).not.toHaveBeenCalled();
   });
 
   it('should treat a missing Instagram connection as a clean FnC-only skip', async () => {

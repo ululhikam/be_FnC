@@ -50,6 +50,42 @@ const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
 const defaultAllowedOrigins =
   nodeEnv === 'production' ? frontendUrl : `${frontendUrl},http://localhost:5173`;
 
+/**
+ * JWT_SECRET wajib eksplisit di luar test.
+ *
+ * Sebelumnya ada fallback hardcoded ('fess_secret_jwt_key_2026'). Bila env gagal
+ * terpasang di deployment, server tetap boot dengan secret yang tertulis di repo
+ * publik — siapa pun bisa menandatangani token Super Admin. Fail-fast lebih baik
+ * daripada diam-diam tidak aman.
+ */
+const jwtSecret =
+  process.env.JWT_SECRET?.trim() ||
+  (nodeEnv === 'test' ? 'fess_test_jwt_secret_only_for_unit_tests' : '');
+
+if (jwtSecret.length < 32) {
+  throw new Error(
+    'JWT_SECRET wajib diisi minimal 32 karakter (set di environment Vercel / backend/.env*). ' +
+      'Jangan pakai nilai default lama.'
+  );
+}
+
+/**
+ * Jumlah hop proxy tepercaya untuk menentukan `req.ip`.
+ *
+ * Vercel menaruh satu lapisan proxy di depan fungsi. Tanpa `trust proxy`,
+ * `req.ip` berisi IP proxy yang sama untuk semua klien sehingga rate limit
+ * per-IP berubah menjadi limit global (dan bisa memblokir seluruh layanan).
+ * `TRUST_PROXY` bisa menimpa nilai default saat deployment tidak memakai Vercel.
+ */
+const trustProxyHops = (() => {
+  const raw = (process.env.TRUST_PROXY || '').trim().toLowerCase();
+  if (raw === 'true') return 1;
+  if (raw === 'false') return 0;
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  return process.env.VERCEL ? 1 : 0;
+})();
+
 /** Baca bilangan bulat positif dari env; nilai tidak valid jatuh ke default. */
 function positiveInt(raw: string | undefined, fallback: number, max = Number.MAX_SAFE_INTEGER): number {
   const parsed = parseInt(String(raw ?? ''), 10);
@@ -64,8 +100,9 @@ export const ENV = {
   ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS || defaultAllowedOrigins,
 
   // JWT
-  JWT_SECRET: process.env.JWT_SECRET || 'fess_secret_jwt_key_2026',
+  JWT_SECRET: jwtSecret,
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '1d',
+  TRUST_PROXY: trustProxyHops,
 
   // Supabase
   DATABASE_URL: process.env.DATABASE_URL || '',

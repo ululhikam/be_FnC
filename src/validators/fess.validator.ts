@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PageQuerySchema } from './pagination.validator.js';
 
 export const MediaItemSchema = z.object({
   // ID stabil dari composer; dipakai token carousel_order "media:<id>".
@@ -110,11 +111,13 @@ export const GetFessesQuerySchema = z.object({
   // 'approved' = alias istilah tampilan frontend untuk fess terbit ('published');
   // service sudah menanganinya sebagai { in: ['published', 'approved'] }.
   status: z.enum(['published', 'approved', 'pending', 'rejected']).optional(),
-  query: z.string().optional(),
+  query: z.string().max(100, 'Kata kunci maksimal 100 karakter').optional(),
   /** Feed "Mengikuti": hanya fess dari base yang diikuti user. */
   following: z.enum(['true', 'false']).optional(),
   sort: z.enum(['newest', 'popular']).default('newest'),
-  page: z.coerce.number().int().min(1).default(1),
+  // Batas atas mencegah `skip` raksasa (offset besar memaksa Postgres memindai
+  // seluruh baris sebelum dibuang) yang bisa dipakai untuk membebani database.
+  page: PageQuerySchema,
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 
@@ -123,7 +126,9 @@ export const VoteSchema = z.object({
 });
 
 export const ReportSchema = z.object({
-  fess_id: z.string().min(1, 'ID fess wajib diisi'),
+  // Target laporan ditentukan oleh `:id` di URL. `fess_id` dipertahankan
+  // opsional hanya untuk kompatibilitas klien lama — service memakai `:id`.
+  fess_id: z.string().min(1, 'ID fess wajib diisi').optional(),
   reason: z.enum(['spam', 'sara', 'pelecehan', 'dewasa', 'hoaks']),
   note: z.string().max(250, 'Catatan maksimal 250 karakter').optional().nullable(),
 });

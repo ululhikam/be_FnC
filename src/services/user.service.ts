@@ -16,9 +16,24 @@ export class UserService {
    * Get public profile of a user
    */
   static async getProfile(userId: string) {
+    // `select` eksplisit: tanpa ini Prisma ikut memuat hash password & googleId
+    // ke memori, dan serializer publik hanya menyelamatkan sebagian kolom.
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      include: {
+      select: {
+        id: true,
+        username: true,
+        handle: true,
+        role: true,
+        avatar: true,
+        level: true,
+        bio: true,
+        badges: true,
+        igAccount: true,
+        followersCount: true,
+        followingCount: true,
+        fessCount: true,
+        createdAt: true,
         managedBases: { select: { handle: true }, orderBy: { createdAt: 'asc' } },
       },
     });
@@ -30,7 +45,7 @@ export class UserService {
       throw err;
     }
 
-    return { user: AuthService.serializeUser(user, { includeHandleCooldown: false }) };
+    return { user: AuthService.serializePublicUser(user) };
   }
 
   /**

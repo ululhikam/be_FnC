@@ -32,6 +32,7 @@ vi.mock('../src/services/storage.service.js', () => ({
 vi.mock('../src/utils/remote-image.util.js', () => ({
   fetchRemoteImage: vi.fn(),
   isPublicHttpUrl: vi.fn().mockReturnValue(true),
+  assertPublicHost: vi.fn().mockResolvedValue(undefined),
 }));
 
 const originalEnabled = ENV.THUMBNAIL_ENABLED;

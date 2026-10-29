@@ -195,6 +195,21 @@ export class AdminService {
     };
 
     if (baseHandle) {
+      // Base Admin hanya boleh membaca antrean base yang ia kelola. Tanpa cek
+      // ini, `?base=@base_lain` membuka seluruh fess pending + komentar tenant
+      // lain (IDOR lintas-tenant).
+      const target = String(baseHandle).replace(/^@/, '').toLowerCase();
+      const managesTarget = (currentUser.managedBases || []).some(
+        (handle) => String(handle).replace(/^@/, '').toLowerCase() === target
+      );
+
+      if (!isSuperAdmin && !managesTarget) {
+        const err: any = new Error('Base ini tidak Anda kelola.');
+        err.status = 403;
+        err.code = 'FORBIDDEN';
+        throw err;
+      }
+
       where.baseHandle = baseHandle;
     } else if (!isSuperAdmin && currentUser.managedBases && currentUser.managedBases.length > 0) {
       where.baseHandle = { in: currentUser.managedBases };
@@ -215,6 +230,7 @@ export class AdminService {
       FessService.serializeFess(f, null, {
         includeIgError: true,
         canManageInstagram: true,
+        includeModeration: true,
       })
     );
 

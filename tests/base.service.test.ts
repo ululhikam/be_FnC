@@ -10,6 +10,7 @@ vi.mock('../src/config/prisma.js', () => ({
       findUnique: vi.fn(),
       findFirst: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     fess: {
       updateMany: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock('../src/config/prisma.js', () => ({
     user: {
       findFirst: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     platformConnection: {
       findUnique: vi.fn(),
@@ -385,5 +387,24 @@ describe('BaseService Unit Tests', () => {
 
       expect(prisma.base.update).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('BaseService.serializeBase � privasi filter kata', () => {
+  const row = {
+    id: 'base_1',
+    name: 'Codebase',
+    handle: '@codebase',
+    bannedWords: ['judi', 'slot'],
+  };
+
+  it('tidak membocorkan banned_words ke publik', () => {
+    const result = BaseService.serializeBase(row as any);
+    expect(result).not.toHaveProperty('banned_words');
+  });
+
+  it('mengirim banned_words untuk pengelola base', () => {
+    const result = BaseService.serializeBase(row as any, false, { includeModeration: true });
+    expect(result.banned_words).toEqual(['judi', 'slot']);
   });
 });

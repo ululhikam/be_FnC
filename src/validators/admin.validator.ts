@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PageQuerySchema } from './pagination.validator.js';
 import { TEMPLATES } from '../constants/templates.js';
 
 /** Semua key template yang valid — otomatis ikut saat template baru ditambah. */
@@ -40,7 +41,7 @@ export const AdminAuditLogsQuerySchema = z.object({
   actor: z.string().max(120).optional(),
   from: z.string().max(40).optional(),
   to: z.string().max(40).optional(),
-  page: z.coerce.number().int().min(1).default(1),
+  page: PageQuerySchema,
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 
@@ -49,7 +50,7 @@ export const AdminUsersQuerySchema = z.object({
   role: z.enum(['User', 'Base Admin', 'Super Admin']).optional(),
   banned: BooleanQuerySchema,
   email_verified: BooleanQuerySchema,
-  page: z.coerce.number().int().min(1).default(1),
+  page: PageQuerySchema,
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 
@@ -61,7 +62,7 @@ export const AdminPaymentOrdersQuerySchema = z.object({
   method: z.string().max(40).optional(),
   from: z.string().max(40).optional(),
   to: z.string().max(40).optional(),
-  page: z.coerce.number().int().min(1).default(1),
+  page: PageQuerySchema,
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 
@@ -70,7 +71,7 @@ export const AdminPaymentEventsQuerySchema = z.object({
   status: z.enum(['RECEIVED', 'PROCESSED', 'IGNORED', 'INVALID_SIGNATURE', 'FAILED']).optional(),
   from: z.string().max(40).optional(),
   to: z.string().max(40).optional(),
-  page: z.coerce.number().int().min(1).default(1),
+  page: PageQuerySchema,
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 
@@ -276,13 +277,13 @@ export const BasePayoutQueueQuerySchema = z.object({
     .optional(),
   base_handle: z.string().max(60).optional(),
   q: z.string().max(120).optional(),
-  page: z.coerce.number().int().min(1).default(1),
+  page: PageQuerySchema,
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 
 export const ModerationQueueQuerySchema = z.object({
   base: z.string().optional(),
-  page: z.coerce.number().int().min(1).default(1),
+  page: PageQuerySchema,
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 
@@ -308,7 +309,7 @@ export const SystemLogsQuerySchema = z.object({
     .optional(),
   tone: z.enum(['ok', 'info', 'muted', 'error']).optional(),
   q: z.string().max(120).optional(),
-  page: z.coerce.number().int().min(1).default(1),
+  page: PageQuerySchema,
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 

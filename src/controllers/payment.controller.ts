@@ -1,6 +1,8 @@
 import crypto from 'crypto';
 import { Request, Response, NextFunction } from 'express';
+import { Prisma } from '@prisma/client';
 import { ENV } from '../config/env.js';
+import { prisma } from '../config/prisma.js';
 import type { PaymentMethodCode } from '../constants/payments.js';
 import { PaymentService } from '../services/payment.service.js';
 import { errorResponse } from '../utils/response.util.js';
@@ -9,6 +11,43 @@ function secretsMatch(expected: string, provided: string) {
   const a = Buffer.from(expected, 'utf8');
   const b = Buffer.from(provided, 'utf8');
   return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+/** Jendela toleransi jam antara pemanggil (cron) dan server. */
+const RECONCILE_MAX_SKEW_MS = 5 * 60 * 1000;
+
+/**
+ * Tanda tangan HMAC-SHA256 atas timestamp permintaan.
+ *
+ * Secret statis di header mengautentikasi pemanggil, tetapi tidak mengikat
+ * waktu: siapa pun yang pernah melihat satu permintaan sah (log proxy,
+ * riwayat shell) bisa memutar ulangnya kapan saja. Dengan HMAC + timestamp,
+ * permintaan di luar jendela 5 menit ditolak.
+ *
+ * Yang ditandatangani hanya timestamp, bukan body: body sudah di-parse
+ * `express.json` sehingga serialisasi ulang di server belum tentu identik
+ * dengan byte yang dikirim klien, dan body endpoint ini hanya `{ limit }`
+ * yang juga dibatasi di dalam service.
+ *
+ * Secret yang dipakai tetap `PAYMENT_RECONCILE_SECRET` agar operasional tidak
+ * perlu menyimpan kredensial tambahan.
+ */
+function verifyReconcileSignature(secret: string, req: Request): boolean {
+  const timestamp = String(req.get('x-reconcile-timestamp') || '').trim();
+  const signature = String(req.get('x-reconcile-signature') || '').trim();
+  if (!/^\d{9,12}$/.test(timestamp) || !signature) return false;
+
+  const sentAt = Number(timestamp) * 1000;
+  if (!Number.isFinite(sentAt) || Math.abs(Date.now() - sentAt) > RECONCILE_MAX_SKEW_MS) {
+    return false;
+  }
+
+  const expected = crypto
+    .createHmac('sha256', secret)
+    .update(timestamp)
+    .digest('hex');
+
+  return secretsMatch(expected, signature.toLowerCase());
 }
 
 export class PaymentController {
@@ -99,13 +138,50 @@ export class PaymentController {
           'RECONCILE_DISABLED'
         );
       }
-      if (!secretsMatch(ENV.PAYMENT_RECONCILE_SECRET, req.get('x-reconcile-secret') || '')) {
+
+      // Kill switch: saat pembayaran dimatikan, rekonsiliasi tidak boleh
+      // menyentuh order sama sekali — termasuk mengubah status menjadi PAID.
+      if (!ENV.PAYMENTS_ENABLED) {
+        return errorResponse(
+          res,
+          'Rekonsiliasi pembayaran tidak aktif karena pembayaran sedang dimatikan',
+          503,
+          'PAYMENTS_DISABLED'
+        );
+      }
+
+      // Dua cara autentikasi: HMAC+timestamp (disarankan, tahan replay) atau
+      // secret statis lama (kompatibilitas cron yang belum diperbarui).
+      const signed = verifyReconcileSignature(ENV.PAYMENT_RECONCILE_SECRET, req);
+      const legacy = secretsMatch(ENV.PAYMENT_RECONCILE_SECRET, req.get('x-reconcile-secret') || '');
+      if (!signed && !legacy) {
         return errorResponse(res, 'Secret rekonsiliasi tidak valid', 401, 'FORBIDDEN');
       }
 
       const requestedLimit = Number(req.body?.limit ?? 25);
       const limit = Number.isFinite(requestedLimit) ? requestedLimit : 25;
       const result = await PaymentService.reconcilePending(limit);
+
+      // Jejak siapa menjalankan rekonsiliasi dan berapa order yang tersentuh.
+      await prisma.adminAuditLog
+        .create({
+          data: {
+            action: 'PAYMENT_RECONCILE',
+            targetType: 'PaymentOrder',
+            reason: 'Rekonsiliasi status pembayaran manual',
+            metadata: {
+              limit,
+              checked: result.checked ?? null,
+              processed: result.processed ?? null,
+              failed: result.failed ?? null,
+              auth: signed ? 'hmac' : 'secret',
+            } as Prisma.InputJsonValue,
+            ipAddress: req.ip || req.socket.remoteAddress || null,
+            userAgent: req.get('user-agent') || null,
+          },
+        })
+        .catch(() => undefined);
+
       return res.status(200).json({ ok: true, ...result });
     } catch (error) {
       next(error);

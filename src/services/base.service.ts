@@ -233,6 +233,7 @@ export class BaseService {
 
     return this.serializeBase(base, isFollowing, {
       includeHandleCooldown: canManage,
+      includeModeration: canManage,
       instagramConnected,
     });
   }
@@ -269,12 +270,14 @@ export class BaseService {
         prisma.follow.delete({
           where: { id: existingFollow.id },
         }),
-        prisma.base.update({
-          where: { id: base.id },
+        prisma.base.updateMany({
+          // `gt: 0` mencegah penghitung turun ke negatif bila dua request
+          // unfollow berjalan bersamaan atau data awal sudah tidak sinkron.
+          where: { id: base.id, membersCount: { gt: 0 } },
           data: { membersCount: { decrement: 1 } },
         }),
-        prisma.user.update({
-          where: { id: userId },
+        prisma.user.updateMany({
+          where: { id: userId, followingCount: { gt: 0 } },
           data: { followingCount: { decrement: 1 } },
         }),
       ]);
@@ -473,7 +476,10 @@ export class BaseService {
     invalidateCache('bases:');
     if (nextHandle) invalidateCache('fesses:');
 
-    return this.serializeBase(updated, false, { includeHandleCooldown: true });
+    return this.serializeBase(updated, false, {
+      includeHandleCooldown: true,
+      includeModeration: true,
+    });
   }
 
   /**
@@ -612,7 +618,12 @@ export class BaseService {
   static serializeBase(
     base: any,
     isFollowing = false,
-    options: { includeHandleCooldown?: boolean; instagramConnected?: boolean } = {}
+    options: {
+      includeHandleCooldown?: boolean;
+      instagramConnected?: boolean;
+      /** Sertakan filter kata terlarang — hanya untuk pengelola base. */
+      includeModeration?: boolean;
+    } = {}
   ) {
     const handleChangeAvailableAt = getHandleChangeAvailableAt(base.handleChangedAt);
     const billing = getBaseBillingState(base);
@@ -648,7 +659,9 @@ export class BaseService {
       initial: base.initial || 'BA',
       post_mode: base.postMode || 'moderated',
       thumbnail_mode: base.thumbnailMode || 'auto',
-      banned_words: base.bannedWords || [],
+      // Daftar kata terlarang adalah konfigurasi moderasi internal: membocorkannya
+      // ke publik memudahkan penulis menyusun konten agar lolos filter.
+      ...(options.includeModeration ? { banned_words: base.bannedWords || [] } : {}),
       ...(options.includeHandleCooldown
         ? {
             handle_changed_at: base.handleChangedAt

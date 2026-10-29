@@ -192,6 +192,19 @@ describe('TemplateService scoping per base', () => {
     expect(rows.map((item) => item.key)).toEqual(['01-bersama', '02-bersama']);
   });
 
+  it('getActiveFromCatalog menolak template milik base lain', async () => {
+    vi.mocked(prisma.template.findUnique).mockResolvedValue(
+      row('13-papan-kampus', 'base_b') as any
+    );
+    await expect(TemplateService.getActiveFromCatalog('13-papan-kampus')).resolves.toBeNull();
+  });
+
+  it('getActiveFromCatalog menerima template katalog bersama', async () => {
+    vi.mocked(prisma.template.findUnique).mockResolvedValue(row('01-bersama') as any);
+    const found = await TemplateService.getActiveFromCatalog('01-bersama');
+    expect(found?.key).toBe('01-bersama');
+  });
+
   it('getActiveForBase menolak template bersama bila base sudah punya template khusus', async () => {
     vi.mocked(prisma.template.findUnique).mockResolvedValue(row('01-bersama') as any);
     vi.mocked(prisma.template.count).mockResolvedValue(2);

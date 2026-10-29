@@ -89,11 +89,28 @@ export class FessService {
       where.baseHandle = normalizeHandle(params.base);
     }
 
+    // Siapa yang boleh melihat konten non-terbit: hanya admin base terkait
+    // (atau Super Admin). Tanpa gerbang ini `?status=pending` membuka antrean
+    // moderasi seluruh platform, dan `?base=@x` membocorkan antrean base itu.
+    const canViewUnpublished = this.canViewUnpublishedFess(params.base, viewer);
+
+    if (
+      params.status &&
+      params.status !== 'published' &&
+      params.status !== 'approved' &&
+      !canViewUnpublished
+    ) {
+      const err: any = new Error('Status fess ini hanya dapat dilihat oleh admin base.');
+      err.status = 403;
+      err.code = 'FORBIDDEN';
+      throw err;
+    }
+
     // Default status for public feed is 'published' unless explicitly requested
     if (params.status) {
       where.status = params.status === 'approved' ? { in: ['published', 'approved'] } : params.status;
-    } else if (!params.base) {
-      // General feed shows published posts
+    } else if (!canViewUnpublished) {
+      // Termasuk saat `base` diisi: feed publik base juga hanya fess terbit.
       where.status = { in: ['published', 'approved'] };
     }
 
@@ -104,6 +121,12 @@ export class FessService {
     // Filter khusus admin base: fess yang punya laporan berstatus pending.
     // Endpoint publik dilindungi oleh BaseController.getBaseFesses.
     if (params.reported === 'true') {
+      if (!canViewUnpublished) {
+        const err: any = new Error('Hanya admin base yang dapat melihat fess yang dilaporkan.');
+        err.status = 403;
+        err.code = 'FORBIDDEN';
+        throw err;
+      }
       where.reports = { some: { status: 'pending' } };
     }
 
@@ -127,7 +150,9 @@ export class FessService {
         ? [{ upvotes: 'desc' }, { createdAt: 'desc' }]
         : [{ createdAt: 'desc' }];
 
-    const isPublicQuery = !params.query && params.following !== 'true';
+    // Cache hanya untuk query publik. Hasil untuk admin base tidak boleh
+    // disajikan ke pengunjung lain (dan sebaliknya).
+    const isPublicQuery = !params.query && params.following !== 'true' && !canViewUnpublished;
     const cacheKey = isPublicQuery
       ? `fesses:${params.base || 'all'}:${params.status || 'published'}:${params.reported || 'false'}:${params.sort || 'newest'}:${page}:${limit}`
       : null;
@@ -203,6 +228,7 @@ export class FessService {
       return this.serializeFess(f, voteMap.get(f.id) || null, {
         includeIgError: canManageInstagram,
         canManageInstagram,
+        includeModeration: canManageInstagram,
         isSaved: savedSet.has(f.id),
       });
     });
@@ -320,6 +346,10 @@ export class FessService {
     // dengan template yang benar-benar bisa dirender.
     const templateKey = await FessService.resolveTemplateKey(payload.template, base.id);
 
+    // Kutipan tidak dipercaya dari klien: isi & handle diambil ulang dari fess
+    // sumber, sehingga tidak mungkin mengarang kutipan atas nama base lain.
+    const quotedFess = await this.resolveQuotedFess(payload.quoted_fess);
+
     // Paid bases require a signed-in account with a verified email. During the
     // trial anonymous posting stays available; after the trial it does not.
     if (billing.requiresPayment) {
@@ -391,7 +421,7 @@ export class FessService {
               scheduledAt: scheduledDate,
               song: payload.song || undefined,
               template: templateKey,
-              quotedFess: payload.quoted_fess || undefined,
+              quotedFess: quotedFess || undefined,
               tag: payload.tag || null,
               status: initialStatus,
               autoFlagged,
@@ -597,6 +627,24 @@ export class FessService {
       throw err;
     }
 
+    // Konten yang belum/tidak terbit tidak boleh dibuka lewat link langsung —
+    // kalau tidak, take-down tidak efektif dan antrean moderasi bisa dienumerasi.
+    const isPubliclyVisible = fess.status === 'published' || fess.status === 'approved';
+    const isAuthor = Boolean(viewer?.id && (fess as any).userId === viewer.id);
+    const canView =
+      isPubliclyVisible ||
+      isAuthor ||
+      viewer?.role === 'Super Admin' ||
+      this.canManageBaseFess(fess, viewer);
+
+    if (!canView) {
+      // 404 (bukan 403) agar keberadaan fess non-terbit tidak bisa ditebak.
+      const err: any = new Error('Fess tidak ditemukan');
+      err.status = 404;
+      err.code = 'NOT_FOUND';
+      throw err;
+    }
+
     const userVote = vote?.type || null;
     const isSaved = Boolean(bookmark);
 
@@ -604,8 +652,62 @@ export class FessService {
     return this.serializeFess(fess, userVote, {
       includeIgError: canManageInstagram,
       canManageInstagram,
+      includeModeration: canManageInstagram,
       isSaved,
     });
+  }
+
+  /**
+   * Bangun snapshot kutipan dari fess sumber, bukan dari body klien.
+   *
+   * Sebelumnya `quoted_fess` disimpan apa adanya, sehingga siapa pun bisa
+   * membuat kartu yang mengutip base lain dengan isi karangan. Sekarang hanya
+   * `id` yang dipakai: isi, handle, dan waktu diambil dari baris aslinya, dan
+   * fess yang belum terbit tidak bisa dikutip (isinya belum publik).
+   */
+  private static async resolveQuotedFess(raw: unknown) {
+    const id = String((raw as { id?: unknown } | null)?.id ?? '').trim();
+    if (!id) return null;
+
+    const source = await prisma.fess.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        baseHandle: true,
+        content: true,
+        createdAt: true,
+        status: true,
+        base: { select: { avatar: true, color: true, initial: true } },
+      },
+    });
+
+    if (!source || !this.isPubliclyVisible(source)) {
+      const err: any = new Error('Fess yang dikutip tidak ditemukan atau belum terbit');
+      err.status = 422;
+      err.code = 'VALIDATION_ERROR';
+      err.errors = { quoted_fess: 'Fess yang dikutip tidak tersedia' };
+      throw err;
+    }
+
+    const handle = normalizeHandle(source.baseHandle);
+    const avatar = source.base?.avatar || '';
+
+    return {
+      id: source.id,
+      handle,
+      senderHandle: handle,
+      content: source.content,
+      time: new Date(source.createdAt).toISOString(),
+      // `avatar` bisa URL/data-URL foto atau inisial; renderer hanya memakai
+      // warna & teks, jadi fallback ke warna base dan inisial handle.
+      avatar_bg: source.base?.color || '#0055FF',
+      avatar_text: (source.base?.initial || handle.replace(/^@/, '').slice(0, 2) || 'FS').toUpperCase(),
+      avatarBg: source.base?.color || '#0055FF',
+      avatarText: (source.base?.initial || handle.replace(/^@/, '').slice(0, 2) || 'FS').toUpperCase(),
+      ...(avatar.startsWith('http') || avatar.startsWith('data:') || avatar.startsWith('/')
+        ? { avatar_url: avatar }
+        : {}),
+    };
   }
 
   /**
@@ -621,6 +723,7 @@ export class FessService {
       select: {
         id: true,
         baseHandle: true,
+        status: true,
         postedToIg: true,
         igStatus: true,
         igError: true,
@@ -638,6 +741,15 @@ export class FessService {
     }
 
     const canManageInstagram = this.canManageBaseFess(fess, viewer);
+
+    // Status publikasi fess non-terbit bukan informasi publik: menjawabnya
+    // berarti mengonfirmasi keberadaan konten yang belum lolos moderasi.
+    if (!canManageInstagram && !this.isPubliclyVisible(fess)) {
+      const err: any = new Error('Fess tidak ditemukan');
+      err.status = 404;
+      err.code = 'NOT_FOUND';
+      throw err;
+    }
 
     return {
       id: fess.id,
@@ -666,6 +778,38 @@ export class FessService {
     );
     const ownsBase = Boolean(viewer.id && fess.base?.creatorId === viewer.id);
     return managesBase || ownsBase;
+  }
+
+  /**
+   * Fess dianggap terlihat publik hanya bila sudah terbit. Baris tanpa `status`
+   * (data lama) diperlakukan sebagai terbit agar konten yang sudah tampil tidak
+   * tiba-tiba terkunci.
+   */
+  static isPubliclyVisible(fess: { status?: string | null }): boolean {
+    if (!fess.status) return true;
+    return fess.status === 'published' || fess.status === 'approved';
+  }
+
+  /**
+   * Viewer boleh melihat konten non-terbit (pending/rejected) hanya bila ia
+   * mengelola base tersebut, atau Super Admin untuk dukungan.
+   *
+   * Dipakai agar moderasi base benar-benar menegakkan sesuatu: sebelumnya
+   * `?status=pending` dan `GET /bases/:handle/fesses` membuka antrean moderasi
+   * ke publik.
+   */
+  private static canViewUnpublishedFess(
+    baseHandle: string | null | undefined,
+    viewer?: { id?: string; role?: string; managedBases?: string[] }
+  ): boolean {
+    if (!viewer) return false;
+    if (viewer.role === 'Super Admin') return true;
+    if (!baseHandle) return false;
+
+    const target = String(baseHandle).replace(/^@/, '').toLowerCase();
+    return (viewer.managedBases || []).some(
+      (handle) => String(handle).replace(/^@/, '').toLowerCase() === target
+    );
   }
 
   /** Pastikan user berhak memposting fess ini ke Instagram. */
@@ -727,6 +871,15 @@ export class FessService {
       const err: any = new Error('Fess tidak ditemukan');
       err.status = 404;
       err.code = 'NOT_FOUND';
+      throw err;
+    }
+
+    // Vote pada fess non-terbit tidak punya arti di UI dan bisa dipakai untuk
+    // mengukur/memanipulasi antrean moderasi sebelum konten disetujui.
+    if (!this.isPubliclyVisible(fess)) {
+      const err: any = new Error('Fess ini belum terbit sehingga belum bisa diberi vote.');
+      err.status = 403;
+      err.code = 'FESS_NOT_PUBLISHED';
       throw err;
     }
 
@@ -1415,6 +1568,7 @@ export class FessService {
       return this.serializeFess(row.fess, voteMap.get(row.fess.id) || null, {
         includeIgError: canManageInstagram,
         canManageInstagram,
+        includeModeration: canManageInstagram,
         isSaved: true,
       });
     });
@@ -1691,7 +1845,13 @@ export class FessService {
   static serializeFess(
     fess: any,
     userVote: string | null = null,
-    options: { includeIgError?: boolean; canManageInstagram?: boolean; isSaved?: boolean } = {}
+    options: {
+      includeIgError?: boolean;
+      canManageInstagram?: boolean;
+      isSaved?: boolean;
+      /** Sertakan metadata moderasi (auto_flagged/flag_reason) — hanya admin. */
+      includeModeration?: boolean;
+    } = {}
   ) {
     return {
       id: fess.id,
@@ -1736,8 +1896,16 @@ export class FessService {
       ...(options.canManageInstagram !== undefined
         ? { can_manage_instagram: Boolean(options.canManageInstagram) }
         : {}),
-      auto_flagged: fess.autoFlagged ?? false,
-      flag_reason: fess.flagReason || undefined,
+      // Metadata moderasi (hasil filter NLP + alasannya) adalah informasi
+      // internal: bila dikirim ke publik, penulis bisa mempelajari persis kata
+      // atau kategori apa yang memicu flag dan menyusun konten agar lolos.
+      // Hanya dikirim ke Super Admin / Base Admin pemilik base.
+      ...(options.includeModeration
+        ? {
+            auto_flagged: fess.autoFlagged ?? false,
+            flag_reason: fess.flagReason || undefined,
+          }
+        : {}),
       // Foto profil base untuk avatar kartu fess. `avatar` bisa berupa
       // URL/data-URL foto ATAU inisial teks — frontend membedakan keduanya.
       base_avatar: fess.base?.avatar || undefined,

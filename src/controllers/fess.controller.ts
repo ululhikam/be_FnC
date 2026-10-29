@@ -319,7 +319,11 @@ export class FessController {
         return errorResponse(res, 'Autentikasi dibutuhkan', 401, 'UNAUTHORIZED');
       }
       const { fess_id, reason, note } = req.body;
-      const result = await FessService.reportFess(fess_id, reason, req.user.id, note);
+      // `:id` di URL adalah sumber kebenaran; `fess_id` di body hanya fallback
+      // klien lama. Tanpa ini, laporan bisa dibuat untuk fess yang tidak pernah
+      // dilihat klien (parameter confusion).
+      const targetId = String(req.params.id || fess_id);
+      const result = await FessService.reportFess(targetId, reason, req.user.id, note);
       return successResponse(res, result, 200);
     } catch (error) {
       next(error);

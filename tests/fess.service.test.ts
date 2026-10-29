@@ -164,7 +164,8 @@ describe('FessService Unit Tests', () => {
 
       const result = await FessService.getFesses(
         { base: '@concern_fess', reported: 'true', page: 1, limit: 10 },
-        'usr_mod'
+        'usr_mod',
+        { id: 'usr_mod', role: 'Base Admin', managedBases: ['@concern_fess'] }
       );
 
       expect(prisma.fess.count).toHaveBeenCalledWith({
@@ -175,6 +176,48 @@ describe('FessService Unit Tests', () => {
       });
       expect(result.total).toBe(1);
       expect(result.data[0].id).toBe('fess_reported');
+    });
+
+    it('menolak reported=true bagi pengunjung tanpa akses base', async () => {
+      await expect(
+        FessService.getFesses({ base: '@concern_fess', reported: 'true', page: 1, limit: 10 })
+      ).rejects.toMatchObject({ status: 403, code: 'FORBIDDEN' });
+    });
+
+    it('menolak status non-terbit bagi pengunjung anonim', async () => {
+      await expect(
+        FessService.getFesses({ status: 'pending', page: 1, limit: 10 })
+      ).rejects.toMatchObject({ status: 403, code: 'FORBIDDEN' });
+
+      await expect(
+        FessService.getFesses({ status: 'rejected', page: 1, limit: 10 })
+      ).rejects.toMatchObject({ status: 403, code: 'FORBIDDEN' });
+    });
+
+    it('feed base tanpa status hanya menampilkan fess terbit', async () => {
+      vi.mocked(prisma.fess.count).mockResolvedValueOnce(0);
+      vi.mocked(prisma.fess.findMany).mockResolvedValueOnce([]);
+
+      await FessService.getFesses({ base: '@codememfess', page: 1, limit: 10 });
+
+      expect(prisma.fess.count).toHaveBeenCalledWith({
+        where: expect.objectContaining({ status: { in: ['published', 'approved'] } }),
+      });
+    });
+
+    it('admin base boleh meminta antrean pending untuk base yang dikelolanya', async () => {
+      vi.mocked(prisma.fess.count).mockResolvedValueOnce(0);
+      vi.mocked(prisma.fess.findMany).mockResolvedValueOnce([]);
+
+      await FessService.getFesses(
+        { base: '@codememfess', status: 'pending', page: 1, limit: 10 },
+        'usr_mod',
+        { id: 'usr_mod', role: 'Base Admin', managedBases: ['@codememfess'] }
+      );
+
+      expect(prisma.fess.count).toHaveBeenCalledWith({
+        where: expect.objectContaining({ status: 'pending' }),
+      });
     });
 
     it('should restrict to followed bases when following=true', async () => {
@@ -233,6 +276,81 @@ describe('FessService Unit Tests', () => {
           content: 'Confession text',
         })
       ).rejects.toThrow('tidak ditemukan');
+    });
+
+    it('should snapshot a quoted fess from the database instead of trusting the body', async () => {
+      vi.mocked(prisma.base.findUnique).mockResolvedValueOnce({
+        id: 'base_1',
+        handle: '@codememfess',
+        creatorId: 'mod_1',
+        trialEndsAt: ACTIVE_TRIAL,
+      } as any);
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_source',
+        baseHandle: '@base_asli',
+        content: 'Isi asli dari database',
+        status: 'published',
+        createdAt: new Date('2026-01-02T03:04:05.000Z'),
+        base: { avatar: null, color: '#123456', initial: 'BA' },
+      } as any);
+      vi.mocked(prisma.fess.create).mockResolvedValueOnce({
+        id: 'fess_quote',
+        baseHandle: '@codememfess',
+        content: 'Mengutip',
+        status: 'pending',
+        upvotes: 0,
+        downvotes: 0,
+        createdAt: new Date(),
+        comments: [],
+      } as any);
+
+      await FessService.createFess(
+        {
+          base_handle: '@codememfess',
+          content: 'Mengutip',
+          // Handle & isi karangan harus diabaikan sepenuhnya.
+          quoted_fess: { id: 'fess_source', handle: '@korban', content: 'Isi karangan' },
+        },
+        'usr_1'
+      );
+
+      const createCall: any = vi.mocked(prisma.fess.create).mock.calls[0][0];
+      expect(createCall.data.quotedFess).toMatchObject({
+        id: 'fess_source',
+        handle: '@base_asli',
+        content: 'Isi asli dari database',
+        avatar_bg: '#123456',
+      });
+    });
+
+    it('should reject quoting a fess that is not published', async () => {
+      vi.mocked(prisma.base.findUnique).mockResolvedValueOnce({
+        id: 'base_1',
+        handle: '@codememfess',
+        creatorId: 'mod_1',
+        trialEndsAt: ACTIVE_TRIAL,
+      } as any);
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_pending',
+        baseHandle: '@base_lain',
+        content: 'Belum terbit',
+        status: 'pending',
+        createdAt: new Date(),
+        base: null,
+      } as any);
+
+      await expect(
+        FessService.createFess(
+          {
+            base_handle: '@codememfess',
+            content: 'Mengutip',
+            quoted_fess: { id: 'fess_pending', content: 'Belum terbit' },
+          },
+          'usr_1'
+        )
+      ).rejects.toMatchObject({ status: 422, code: 'VALIDATION_ERROR' });
+
+      expect(prisma.fess.create).not.toHaveBeenCalled();
     });
 
     it('should create fess with pending status without touching published counters', async () => {
@@ -799,6 +917,23 @@ describe('FessService Unit Tests', () => {
 
       expect(prisma.vote.update).toHaveBeenCalled();
       expect(result.user_vote).toBe('down');
+    });
+
+    it('should reject voting on a fess that is not published yet', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_pending',
+        status: 'pending',
+        upvotes: 0,
+        downvotes: 0,
+      } as any);
+
+      await expect(FessService.voteFess('fess_pending', 'up', 'usr_1')).rejects.toMatchObject({
+        status: 403,
+        code: 'FESS_NOT_PUBLISHED',
+      });
+
+      expect(prisma.vote.findUnique).not.toHaveBeenCalled();
+      expect(prisma.vote.create).not.toHaveBeenCalled();
     });
 
     it('should create ONE aggregated like notification on first upvote', async () => {
@@ -1844,5 +1979,32 @@ describe('FessService — Report & Manual IG Post', () => {
         })
       );
     });
+  });
+});
+
+/* ================================================================
+ * PRIVASI METADATA MODERASI (SEC-18)
+ * ================================================================ */
+describe('FessService.serializeFess � metadata moderasi', () => {
+  const row = {
+    id: 'fess_flag_1',
+    baseHandle: '@codemine',
+    content: 'konten',
+    status: 'pending',
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+    autoFlagged: true,
+    flagReason: 'ujaran kebencian',
+  };
+
+  it('tidak mengirim auto_flagged/flag_reason ke publik', () => {
+    const result = FessService.serializeFess(row as any, null);
+    expect(result).not.toHaveProperty('auto_flagged');
+    expect(result).not.toHaveProperty('flag_reason');
+  });
+
+  it('mengirim metadata moderasi untuk admin pengelola', () => {
+    const result = FessService.serializeFess(row as any, null, { includeModeration: true });
+    expect(result.auto_flagged).toBe(true);
+    expect(result.flag_reason).toBe('ujaran kebencian');
   });
 });

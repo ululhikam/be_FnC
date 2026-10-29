@@ -131,6 +131,17 @@ export class TemplateService {
   }
 
   /**
+   * Template aktif dari katalog bersama saja (`baseId = null`).
+   *
+   * Dipakai endpoint publik tanpa `?base_handle=`: template milik base lain
+   * tidak boleh bisa dibuka hanya dengan menebak/mengetahui `key`-nya.
+   */
+  static async getActiveFromCatalog(key: string): Promise<TemplateRecord | null> {
+    const row = await TemplateService.getActive(key);
+    return row && !row.baseId ? row : null;
+  }
+
+  /**
    * Template aktif yang boleh dipakai sebuah base.
    *
    * Aturan: base yang sudah punya template khusus **tertutup** dari katalog

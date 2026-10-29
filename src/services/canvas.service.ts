@@ -24,7 +24,7 @@ import {
 import { getEmojiSvgMarkup } from '../config/emoji.js';
 import { ENV } from '../config/env.js';
 import { TOPICS } from '../constants/topics.js';
-import { isPublicHttpUrl } from '../utils/remote-image.util.js';
+import { assertPublicHost, isPublicHttpUrl } from '../utils/remote-image.util.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1172,6 +1172,13 @@ async function resolveBaseAvatarDataUri(value: unknown): Promise<string | null> 
     }
   }
   if (!AVATAR_REMOTE_RE.test(target) || !isPublicHttpUrl(target)) return null;
+  // Resolusi DNS diperiksa juga: domain yang tampak publik bisa menunjuk ke
+  // alamat internal (SEC-25).
+  try {
+    await assertPublicHost(new URL(target).hostname);
+  } catch {
+    return null;
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);
@@ -1182,6 +1189,11 @@ async function resolveBaseAvatarDataUri(value: unknown): Promise<string | null> 
       signal: controller.signal,
     });
     if (!response.ok || !isPublicHttpUrl(response.url)) return null;
+    try {
+      await assertPublicHost(new URL(response.url).hostname);
+    } catch {
+      return null;
+    }
 
     const contentType = String(response.headers.get('content-type') || '')
       .split(';')[0]

@@ -9,6 +9,7 @@ import {
   type IgWatermark,
 } from '../utils/instagram-media.util.js';
 import { frontendHost } from '../utils/frontend-host.util.js';
+import { normalizeHandle } from '../utils/format.util.js';
 import { watermarkLabel } from '../utils/thumbnail.util.js';
 
 const API_VERSION = ENV.INSTAGRAM_API_VERSION || 'v25.0';
@@ -1066,7 +1067,7 @@ export class InstagramService {
    */
   static async verifyAndLinkAccount(
     userId: string,
-    data: { token?: string; code?: string; handle?: string; baseHandle?: string }
+    data: { token?: string; code?: string; baseHandle?: string }
   ) {
     let profile: InstagramProfileData;
     let savedToken: string | undefined = data.token;
@@ -1080,18 +1081,19 @@ export class InstagramService {
       savedToken = longToken.accessToken;
       tokenExpiresAt = new Date(Date.now() + longToken.expiresIn * 1000).toISOString();
       profile = await this.verifyToken(longToken.accessToken);
-    } else if (data.handle) {
-      // Verify handle format and create verified record
-      const cleanHandle = data.handle.startsWith('@') ? data.handle : `@${data.handle}`;
-      profile = {
-        id: 'ig_' + Buffer.from(cleanHandle).toString('hex').slice(0, 12),
-        username: cleanHandle,
-        accountType: 'COMMUNITY',
-        mediaCount: 42,
-        verified: true,
-      };
     } else {
-      throw new Error('Diperlukan token, OAuth code, atau username Instagram untuk verifikasi');
+      // Jalur "verifikasi by handle" sengaja dihapus: sebelumnya profil IG
+      // dikarang lokal (`id: ig_<hex handle>`, `verified: true`) tanpa pernah
+      // bertanya ke Meta. Akibatnya siapa pun bisa mengklaim handle IG milik
+      // orang lain, mendapat centang "verified", dan — karena penautan melepas
+      // `instagramId` lama — merebut binding Instagram akun lain.
+      // Verifikasi hanya sah lewat `token` atau `code` dari Meta OAuth.
+      const err: any = new Error(
+        'Verifikasi Instagram memerlukan OAuth Meta (token atau code), bukan handle.'
+      );
+      err.status = 400;
+      err.code = 'INSTAGRAM_OAUTH_REQUIRED';
+      throw err;
     }
 
     // Unlink old user if this instagramId was previously linked to another user
@@ -1152,12 +1154,28 @@ export class InstagramService {
       },
     });
 
-    // If base handle is provided, link Instagram handle to Base profile
+    // Tautkan handle IG ke base HANYA bila user ini pemilik base tersebut.
+    // Tanpa cek ini, siapa pun bisa menimpa `igAccount` base tenant lain hanya
+    // dengan mengirim `?base=` saat memulai OAuth.
     if (data.baseHandle) {
-      await prisma.base.updateMany({
-        where: { handle: data.baseHandle },
-        data: { igAccount: profile.username },
+      const ownedBase = await prisma.base.findFirst({
+        where: {
+          handle: { equals: normalizeHandle(String(data.baseHandle)), mode: 'insensitive' },
+          creatorId: userId,
+        },
+        select: { id: true },
       });
+
+      if (ownedBase) {
+        await prisma.base.update({
+          where: { id: ownedBase.id },
+          data: { igAccount: profile.username },
+        });
+      } else {
+        console.warn(
+          `[Instagram] Lewati penautan base "${data.baseHandle}": bukan milik user ${userId}`
+        );
+      }
     }
 
     // Record system log

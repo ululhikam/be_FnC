@@ -110,6 +110,16 @@ function actionsFrom(value: unknown): Array<{ name?: string; url?: string }> {
   return Array.isArray(value) ? (value as Array<{ name?: string; url?: string }>) : [];
 }
 
+/**
+ * `signature_key` tidak disimpan: nilainya tidak bisa dipakai tanpa server key,
+ * tetapi menyimpannya berarti siapa pun yang membaca tabel `PaymentEvent`
+ * (backup, ekspor admin, log) memegang payload bertanda tangan valid.
+ */
+function withoutSignature(payload: Record<string, unknown>): Record<string, unknown> {
+  const { signature_key: _signatureKey, ...rest } = payload;
+  return rest;
+}
+
 function eventKey(payload: Record<string, unknown>) {
   return crypto
     .createHash('sha256')
@@ -387,7 +397,7 @@ export class PaymentService {
           status: PaymentEventStatus.RECEIVED,
           signatureValid: true,
           idempotencyKey: key,
-          payload: payload as Prisma.InputJsonValue,
+          payload: withoutSignature(payload) as Prisma.InputJsonValue,
           ipAddress: meta.ipAddress || null,
           userAgent: meta.userAgent || null,
         },
@@ -580,13 +590,92 @@ export class PaymentService {
     }
   }
 
+  /**
+   * Tentukan status transaksi yang dipakai untuk memutuskan kredit CTF.
+   *
+   * Untuk notifikasi webhook yang mengklaim `settlement`/`capture+accept`, klaim
+   * itu tidak dipercaya begitu saja: signature Midtrans tidak mencakup
+   * `transaction_status`, sehingga payload lama yang sah dapat diputar ulang
+   * sebagai settlement. Status sebenarnya diambil dari Status API
+   * (`GET /v2/{order_id}/status`). Bila status tidak bisa dipastikan, permintaan
+   * digagalkan (Midtrans akan mencoba ulang) — lebih baik tertunda daripada
+   * mengkredit CTF tanpa uang masuk.
+   */
+  private static async resolveTransactionStatus(
+    order: PaymentOrder,
+    payload: Record<string, unknown>,
+    options: PaymentApplyOptions
+  ): Promise<{ transactionStatus: string; fraudStatus: string }> {
+    const claimedStatus = String(payload.transaction_status ?? '').toLowerCase();
+    const claimedFraud = String(payload.fraud_status ?? '').toLowerCase();
+
+    const claimsSettlement =
+      claimedStatus === 'settlement' || (claimedStatus === 'capture' && claimedFraud === 'accept');
+
+    // Polling status (`sync`) sudah mengambil data langsung dari gateway.
+    if (!claimsSettlement || options.source !== 'notification') {
+      return { transactionStatus: claimedStatus, fraudStatus: claimedFraud };
+    }
+
+    const verified = await MidtransService.getStatus(order.orderId);
+    if (!verified) {
+      throw paymentError(
+        'PAYMENT_STATUS_UNVERIFIED',
+        'Status pembayaran tidak dapat diverifikasi ke Midtrans',
+        502
+      );
+    }
+
+    const statusCode = String(verified.status_code ?? '');
+    if (statusCode !== '200') {
+      throw paymentError(
+        'PAYMENT_STATUS_UNVERIFIED',
+        'Midtrans menolak permintaan status pembayaran',
+        502
+      );
+    }
+
+    const verifiedStatus = String(verified.transaction_status ?? '').toLowerCase();
+    const verifiedFraud = String(verified.fraud_status ?? '').toLowerCase();
+
+    if (verifiedStatus !== claimedStatus) {
+      await prisma.adminAuditLog
+        .create({
+          data: {
+            action: 'PAYMENT_STATUS_MISMATCH',
+            targetType: 'PaymentOrder',
+            targetId: order.id,
+            reason: 'Status notifikasi berbeda dengan status resmi Midtrans',
+            metadata: {
+              order_id: order.orderId,
+              claimed_status: claimedStatus,
+              verified_status: verifiedStatus,
+              verified_fraud_status: verifiedFraud,
+            } as Prisma.InputJsonValue,
+          },
+        })
+        .catch(() => undefined);
+    }
+
+    return { transactionStatus: verifiedStatus, fraudStatus: verifiedFraud };
+  }
+
   private static async applyStatus(
     order: PaymentOrder,
     payload: Record<string, unknown>,
     options: PaymentApplyOptions
   ): Promise<PaymentApplyResult> {
-    const transactionStatus = String(payload.transaction_status ?? '').toLowerCase();
-    const fraudStatus = String(payload.fraud_status ?? '').toLowerCase();
+    // Signature Midtrans hanya mengikat order_id + status_code + gross_amount;
+    // `transaction_status` & `fraud_status` TIDAK ikut ditandatangani. Payload
+    // sah untuk order yang masih pending bisa diputar ulang dengan
+    // `transaction_status: "settlement"` dan mengkredit CTF tanpa uang masuk.
+    // Karena itu klaim settlement selalu diverifikasi ulang ke Status API dan
+    // keputusan memakai status dari gateway.
+    const { transactionStatus, fraudStatus } = await this.resolveTransactionStatus(
+      order,
+      payload,
+      options
+    );
     const data = this.paymentDataFromPayload(payload);
 
     if (
@@ -811,7 +900,7 @@ export class PaymentService {
       billKey: payload.bill_key ? String(payload.bill_key) : undefined,
       actions: payload.actions ? (payload.actions as Prisma.InputJsonValue) : undefined,
       expiresAt: parseMidtransDate(payload.expiry_time),
-      rawResponse: payload as Prisma.InputJsonValue,
+      rawResponse: withoutSignature(payload) as Prisma.InputJsonValue,
       lastSyncedAt: new Date(),
     };
   }

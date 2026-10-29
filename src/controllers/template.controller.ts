@@ -79,7 +79,7 @@ export class TemplateController {
       const record = key
         ? baseId
           ? await TemplateService.getActiveForBase(key, baseId)
-          : await TemplateService.getActive(key)
+          : await TemplateService.getActiveFromCatalog(key)
         : null;
       if (!record) {
         return errorResponse(res, `Template ${key || '-'} tidak ditemukan`, 404, 'NOT_FOUND');

@@ -69,4 +69,36 @@ describe('CommentService Unit Tests', () => {
     expect(comment.text).toBe('Good point');
     expect(prisma.notification.create).toHaveBeenCalled();
   });
+
+  it('menolak komentar pada fess yang belum terbit', async () => {
+    vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+      id: 'fess_1',
+      userId: 'author_user',
+      status: 'pending',
+    } as any);
+
+    await expect(
+      CommentService.addComment('fess_1', 'Good point', {
+        id: 'commenter_user',
+        username: 'Tester',
+      })
+    ).rejects.toMatchObject({ status: 403, code: 'FESS_NOT_PUBLISHED' });
+
+    expect(prisma.comment.create).not.toHaveBeenCalled();
+  });
+
+  it('menyembunyikan komentar fess yang belum terbit sebagai 404', async () => {
+    vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+      id: 'fess_1',
+      status: 'rejected',
+    } as any);
+    vi.mocked(prisma.comment.findMany).mockResolvedValueOnce([
+      { id: 'c1', author: 'Anon', text: 'isi', createdAt: new Date() },
+    ] as any);
+
+    await expect(CommentService.getComments('fess_1')).rejects.toMatchObject({
+      status: 404,
+      code: 'NOT_FOUND',
+    });
+  });
 });

@@ -571,16 +571,20 @@ Diverifikasi langsung di kode:
 
 - [x] SEC-01 — tandatangani `state` OAuth Instagram (HMAC + exp + nonce), larang penerbitan
       sesi dari `userId` di state, cek kepemilikan `baseHandle`
-- [ ] SEC-08 — limiter Postgres untuk login/OTP, pesan login seragam, lockout, cooldown
+- [x] SEC-08 — limiter Postgres untuk login/OTP, pesan login seragam, cooldown
       `forgotPassword`, hapus verifikasi IG via `handle`
-      → verifikasi IG via `handle` **selesai** (jalur dikarang-lokal dihapus, penautan akun
-      hanya lewat `instagramId`); limiter/lockout belum
+      → verifikasi IG via `handle` selesai (jalur dikarang-lokal dihapus, penautan akun hanya
+      lewat `instagramId`); limiter dua dimensi (IP + identitas) di `/login`,
+      `/register/*`, `/forgot-password`, `/verify-reset-otp`, `/email-verification/*`;
+      pesan kredensial seragam + `DUMMY_PASSWORD_HASH`; kuota OTP per akun
 - [x] SEC-11 — validasi `baseHandle` pada `/admin/moderation` terhadap `managedBases`
-- [ ] SEC-09 — `getStatus()` Midtrans sebelum settle, strip `signature_key`
+- [x] SEC-09 — `getStatus()` Midtrans sebelum settle (fail-closed), `signature_key` tidak
+      disimpan di `PaymentEvent.payload` maupun `PaymentOrder.rawResponse`
 - [x] SEC-10 — batasi ingest `?token=` ke route login/onboarding + bersihkan dari URL
-- [ ] SEC-19, SEC-20 — wajibkan status terbit untuk komentar/vote; pakai `req.params.id`
-      → SEC-20 selesai; SEC-19 belum
-- [ ] SEC-18 — pindahkan `flag_reason`/`banned_words`/`auto_flagged` ke respons admin
+- [x] SEC-19, SEC-20 — wajibkan status terbit untuk komentar/vote; pakai `req.params.id`
+- [x] SEC-18 — `flag_reason`/`auto_flagged`/`banned_words` hanya di respons pengelola
+- [x] SEC-17 — log webhook Meta diringkas: hanya jenis objek, jumlah entry, id entry, dan
+      nama field (tanpa isi komentar/media)
 
 ### Tahap 2 — sebelum fitur uang berikutnya
 
@@ -608,11 +612,15 @@ Sisanya (SEC-23, SEC-28 … SEC-37) masuk backlog perbaikan rutin.
 | SEC-05 | `getFessById` → 404 untuk fess non-terbit kecuali penulis/pengelola base/Super Admin | `services/fess.service.ts` |
 | SEC-06 | Ketiga route `/upload` memakai `requireAuth` | `routes/upload.routes.ts` |
 | SEC-07 | `app.set('trust proxy', ENV.TRUST_PROXY)` | `app.ts`, `config/env.ts` |
-| SEC-08 (sebagian) | Verifikasi IG via `handle` dihapus (`400 INSTAGRAM_OAUTH_REQUIRED`); field `handle` dicabut dari validator | `services/instagram.service.ts`, `validators/auth.validator.ts` |
+| SEC-08 | Verifikasi IG via `handle` dihapus (`400 INSTAGRAM_OAUTH_REQUIRED`); field `handle` dicabut dari validator; limiter auth di Postgres (`RateLimitService`, dua dimensi IP + identitas, fail-open + log); pesan kredensial seragam + `DUMMY_PASSWORD_HASH`; kuota OTP 3/15 menit per akun | `middlewares/authRateLimit.middleware.ts` (baru), `routes/auth.routes.ts`, `services/auth.service.ts` |
+| SEC-09 | Notifikasi yang mengklaim `settlement`/`capture+accept` diverifikasi ke Status API Midtrans; status gateway yang dipakai (beda status → audit `PAYMENT_STATUS_MISMATCH`); gagal verifikasi → 502 `PAYMENT_STATUS_UNVERIFIED`; `signature_key` dibuang dari payload tersimpan | `services/payment.service.ts` |
 | SEC-10 | Ingest `?token=` dibatasi ke `Login`/`BaseOnboarding`/`BaseAdmin`, token dibuang dari URL via `replace: true`, redirect per role dipindah ke guard; header CSP/HSTS/`Referrer-Policy`/`X-Frame-Options`/`Permissions-Policy`/COOP di `vercel.json` | `src/router/index.js`, `views/BaseAdminDashboard.vue`, `views/BaseOnboardingPage.vue`, `vercel.json` |
 | SEC-11 | `getModerationQueue` menolak `baseHandle` yang tidak dikelola (403) | `services/admin.service.ts` |
 | SEC-15 | 5xx di produksi → pesan generik; detail tetap di log | `middlewares/error.middleware.ts` |
 | SEC-16 | `morgan` hanya aktif saat `NODE_ENV === 'development'` | `app.ts` |
+| SEC-17 | Log webhook Meta hanya memuat `object`, jumlah entry, id entry (maks 5), dan nama field (maks 10) | `routes/auth.routes.ts` |
+| SEC-18 | `auto_flagged`/`flag_reason` (fess) dan `banned_words` (base) hanya dikirim bila `includeModeration` — diisi untuk Super Admin/pengelola base | `services/fess.service.ts`, `services/base.service.ts`, `services/admin.service.ts` |
+| SEC-19 | `isPubliclyVisible()`; komentar & vote pada fess non-terbit → 403 `FESS_NOT_PUBLISHED`; daftar komentar fess non-terbit → 404 | `services/comment.service.ts`, `services/fess.service.ts` |
 | SEC-20 | `reportFess` memakai `req.params.id`; `fess_id` di body jadi opsional | `controllers/fess.controller.ts`, `validators/fess.validator.ts` |
 
 ---
@@ -629,9 +637,11 @@ dikunci sebagai test tanpa database:
 | SEC-04, SEC-05 | `GET /fesses?base=@x`, `GET /fesses?status=pending`, `GET /fesses/:id` (pending) sebagai anonim → tidak mengembalikan konten non-terbit |
 | SEC-06 | `POST /upload/sign` tanpa `Authorization` → 401 |
 | SEC-07 | `req.ip` di belakang proxy (`X-Forwarded-For`) menghasilkan key limiter berbeda per klien |
+| SEC-08 | `RateLimitService.consume` → `allowed: false` memberi 429 + `Retry-After`; email tak terdaftar dan kata sandi salah menghasilkan pesan/kode yang sama; kuota OTP habis → email tidak dikirim |
 | SEC-09 | Notifikasi dengan `transaction_status` dimodifikasi tetapi signature valid → tidak mengkredit CTF |
 | SEC-11 | Base Admin base A meminta `?base=@B` → 403 |
 | SEC-12 | Order `EXPIRED`/charge-ditolak → `Coupon.redemptionCount` kembali; `PAYMENTS_ENABLED=false` → tidak ada transisi ke PAID |
+| SEC-18 | `serializeFess`/`serializeBase` tanpa `includeModeration` tidak memuat `auto_flagged`, `flag_reason`, `banned_words` |
 | SEC-19 | Komentar/vote pada fess `pending` → 4xx |
 | SEC-20 | `POST /fesses/<A>/report` dengan body `fess_id=<B>` → laporan tercatat untuk A |
 
@@ -643,8 +653,11 @@ Catatan: `testTimeout` 30 detik di `vitest.config.ts` wajib dipertahankan untuk 
 ## 9. Catatan proses
 
 - Audit ini statis (membaca kode), bukan pentest dinamis terhadap dev/production.
-- Perbaikan Tahap 0 + SEC-01, SEC-11, SEC-20 dikerjakan di branch `fix/security-hardening`
-  (backend & frontend), **bukan** `main` (lihat `AGENTS.md`).
+- Perbaikan Tahap 0 + SEC-01, SEC-03…SEC-11, SEC-15…SEC-20 dikerjakan di branch
+  `fix/security-hardening` (backend & frontend), **bukan** `main` (lihat `AGENTS.md`).
+- Yang belum dikerjakan: SEC-12 (ekonomi billing), SEC-13 (`tokenVersion`), SEC-14
+  (seed admin), SEC-21…SEC-28 (kuota render/posting, isolasi template, SSRF DNS-aware,
+  batas pagination, hardening reconcile, draf lokal), dan backlog SEC-29…SEC-37.
 - Setelah SEC-01/SEC-02 diperbaiki, sebaiknya jalankan pentest ringan pada alur OAuth
   Instagram dan pembayaran di environment dev.
 
@@ -661,11 +674,18 @@ Catatan: `testTimeout` 30 detik di `vitest.config.ts` wajib dipertahankan untuk 
 | `Cross-Origin-Opener-Policy` | `same-origin-allow-popups` | Alur OAuth Google/Instagram membuka popup/redirect; `same-origin` penuh bisa memutus `postMessage` |
 | Verifikasi Instagram | Jalur "by handle" dihapus; hanya `token`/`code` dari Meta OAuth | Dulu profil `verified: true` dikarang lokal dari string handle, sehingga handle bisa diklaim siapa pun dan binding IG akun lain ikut terlepas (`updateMany` melepas `instagramId` lama) |
 | Login Instagram | Penautan akun hanya lewat `instagramId`, bukan kecocokan `handle` | Mencocokkan `handle` FnC dengan username IG = takeover: buat akun IG bernama sama dengan handle korban, login, dapat sesi korban |
+| Limiter auth | Tabel `RateLimitBucket` (Postgres) lewat `RateLimitService`, dua dimensi kunci (IP + identitas), **fail-open** bila DB error | Limiter in-memory per instance tidak berlaku di Vercel (tiap invocation bisa punya memori sendiri), jadi brute force paralel lolos. Fail-open dipilih karena gangguan DB tidak boleh mematikan seluruh login; kegagalannya dicatat ke log |
+| Pesan login | Satu pesan `'Email/username atau kata sandi salah.'` + `comparePassword` terhadap hash dummy | Membedakan "tidak ditemukan" vs "kata sandi salah" memungkinkan enumerasi akun; compare dummy menyamakan waktu respons |
+| Kuota OTP | 3 kiriman / 15 menit per akun, dihitung di Postgres; saat kuota habis tetap dibalas pesan generik | Mencegah email bombing ke inbox korban sekaligus membakar kuota Resend, tanpa membocorkan keberadaan akun |
+| SEC-09 | Klaim `settlement`/`capture+accept` dari webhook diverifikasi ke `GET /v2/{order_id}/status`; status gateway yang dipakai; gagal verifikasi → 502 (Midtrans retry) | Signature Midtrans tidak mengikat `transaction_status`, jadi payload lama yang sah bisa diputar ulang sebagai settlement. Fail-closed lebih aman: order tertunda daripada CTF terkredit tanpa uang masuk. `signature_key` dibuang dari payload tersimpan agar dump DB tidak menjadi bahan replay |
+| SEC-18 | `auto_flagged`/`flag_reason`/`banned_words` hanya dikirim bila opsi `includeModeration` aktif | Metadata filter NLP membocorkan kata/kategori pemicu, sehingga penulis bisa menyusun konten agar lolos moderasi |
+| SEC-19 | Fess non-terbit → komentar/vote 403 `FESS_NOT_PUBLISHED`, daftar komentar 404 | Komentar/vote sebelum terbit tidak punya arti di UI dan membuka jalan menguji/memanipulasi antrean moderasi. Baris lama tanpa `status` tetap dianggap terbit agar konten yang sudah tampil tidak terkunci |
 
 ### 9.2 Verifikasi
 
-- `npx vitest run` di `backend`: **45 file / 581 test lulus** (termasuk suite baru
-  `tests/oauth-state.util.test.ts` dan test regresi SEC-03/04/05/11/20).
+- `npx vitest run` di `backend`: **46 file / 602 test lulus** (termasuk suite baru
+  `tests/oauth-state.util.test.ts`, `tests/authRateLimit.middleware.test.ts`, dan test regresi
+  SEC-03/04/05/08/09/11/18/19/20).
 - `npm run build` di `backend` dan `frontend`: lulus.
 - `npm run format:check` di `frontend` **sudah gagal sebelum perubahan ini** karena
   `core.autocrlf=true` di Windows sementara `.prettierrc.json` menetapkan `endOfLine: "lf"`

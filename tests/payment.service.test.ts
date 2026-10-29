@@ -162,6 +162,12 @@ describe('PaymentService', () => {
     vi.mocked(prisma.couponRedemption.updateMany).mockResolvedValue({ count: 1 } as any);
     vi.mocked(prisma.couponRedemption.findUnique).mockResolvedValue(null);
     vi.spyOn(MidtransService, 'verifySignature').mockReturnValue(true);
+    // Klaim settlement diverifikasi ke Status API (SEC-09).
+    vi.spyOn(MidtransService, 'getStatus').mockResolvedValue({
+      status_code: '200',
+      transaction_status: 'settlement',
+      fraud_status: 'accept',
+    });
     vi.spyOn(MidtransService, 'charge').mockResolvedValue({
       transactionId: 'tx-1',
       transactionStatus: 'pending',
@@ -467,6 +473,71 @@ describe('PaymentService', () => {
         data: expect.objectContaining({ status: 'PROCESSED' }),
       })
     );
+  });
+
+  it('does not credit CTF when Midtrans still reports the order as pending', async () => {
+    vi.mocked(prisma.paymentOrder.findUnique).mockResolvedValue(order as any);
+    vi.mocked(MidtransService.getStatus).mockResolvedValueOnce({
+      status_code: '200',
+      transaction_status: 'pending',
+      fraud_status: 'accept',
+    });
+
+    const result = await PaymentService.handleNotification({
+      order_id: order.orderId,
+      transaction_id: 'tx-1',
+      transaction_status: 'settlement',
+      status_code: '200',
+      gross_amount: '5000.00',
+      currency: 'IDR',
+      fraud_status: 'accept',
+      signature_key: 'valid-signature',
+    });
+
+    expect(result).toMatchObject({ status: 'pending' });
+    expect(CtfWalletService.credit).not.toHaveBeenCalled();
+    expect(prisma.adminAuditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ action: 'PAYMENT_STATUS_MISMATCH' }),
+      })
+    );
+  });
+
+  it('fails closed when the Status API cannot confirm a settlement', async () => {
+    vi.mocked(prisma.paymentOrder.findUnique).mockResolvedValue(order as any);
+    vi.mocked(MidtransService.getStatus).mockResolvedValueOnce(null);
+
+    await expect(
+      PaymentService.handleNotification({
+        order_id: order.orderId,
+        transaction_id: 'tx-1',
+        transaction_status: 'settlement',
+        status_code: '200',
+        gross_amount: '5000.00',
+        currency: 'IDR',
+        signature_key: 'valid-signature',
+      })
+    ).rejects.toMatchObject({ code: 'PAYMENT_STATUS_UNVERIFIED', status: 502 });
+
+    expect(CtfWalletService.credit).not.toHaveBeenCalled();
+  });
+
+  it('does not store the webhook signature in PaymentEvent', async () => {
+    vi.mocked(prisma.paymentOrder.findUnique).mockResolvedValue(order as any);
+
+    await PaymentService.handleNotification({
+      order_id: order.orderId,
+      transaction_id: 'tx-1',
+      transaction_status: 'settlement',
+      status_code: '200',
+      gross_amount: '5000.00',
+      currency: 'IDR',
+      signature_key: 'valid-signature',
+    });
+
+    const createCall: any = vi.mocked(prisma.paymentEvent.create).mock.calls[0][0];
+    expect(createCall.data.payload).not.toHaveProperty('signature_key');
+    expect(createCall.data.payload.order_id).toBe(order.orderId);
   });
 
   it('does not credit CTF when the notification amount is wrong', async () => {

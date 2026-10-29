@@ -29,6 +29,10 @@ declare global {
   namespace Express {
     // eslint-disable-next-line @typescript-eslint/no-empty-object-type
     interface User extends AuthenticatedUser {}
+    interface Request {
+      /** Diisi `optionalAuth` saat token valid tetapi akunnya dibekukan. */
+      authBlocked?: 'BANNED';
+    }
   }
 }
 
@@ -186,6 +190,26 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   }
 }
 
+/**
+ * Menandai sesi yang ditolak `optionalAuth` (akun dibekukan).
+ *
+ * `optionalAuth` sengaja membiarkan pengunjung tanpa sesi lewat, sehingga akun
+ * yang dibekukan akan otomatis "menjadi anonim" dan tetap bisa memakai endpoint
+ * tulis yang menerima pengunjung anonim. Middleware ini menutup celah itu tanpa
+ * mengubah perilaku endpoint baca.
+ */
+export function denyBannedSession(req: Request, res: Response, next: NextFunction) {
+  if (req.authBlocked === 'BANNED') {
+    return errorResponse(
+      res,
+      'Akun Anda sedang dibekukan sehingga tidak dapat mengirim konten.',
+      403,
+      'ACCOUNT_BANNED'
+    );
+  }
+  next();
+}
+
 export async function optionalAuth(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -198,7 +222,9 @@ export async function optionalAuth(req: Request, res: Response, next: NextFuncti
     const found = await findAuthUser(payload.sub);
     const user = found ? await clearExpiredBan(found) : null;
 
-    if (user && !hasActiveBan(user) && (!user.email || user.emailVerifiedAt)) {
+    if (user && hasActiveBan(user)) {
+      req.authBlocked = 'BANNED';
+    } else if (user && (!user.email || user.emailVerifiedAt)) {
       req.user = toAuthenticatedUser(user);
     }
   } catch {

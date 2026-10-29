@@ -3,9 +3,11 @@ import { FessController } from '../controllers/fess.controller.js';
 import { CommentController } from '../controllers/comment.controller.js';
 import {
   optionalAuth,
+  denyBannedSession,
   requireAuth,
   requireBaseAdmin,
 } from '../middlewares/auth.middleware.js';
+import { quotaRateLimit } from '../services/rate-limit.service.js';
 import { validateBody, validateQuery } from '../middlewares/validate.middleware.js';
 import {
   CanvasPreviewSchema,
@@ -21,11 +23,38 @@ import { AddCommentSchema, GetCommentsQuerySchema } from '../validators/comment.
 const router = Router();
 
 router.get('/', optionalAuth, validateQuery(GetFessesQuerySchema), FessController.getFesses);
-router.post('/', optionalAuth, validateBody(CreateFessSchema), FessController.createFess);
+// Posting menerima pengunjung anonim (mode trial), jadi kuota disimpan di
+// Postgres: per IP untuk mencegah satu host membanjiri antrean moderasi, dan
+// per akun agar satu akun tidak memutar batas IP lewat banyak jaringan.
+router.post(
+  '/',
+  optionalAuth,
+  denyBannedSession,
+  quotaRateLimit({
+    name: 'create-fess',
+    userLimit: 30,
+    ipLimit: 20,
+    windowSeconds: 60 * 60,
+    message: 'Terlalu banyak confession yang dikirim. Coba lagi nanti.',
+    code: 'FESS_RATE_LIMITED',
+  }),
+  validateBody(CreateFessSchema),
+  FessController.createFess
+);
 // Pratinjau kartu untuk modal konfirmasi posting (tanpa menyimpan apa pun).
+// Render resvg/sharp mahal secara CPU, jadi kuotanya lebih ketat.
 router.post(
   '/canvas/preview',
   optionalAuth,
+  denyBannedSession,
+  quotaRateLimit({
+    name: 'canvas-preview',
+    userLimit: 60,
+    ipLimit: 30,
+    windowSeconds: 10 * 60,
+    message: 'Terlalu banyak pratinjau kartu. Tunggu beberapa menit.',
+    code: 'CANVAS_RATE_LIMITED',
+  }),
   validateBody(CanvasPreviewSchema),
   FessController.previewCanvas
 );

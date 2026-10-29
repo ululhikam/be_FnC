@@ -143,7 +143,9 @@ export const ENV = {
   AI_BASE_URL:
     process.env.AI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai',
   AI_API_KEY: process.env.AI_API_KEY || '',
-  AI_MODEL: process.env.AI_MODEL || 'gemini-2.5-flash-lite',
+  // Model lite dipilih karena murah/cepat; `gemini-2.5-flash-lite` sudah tidak
+  // tersedia untuk key baru (Google menyarankan `gemini-3.5-flash-lite`).
+  AI_MODEL: process.env.AI_MODEL || 'gemini-3.5-flash-lite',
   AI_TIMEOUT_MS: positiveInt(process.env.AI_TIMEOUT_MS, 6000, 30000),
   AI_MAX_INPUT_CHARS: positiveInt(process.env.AI_MAX_INPUT_CHARS, 6000, 20000),
 

@@ -270,8 +270,8 @@ export interface AiProvider {
 
 | Provider | `AI_BASE_URL` | Contoh `AI_MODEL` | Catatan |
 |---|---|---|---|
-| **Gemini (default)** | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-2.5-flash-lite` | Default dev & production. Tanpa perantara, latensi rendah dari `syd1`; batas RPM/RPD terpisah dari OpenRouter |
-| OpenRouter (cadangan) | `https://openrouter.ai/api/v1` | `deepseek/deepseek-chat-v3.1:free` | Failover + satu key banyak model. Model `:free` batasnya ketat (±50/hari). Kirim header `HTTP-Referer` & `X-Title` untuk atribusi |
+| **Gemini (default)** | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-3.5-flash-lite` | Default dev & production. Tanpa perantara, latensi rendah dari `syd1`; batas RPM/RPD terpisah dari OpenRouter. `gemini-2.5-flash-lite` sudah ditolak untuk key baru (404 "no longer available to new users") |
+| OpenRouter (cadangan) | `https://openrouter.ai/api/v1` | `deepseek/deepseek-v3.2` | Failover + satu key banyak model. Model `:free` sering kena 429/guardrail akun, jadi dipakai model berbayar murah (≈US$0,00002/judul). Kirim header `HTTP-Referer` & `X-Title` untuk atribusi |
 | DeepSeek langsung | `https://api.deepseek.com/v1` | `deepseek-chat` | Murah, berbayar |
 | OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` | Berbayar, kebijakan data paling jelas |
 
@@ -562,14 +562,14 @@ THUMBNAIL_MAX_MEDIA_FETCH_BYTES=8388608
 AI_ENABLED=true
 AI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
 AI_API_KEY=
-AI_MODEL=gemini-2.5-flash-lite
+AI_MODEL=gemini-3.5-flash-lite
 AI_TIMEOUT_MS=6000
 AI_MAX_INPUT_CHARS=6000
 
 # Cadangan opsional (dipakai sekali saat provider utama 429/5xx/timeout)
 AI_FALLBACK_BASE_URL=https://openrouter.ai/api/v1
 AI_FALLBACK_API_KEY=
-AI_FALLBACK_MODEL=deepseek/deepseek-chat-v3.1:free
+AI_FALLBACK_MODEL=deepseek/deepseek-v3.2
 
 # Plafon internal (bukan dolar), dijaga di Postgres
 AI_RPM_LIMIT=10                      # di bawah ±15 RPM Gemini Flash-Lite
@@ -710,6 +710,24 @@ Catatan P2:
 - Provider OpenAI-compatible tidak mendukung `response_format`, sehingga JSON dipaksa lewat prompt dan dibaca `parseJsonObject` yang toleran (pagar kode/teks pengantar).
 - `AI_ENABLED=false` atau `AI_API_KEY` kosong → seluruh fitur judul mati dan thumbnail memakai `fallbackTitle()`; `Base.thumbnailMode=no_ai` juga melewati AI tanpa memanggil provider.
 
+### 16.3 Hasil uji langsung (dev, 29 Okt 2026)
+
+Uji dijalankan lewat `AiService.generateTitle` dengan env dev sungguhan (DB dev untuk kuota/ledger):
+
+| Uji | Hasil |
+|---|---|
+| Provider utama Gemini `gemini-3.5-flash-lite` | ✅ HTTP 200, 2,4 s, judul valid, ledger `status=ok` (217 token in / 12 out) |
+| Panggilan kedua dengan isi sama | ✅ `source=cache`, tanpa panggilan provider |
+| Failover (provider utama dipaksa 429) | ✅ OpenRouter `deepseek/deepseek-v3.2`, `source=ai`, judul valid |
+| Kuota Postgres (`RateLimitBucket`) | ✅ per base → global → RPM berjalan |
+
+Temuan yang mengubah konfigurasi:
+
+1. `gemini-2.5-flash-lite` sudah **tidak tersedia untuk key baru** (404 `no longer available to new users`); dipakai `gemini-3.5-flash-lite`.
+2. `gemini-3.5-flash` (non-lite) menghabiskan token untuk reasoning → `finish_reason=length` tanpa teks; jangan dipakai untuk judul.
+3. `AI_BASE_URL` harus berakhir di `/v1beta/openai`; `/v1beta/interactions` (API baru Google) bukan OpenAI-compatible dan selalu 404 dengan adapter ini.
+4. Model `:free` di OpenRouter diblokir kebijakan data akun (`guardrail restrictions`/429). Cadangan karena itu memakai model berbayar termurah `deepseek/deepseek-v3.2` (≈US$0,00002 per judul, terverifikasi 200 + usage `cost`).
+
 ---
 
 ## 17. Risiko & mitigasi
@@ -776,7 +794,7 @@ Catatan P2:
 
 Sudah diputuskan:
 
-- **Provider**: Gemini free tier (`https://generativelanguage.googleapis.com/v1beta/openai`, `gemini-2.5-flash-lite`) sebagai utama, **OpenRouter** (`deepseek/deepseek-chat-v3.1:free`) sebagai cadangan failover. Keduanya lewat adapter OpenAI-compatible yang sama; ganti model/provider cukup lewat env.
+- **Provider**: Gemini free tier (`https://generativelanguage.googleapis.com/v1beta/openai`, `gemini-3.5-flash-lite`) sebagai utama, **OpenRouter** (`deepseek/deepseek-v3.2`) sebagai cadangan failover. Keduanya lewat adapter OpenAI-compatible yang sama; ganti model/provider cukup lewat env.
 - **Tier gratis dipakai di dev dan production** — dengan kill switch tetap tersedia.
 - **Opt-out per base aktif sejak rilis** (`auto`/`no_ai`/`off`, dikelola via API/DB; UI menyusul).
 - **Kuota internal longgar**: 1.000/hari global, 200/hari/base, 10 RPM — dibatasi plafon provider, bukan plafon internal.
@@ -787,7 +805,7 @@ Sudah diputuskan:
 
 Masih perlu konfirmasi (bisa dijawab saat implementasi, tidak memblokir P1):
 
-1. **Model Gemini** final: `gemini-2.5-flash-lite` atau `gemini-2.5-flash`? (uji 20 sampel judul dulu)
+1. **Model Gemini** final: `gemini-3.5-flash-lite` (dipakai P2; `gemini-2.5-flash-lite` sudah ditolak untuk key baru, dan `gemini-3.5-flash` menghabiskan token untuk reasoning sehingga jawabannya kosong)? (uji 20 sampel judul dulu)
 2. Apakah **provider cadangan OpenRouter** diaktifkan sejak P2, atau hanya disiapkan sebagai konfigurasi?
 3. **Opt-out**: cukup lewat API/DB dulu, atau UI pengaturan base ikut di P4?
 

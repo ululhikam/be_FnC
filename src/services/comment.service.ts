@@ -2,6 +2,16 @@ import { prisma } from '../config/prisma.js';
 
 export class CommentService {
   /**
+   * Fess hanya boleh dikomentari/di-vote setelah terbit. Baris lama tanpa
+   * `status` (mis. data hasil migrasi) dianggap terbit agar tidak mengunci
+   * konten yang sudah tampil di feed.
+   */
+  static isPubliclyVisible(fess: { status?: string | null }): boolean {
+    if (!fess.status) return true;
+    return fess.status === 'published' || fess.status === 'approved';
+  }
+
+  /**
    * Get comments for a fess
    */
   static async getComments(fessId: string, page = 1, limit = 20) {
@@ -10,7 +20,7 @@ export class CommentService {
     // Dua query ini tidak saling bergantung. Jalankan paralel agar daftar
     // komentar tidak menunggu query validasi fess lebih dulu.
     const [fess, comments] = await Promise.all([
-      prisma.fess.findUnique({ where: { id: fessId }, select: { id: true } }),
+      prisma.fess.findUnique({ where: { id: fessId }, select: { id: true, status: true } }),
       prisma.comment.findMany({
         where: { fessId },
         skip,
@@ -20,6 +30,15 @@ export class CommentService {
     ]);
 
     if (!fess) {
+      const err: any = new Error('Fess tidak ditemukan');
+      err.status = 404;
+      err.code = 'NOT_FOUND';
+      throw err;
+    }
+
+    // Komentar fess non-terbit tidak boleh dibaca publik: isinya bisa memuat
+    // potongan konten yang belum lolos moderasi.
+    if (!CommentService.isPubliclyVisible(fess)) {
       const err: any = new Error('Fess tidak ditemukan');
       err.status = 404;
       err.code = 'NOT_FOUND';
@@ -49,6 +68,16 @@ export class CommentService {
       const err: any = new Error('Fess tidak ditemukan');
       err.status = 404;
       err.code = 'NOT_FOUND';
+      throw err;
+    }
+
+    // Komentar pada fess yang belum/tidak terbit hanya akan muncul ke publik
+    // setelah fess itu terbit, dan saat ini membuka jalan bagi penyerang untuk
+    // menguji/membanjiri antrean moderasi. Tolak sampai fess benar-benar terbit.
+    if (!CommentService.isPubliclyVisible(fess)) {
+      const err: any = new Error('Fess ini belum terbit sehingga belum bisa dikomentari.');
+      err.status = 403;
+      err.code = 'FESS_NOT_PUBLISHED';
       throw err;
     }
 

@@ -844,6 +844,23 @@ describe('FessService Unit Tests', () => {
       expect(result.user_vote).toBe('down');
     });
 
+    it('should reject voting on a fess that is not published yet', async () => {
+      vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+        id: 'fess_pending',
+        status: 'pending',
+        upvotes: 0,
+        downvotes: 0,
+      } as any);
+
+      await expect(FessService.voteFess('fess_pending', 'up', 'usr_1')).rejects.toMatchObject({
+        status: 403,
+        code: 'FESS_NOT_PUBLISHED',
+      });
+
+      expect(prisma.vote.findUnique).not.toHaveBeenCalled();
+      expect(prisma.vote.create).not.toHaveBeenCalled();
+    });
+
     it('should create ONE aggregated like notification on first upvote', async () => {
       vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
         id: 'fess_1',

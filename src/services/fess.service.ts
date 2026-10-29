@@ -712,6 +712,16 @@ export class FessService {
   }
 
   /**
+   * Fess dianggap terlihat publik hanya bila sudah terbit. Baris tanpa `status`
+   * (data lama) diperlakukan sebagai terbit agar konten yang sudah tampil tidak
+   * tiba-tiba terkunci.
+   */
+  static isPubliclyVisible(fess: { status?: string | null }): boolean {
+    if (!fess.status) return true;
+    return fess.status === 'published' || fess.status === 'approved';
+  }
+
+  /**
    * Viewer boleh melihat konten non-terbit (pending/rejected) hanya bila ia
    * mengelola base tersebut, atau Super Admin untuk dukungan.
    *
@@ -792,6 +802,15 @@ export class FessService {
       const err: any = new Error('Fess tidak ditemukan');
       err.status = 404;
       err.code = 'NOT_FOUND';
+      throw err;
+    }
+
+    // Vote pada fess non-terbit tidak punya arti di UI dan bisa dipakai untuk
+    // mengukur/memanipulasi antrean moderasi sebelum konten disetujui.
+    if (!this.isPubliclyVisible(fess)) {
+      const err: any = new Error('Fess ini belum terbit sehingga belum bisa diberi vote.');
+      err.status = 403;
+      err.code = 'FESS_NOT_PUBLISHED';
       throw err;
     }
 

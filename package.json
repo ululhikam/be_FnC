@@ -18,6 +18,8 @@
     "prisma:push:dev": "node --env-file=.env.development ./node_modules/prisma/build/index.js db push",
     "prisma:migrate:dev": "node --env-file=.env.development ./node_modules/prisma/build/index.js migrate dev",
     "prisma:seed:dev": "node --env-file=.env.development ./node_modules/tsx/dist/cli.mjs prisma/seed.ts",
+    "seed:demo": "tsx prisma/seed-demo.ts",
+    "seed:demo:dev": "node --env-file=.env.development ./node_modules/tsx/dist/cli.mjs prisma/seed-demo.ts",
     "template:measure": "node scripts/measure-templates.mjs --dir assets/templates --json docs/template-geometry.json",
     "template:verify": "node scripts/verify-geometry.mjs --dir assets/templates",
     "template:import:dev": "node --env-file=.env.development scripts/import-templates.mjs",

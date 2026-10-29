@@ -1,11 +1,12 @@
 import { z } from 'zod';
+import { PageQuerySchema } from './pagination.validator.js';
 import { AvatarSchema } from './avatar.validator.js';
 
 export const GetBasesQuerySchema = z.object({
   search: z.string().optional(),
   following: z.enum(['true', 'false']).optional(),
   category: z.enum(['Semua', 'Kampus', 'Kota', 'Hobi', 'Umum']).optional(),
-  page: z.coerce.number().int().min(1).default(1),
+  page: PageQuerySchema,
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 
@@ -60,12 +61,12 @@ export const BaseFessesQuerySchema = z.object({
   /** Khusus admin base: hanya fess yang memiliki laporan pending. */
   reported: z.enum(['true', 'false']).optional(),
   sort: z.enum(['newest', 'popular']).default('newest'),
-  page: z.coerce.number().int().min(1).default(1),
+  page: PageQuerySchema,
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 
 export const BaseFollowersQuerySchema = z.object({
   search: z.string().optional(),
-  page: z.coerce.number().int().min(1).default(1),
+  page: PageQuerySchema,
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });

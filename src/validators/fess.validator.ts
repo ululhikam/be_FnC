@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PageQuerySchema } from './pagination.validator.js';
 
 export const MediaItemSchema = z.object({
   // ID stabil dari composer; dipakai token carousel_order "media:<id>".
@@ -110,11 +111,13 @@ export const GetFessesQuerySchema = z.object({
   // 'approved' = alias istilah tampilan frontend untuk fess terbit ('published');
   // service sudah menanganinya sebagai { in: ['published', 'approved'] }.
   status: z.enum(['published', 'approved', 'pending', 'rejected']).optional(),
-  query: z.string().optional(),
+  query: z.string().max(100, 'Kata kunci maksimal 100 karakter').optional(),
   /** Feed "Mengikuti": hanya fess dari base yang diikuti user. */
   following: z.enum(['true', 'false']).optional(),
   sort: z.enum(['newest', 'popular']).default('newest'),
-  page: z.coerce.number().int().min(1).default(1),
+  // Batas atas mencegah `skip` raksasa (offset besar memaksa Postgres memindai
+  // seluruh baris sebelum dibuang) yang bisa dipakai untuk membebani database.
+  page: PageQuerySchema,
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 

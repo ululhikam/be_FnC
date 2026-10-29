@@ -88,7 +88,7 @@ Konsekuensi penting:
 | D1 | Thumbnail dibuat **saat publish/render**, bukan saat upload | Render di klien, render saat upload | Judul butuh isi fess final + moderasi; upload bisa ditinggal (biaya sia-sia); klien tidak bisa dipercaya |
 | D2 | Thumbnail = slide ke-1 carousel | Post terpisah, story | Permintaan produk: "paling depan fess yang dipost di IG" |
 | D3 | Thumbnail **hanya** dibuat bila ada ≥1 foto gambar | Selalu, walau tanpa foto | Tanpa foto, cover hanyalah kartu teks duplikat |
-| D4 | Komposisi dua zona: pita judul berwarna base/template + foto user utuh di bawah; letterbox memakai salinan foto blur | Putih polos, AI image generation | Murah, deterministik, on-brand, foto tidak tertutup/diblur, tanpa kirim foto ke pihak ketiga |
+| D4 | Foto user penuh (cover, tanpa blur) + judul kecil di area bawah dengan scrim gelap | Putih polos, AI image generation, pita judul besar | Murah, deterministik, foto dominan & tidak tertutup judul, tanpa kirim foto ke pihak ketiga |
 | D5 | AI hanya untuk **teks** (judul + metadata), provider di balik interface | AI vision/gambar | Privasi, biaya, determinisme, audit lebih mudah |
 | D6 | AI selalu punya **fallback deterministik** | Blokir publish bila AI gagal | Publish tidak boleh gagal karena pihak ketiga |
 | D7 | Judul **final**, tidak bisa diedit; disimpan agar rendering & retry konsisten | Editor judul manual | Keputusan produk: judul murni hasil AI, tanpa kurasi per fess; mengurangi permukaan UI & audit |
@@ -140,9 +140,8 @@ exportFessCanvasUnsafe(fessId)
         │      │        ├─ thumbnail ready + foto sama → pakai judul tersimpan
         │      │        ├─ Base.thumbnailMode=auto & AI aktif → AiService.generateTitle(...)
         │      │        └─ no_ai / AI mati / gagal / timeout / kuota → fallbackTitle(content)
-        │      ├─ pita judul: warna template/base (fallback palet foto)
-        │      ├─ foto user: contain utuh di zona bawah, letterbox = salinan blur
-        │      ├─ overlay teks + watermark (hanya @handle base)
+        │      ├─ foto penuh (cover, tanpa blur) + judul kecil & handle base di area bawah
+        │      ├─ overlay teks + scrim bawah + watermark (hanya @handle base)
         │      ├─ resvg → JPEG 1080×1350 q90 → storage canvas-thumbnails/
         │      └─ update Fess (url, status, title, sourceMediaId, promptVersion)
         ├─ 3. susun postItems = [thumbnail, ...kartu, ...media] (maks 10)
@@ -175,23 +174,23 @@ createAdminTemplate / updateAdminTemplate  (validasi backend tetap berlaku)
 
 Kanvas **1080×1350** (4:5, sama dengan `ASPECTS.portrait`), output **JPEG q90** sRGB.
 
-Komposisi **dua zona**: judul di pita atas, foto user utuh di zona bawah. Foto
-tidak pernah ditutup judul dan tidak pernah diblur seluruhnya.
+Komposisi: **foto penuh** memenuhi kartu, judul kecil + handle base di area bawah.
+Foto tidak diblur, tidak diberi pita judul besar, dan hanya bagian bawah tertutup
+scrim gradien tipis agar teks terbaca.
 
 | Layer | Isi | Aturan |
 |---|---|---|
-| L0 | Pita judul (atas) | Gradien dari **warna base/template** (`Base.color`), fallback palet foto, fallback `#0055ff`. Tinggi 356–588 px mengikuti jumlah baris judul |
-| L1 | Foto user (bawah) | `fit: contain` — utuh, tanpa crop, tanpa blur. Area letterbox diisi salinan foto `cover` + `blur(40)` + `brightness 0.82`, jadi bingkai mengikuti warna foto (bukan putih polos) |
-| L2 | Aksen | Garis pendek di atas label + ring tipis + garis pemisah 3 px di batas pita judul, memakai warna aksen turunan base |
-| L3 | Judul | Poppins **800** uppercase, auto-fit 84→40 px, maks 3 baris, hindari baris terakhir satu kata |
-| L4 | Label base | Nama base kecil di atas judul, `Poppins 600`, 24 px, `letter-spacing 4` |
-| L5 | Watermark | **Hanya** `@handle` base di pita bawah (`Poppins 700`, 36 px). Handle akun/domain platform tidak dirender |
-| L6 | Zona aman | Margin 72 px; judul tidak menyentuh foto (pita judul punya padding bawah 48 px) |
+| L0 | Foto user | `fit: cover` penuh 1080×1350 (tanpa blur). Kekurangan ruang dipotong di tepi, bukan diisi putih |
+| L1 | Scrim bawah | Gradien gelap dari ~y 1000 ke bawah: `alpha 0` → `0.62` → `0.95`, hanya di area teks |
+| L2 | Aksen | Garis pendek 96×5 px di atas judul + titik di depan handle, memakai warna turunan `Base.color` |
+| L3 | Judul | Poppins **800** uppercase, auto-fit 60→36 px, maks 3 baris, ukuran "kecil" supaya foto tetap dominan |
+| L4 | Handle base | `@handle` base (Poppins 600, 28 px) di baris paling bawah. Nama base & domain platform tidak dirender |
+| L5 | Zona aman | Margin 72 px; baseline judul terakhir 1246, baseline handle 1308 |
 
 Aturan tambahan:
 
-- **Kontras wajib** ≥ 4.5:1 (target 7:1). Karena judul kini berada di atas warna solid pita judul (bukan foto), kontras dijamin lewat `pickInkColor()` pada warna pita — tanpa plat semi-transparan.
-- **Tanpa hex baru di kode** hanya berlaku untuk frontend; backend menghitung warna dari base/foto, bukan dari konstanta tema.
+- **Kontras wajib** ≥ 4.5:1 (target 7:1). Judul selalu putih di atas scrim gelap 0.62–0.95, sehingga foto terang/gelap sama-sama aman.
+- **Tanpa hex baru di kode** hanya berlaku untuk frontend; backend menghitung warna aksen dari base/foto.
 - **Determinisme**: palet dari downscale 24×30 + kuantisasi; tidak ada `Math.random()` — hasil untuk input sama harus sama (memudahkan uji & retry).
 - **Emoji** di judul maksimal 1, karena emoji dirender lewat `assets/emoji-paths.json` (Twemoji), bukan font sistem.
 - **Fallback tanpa foto** (hanya video, atau tanpa media sama sekali): **tidak ada** slide thumbnail. Publish berjalan seperti sebelum fitur ini (lihat §6 poin 4).
@@ -202,16 +201,14 @@ Contoh komposisi:
 
 ```text
 ┌──────────────────────────────┐
+│                              │
+│                              │
+│        [foto user penuh]     │
+│      (cover, tanpa blur)     │
+│                              │
 │  ▬▬                          │
-│  UNERMEN FESS                │
 │  KANTIN KAMPUS               │
 │  TUTUP LEBIH AWAL            │
-├──────────────────────────────┤
-│                              │
-│        [foto user utuh]      │
-│   bingkai = salinan blur     │
-│                              │
-├──────────────────────────────┤
 │  • @unermenfess              │
 └──────────────────────────────┘
 ```

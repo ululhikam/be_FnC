@@ -179,7 +179,7 @@ describe('ThumbnailService.ensure', () => {
   });
 });
 
-describe('ThumbnailService — komposisi dua zona', () => {
+describe('ThumbnailService — komposisi foto penuh', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -224,34 +224,30 @@ describe('ThumbnailService — komposisi dua zona', () => {
     return { rendered, pixel };
   }
 
-  it('pita judul memakai warna base/template, bukan foto', async () => {
+  it('foto memenuhi kartu — tidak ada pita judul di atas', async () => {
     const { pixel } = await render(1600, 900);
-    const band = pixel(40, 200);
-    // Base ungu-pink digelapkan → merah lebih besar dari hijau.
-    expect(band.r).toBeGreaterThan(band.g);
-    expect(band.b).toBeGreaterThan(band.g);
+    // Sudut atas = foto (hijau), bukan pita warna base.
+    const top = pixel(40, 60);
+    expect(top.g).toBeGreaterThan(120);
+    expect(top.r).toBeLessThan(60);
   });
 
-  it('foto tampil utuh (tidak di-crop/diblur) di zona bawah', async () => {
+  it('judul kecil berada di area bawah dengan scrim gelap', async () => {
     const { pixel } = await render(1600, 900);
-    // Titik tengah zona foto: warna asli foto (hijau), bukan warna pita judul.
-    const center = pixel(540, 900);
-    expect(center.g).toBeGreaterThan(120);
-    expect(center.r).toBeLessThan(60);
+    // Dasar kartu digelapkan agar teks putih terbaca di atas foto apa pun.
+    const bottom = pixel(540, 1340);
+    expect(bottom.r + bottom.g + bottom.b).toBeLessThan(200);
+    // Bagian tengah foto tidak ikut digelapkan.
+    const middle = pixel(540, 600);
+    expect(middle.g).toBeGreaterThan(120);
   });
 
-  it('letterbox foto memakai salinan blur, bukan putih polos', async () => {
-    const { pixel } = await render(1080, 1350);
-    // Foto 4:5 di zona yang lebih lebar → ada bingkai kiri/kanan.
-    const edge = pixel(8, 900);
-    expect(Math.min(edge.r, edge.g, edge.b)).toBeLessThan(180);
-    expect(edge.g).toBeGreaterThan(edge.r);
-  });
-
-  it('footer hanya memuat pita watermark gelap di bawah foto', async () => {
+  it('tidak memakai blur pada foto utama', async () => {
     const { pixel } = await render(1600, 900);
-    const footer = pixel(540, 1290);
-    expect(footer.r + footer.g + footer.b).toBeLessThan(200);
+    // Foto uji solid: kalau di-blur seluruhnya + brightness 0.72, hijaunya
+    // turun drastis. Sharp tanpa blur mempertahankan warna asli.
+    const middle = pixel(540, 600);
+    expect(middle.g).toBeGreaterThan(140);
   });
 });
 

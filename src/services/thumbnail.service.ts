@@ -1,13 +1,9 @@
 /**
  * Thumbnail cover Instagram (slide indeks 0).
  *
- * Komposisi dua zona (bukan foto full-bleed):
- *   • pita judul di atas — warna dari template/base (fallback palet foto),
- *   • foto user utuh di bawah — `contain`, sisa ruang diisi salinan foto blur,
- *   • pita watermark di paling bawah — handle base + host frontend.
- *
- * Foto tidak pernah ditutup judul atau diblur seluruhnya: hanya letterbox di
- * sekeliling foto yang memakai salinan blur supaya bingkai tidak putih polos.
+ * Komposisi: foto user memenuhi seluruh kartu (cover, tanpa blur), lalu judul
+ * kecil + handle base ditumpuk di area bawah dengan scrim gelap tipis supaya
+ * teks terbaca tanpa menutupi foto.
  *
  * Judul: dibuat AI (P2) bila base memakai mode `auto` dan AI aktif; selain itu
  * `fallbackTitle()` deterministik. Judul bersifat final — tidak bisa diedit.
@@ -32,7 +28,6 @@ import {
   isThumbnailModeAllowed,
   mixHex,
   parseHex,
-  pickInkColor,
   rgba,
   selectCoverMedia,
   watermarkLabel,
@@ -50,17 +45,10 @@ export const FALLBACK_PROMPT_VERSION = 'fallback';
 export const PREVIEW_FESS_ID = 'preview';
 
 const TITLE_MARGIN_X = 72;
-/** Ukuran font label base di atas judul (px). */
-const LABEL_SIZE = 24;
-const LABEL_BASELINE = 112;
-/** Awal kotak judul (di bawah garis aksen + label). */
-const TITLE_TOP = 142;
-/** Pita watermark bawah: handle base + host frontend. */
-const FOOTER_HEIGHT = 132;
-const PHOTO_BOTTOM = THUMBNAIL_HEIGHT - FOOTER_HEIGHT;
-/** Tinggi pita judul dijepit agar foto selalu kebagian ruang yang layak. */
-const TITLE_BAND_MIN = 356;
-const TITLE_BAND_MAX = 588;
+/** Baseline baris terakhir judul (judul menempel di dasar kartu). */
+const TITLE_LAST_BASELINE = 1246;
+/** Baseline handle base di paling bawah. */
+const HANDLE_BASELINE = 1308;
 const BRAND_FALLBACK = '#0055ff';
 const NIGHT = '#05070c';
 
@@ -253,45 +241,22 @@ export class ThumbnailService {
     const brand = resolveBrandColor(input.base?.color, dominant);
     const layout = buildCoverLayout(title);
 
-    // Foto utama TIDAK di-crop dan TIDAK diblur: di-contain utuh di zona bawah.
-    // Salinan blur hanya mengisi letterbox di sekelilingnya agar bingkai tetap
-    // mengikuti warna foto (bukan putih polos).
-    const source = sharp(photo, { failOn: 'none' }).rotate();
-    const backdrop = await source
-      .clone()
-      .resize(THUMBNAIL_WIDTH, layout.photoHeight, { fit: 'cover', position: 'centre' })
-      .blur(40)
-      .modulate({ brightness: 0.82, saturation: 1.08 })
-      .removeAlpha()
-      .toBuffer();
-    const foreground = await source
-      .clone()
-      .resize({
-        width: THUMBNAIL_WIDTH,
-        height: layout.photoHeight,
-        fit: 'contain',
-        position: 'centre',
-        background: { r: 0, g: 0, b: 0, alpha: 0 },
-      })
-      .png()
+    // Foto memenuhi seluruh kartu (cover, tanpa pita judul). Judul kecil
+    // ditumpuk di area bawah lewat scrim tipis, jadi foto tetap dominan.
+    const background = await sharp(photo, { failOn: 'none' })
+      .rotate()
+      .resize(THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT, { fit: 'cover', position: 'centre' })
+      .jpeg({ quality: 92 })
       .toBuffer();
 
-    const frame = renderOverlayPng(buildFrameSvg(layout, brand));
-    const text = renderOverlayPng(
-      buildOverlaySvg({
-        layout,
-        brand,
-        baseName: input.base?.name || input.baseHandle,
-        baseHandle: input.baseHandle,
-      })
-    );
+    const overlay = buildOverlaySvg({
+      layout,
+      brand,
+      baseHandle: input.baseHandle,
+    });
 
-    const buffer = await sharp(frame)
-      .composite([
-        { input: backdrop, top: layout.photoTop, left: 0 },
-        { input: foreground, top: layout.photoTop, left: 0 },
-        { input: text, top: 0, left: 0 },
-      ])
+    const buffer = await sharp(background)
+      .composite([{ input: renderOverlayPng(overlay), top: 0, left: 0 }])
       .jpeg({ quality: 90, mozjpeg: true })
       .toBuffer();
 
@@ -338,25 +303,26 @@ async function resolveCoverTitle(
   }
 }
 
-// ── Tata letak dua zona ────────────────────────────────────────────────────
+// ── Tata letak judul bawah ─────────────────────────────────────────────────
 
 interface CoverLayout {
   fitted: FittedTitle;
-  /** Tinggi pita judul di atas. */
-  titleBandHeight: number;
-  /** Awal zona foto (tepat di bawah pita judul). */
-  photoTop: number;
-  /** Tinggi zona foto yang tersedia untuk foto utuh. */
-  photoHeight: number;
-  /** Awal pita watermark bawah. */
-  footerTop: number;
   /** Baseline baris pertama judul. */
   firstBaseline: number;
+  /** Baseline baris terakhir judul. */
+  lastBaseline: number;
+  /** Awal gradien gelap di bawah foto. */
+  scrimTop: number;
+  /** Baseline handle base (paling bawah). */
+  handleBaseline: number;
+  /** Garis aksen pendek di atas judul. */
+  accentTop: number;
 }
 
 /**
- * Hitung tata letak dari hasil auto-fit judul. Tinggi pita judul mengikuti
- * jumlah baris, sehingga sisa kanvas untuk foto selalu maksimal.
+ * Judul kecil di bawah: blok teks ditumpuk dari bawah ke atas supaya selalu
+ * menempel di dasar kartu, berapa pun jumlah barisnya. Foto memenuhi sisa
+ * kanvas tanpa pita judul besar.
  */
 function buildCoverLayout(title: string): CoverLayout {
   const fitted = fitTitle(title, {
@@ -364,27 +330,24 @@ function buildCoverLayout(title: string): CoverLayout {
     // dari hasil pengukuran opentype.js.
     maxWidth: (THUMBNAIL_WIDTH - TITLE_MARGIN_X * 2) * 0.95,
     maxLines: 3,
-    maxFontSize: 84,
-    minFontSize: 40,
-    maxCharsPerLine: 20,
+    maxFontSize: 60,
+    minFontSize: 36,
+    maxCharsPerLine: 24,
     measure: measureTitleWidth,
   });
 
-  const firstBaseline = TITLE_TOP + Math.round(fitted.fontSize * 0.8);
-  const lastBaseline = firstBaseline + (fitted.lines.length - 1) * fitted.lineHeight;
-  const titleBandHeight = clamp(
-    lastBaseline + Math.round(fitted.fontSize * 0.3) + 48,
-    TITLE_BAND_MIN,
-    TITLE_BAND_MAX
-  );
+  const lastBaseline = TITLE_LAST_BASELINE;
+  const firstBaseline = lastBaseline - (fitted.lines.length - 1) * fitted.lineHeight;
+  const accentTop = firstBaseline - Math.round(fitted.fontSize * 0.95) - 26;
+  const scrimTop = clamp(accentTop - 96, 700, 1120);
 
   return {
     fitted,
-    titleBandHeight,
-    photoTop: titleBandHeight,
-    photoHeight: PHOTO_BOTTOM - titleBandHeight,
-    footerTop: PHOTO_BOTTOM,
     firstBaseline,
+    lastBaseline,
+    scrimTop,
+    handleBaseline: HANDLE_BASELINE,
+    accentTop,
   };
 }
 
@@ -396,64 +359,39 @@ function resolveBrandColor(baseColor: unknown, dominant: string | null): string 
   return BRAND_FALLBACK;
 }
 
-/** Latar kanvas: pita judul (warna template) + pita watermark, tanpa foto. */
-function buildFrameSvg(layout: CoverLayout, brand: string): string {
-  const bandTop = mixHex(brand, NIGHT, 0.55);
-  const bandBottom = mixHex(brand, NIGHT, 0.8);
-  const footer = mixHex(brand, NIGHT, 0.88);
-  const accent = mixHex(brand, '#ffffff', 0.55);
-  const ringCy = Math.max(140, layout.titleBandHeight - 96);
-
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${THUMBNAIL_WIDTH}" height="${THUMBNAIL_HEIGHT}" viewBox="0 0 ${THUMBNAIL_WIDTH} ${THUMBNAIL_HEIGHT}">
-  <defs>
-    <linearGradient id="titleBand" x1="0" y1="0" x2="0.6" y2="1">
-      <stop offset="0" stop-color="${bandTop}"/>
-      <stop offset="1" stop-color="${bandBottom}"/>
-    </linearGradient>
-  </defs>
-  <rect width="${THUMBNAIL_WIDTH}" height="${THUMBNAIL_HEIGHT}" fill="${footer}"/>
-  <rect width="${THUMBNAIL_WIDTH}" height="${layout.titleBandHeight}" fill="url(#titleBand)"/>
-  <rect y="${layout.footerTop}" width="${THUMBNAIL_WIDTH}" height="${FOOTER_HEIGHT}" fill="${footer}"/>
-  <rect y="${layout.titleBandHeight - 3}" width="${THUMBNAIL_WIDTH}" height="3" fill="${rgba(accent, 0.55)}"/>
-  <circle cx="1016" cy="${ringCy}" r="150" fill="none" stroke="${rgba(accent, 0.2)}" stroke-width="2"/>
-  <line x1="${TITLE_MARGIN_X}" y1="62" x2="${TITLE_MARGIN_X + 164}" y2="62" stroke="${rgba(accent, 0.9)}" stroke-width="6" stroke-linecap="round"/>
-</svg>`;
-}
-
 // ── SVG teks (transparan, di atas foto) ────────────────────────────────────
 
-function buildOverlaySvg(input: {
-  layout: CoverLayout;
-  brand: string;
-  baseName?: string | null;
-  baseHandle: string;
-}): string {
+/**
+ * Overlay teks di atas foto penuh: scrim gelap hanya di area bawah supaya
+ * foto tetap terlihat utuh, lalu judul kecil + handle base.
+ */
+function buildOverlaySvg(input: { layout: CoverLayout; brand: string; baseHandle: string }): string {
   const { layout } = input;
-  // Warna teks dihitung dari pita judul (warna solid), bukan dari foto, supaya
-  // kontras judul selalu terjamin tanpa perlu plat semi-transparan.
-  const bandBottom = mixHex(input.brand, NIGHT, 0.8);
-  const footer = mixHex(input.brand, NIGHT, 0.88);
-  const ink = pickInkColor(bandBottom);
-  const footerInk = pickInkColor(footer);
-  const accent = mixHex(input.brand, '#ffffff', 0.55);
-
+  const accent = mixHex(input.brand, '#ffffff', 0.5);
   const { handle } = watermarkLabel(input.baseHandle);
-  const baseLabel = escapeXml(String(input.baseName || input.baseHandle || '').toUpperCase());
+
   const titleLines = layout.fitted.lines
     .map(
       (line, index) =>
         `<text x="${TITLE_MARGIN_X}" y="${layout.firstBaseline + index * layout.fitted.lineHeight}" ` +
         `font-family="Poppins, sans-serif" font-size="${layout.fitted.fontSize}" font-weight="800" ` +
-        `fill="${ink}" letter-spacing="-1">${escapeXml(line.toLocaleUpperCase('id-ID'))}</text>`
+        `fill="#ffffff" letter-spacing="-0.5">${escapeXml(line.toLocaleUpperCase('id-ID'))}</text>`
     )
     .join('');
-  const footerBaseline = layout.footerTop + 84;
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${THUMBNAIL_WIDTH}" height="${THUMBNAIL_HEIGHT}" viewBox="0 0 ${THUMBNAIL_WIDTH} ${THUMBNAIL_HEIGHT}">
-  <text x="${TITLE_MARGIN_X}" y="${LABEL_BASELINE}" font-family="Poppins, sans-serif" font-size="${LABEL_SIZE}" font-weight="600" letter-spacing="4" fill="${rgba(ink, 0.8)}">${baseLabel}</text>
+  <defs>
+    <linearGradient id="scrim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${NIGHT}" stop-opacity="0"/>
+      <stop offset="0.55" stop-color="${NIGHT}" stop-opacity="0.62"/>
+      <stop offset="1" stop-color="${NIGHT}" stop-opacity="0.95"/>
+    </linearGradient>
+  </defs>
+  <rect y="${layout.scrimTop}" width="${THUMBNAIL_WIDTH}" height="${THUMBNAIL_HEIGHT - layout.scrimTop}" fill="url(#scrim)"/>
+  <rect x="${TITLE_MARGIN_X}" y="${layout.accentTop}" width="96" height="5" rx="2.5" fill="${rgba(accent, 0.95)}"/>
   ${titleLines}
-  <circle cx="${TITLE_MARGIN_X + 6}" cy="${footerBaseline - 12}" r="6" fill="${rgba(accent, 0.9)}"/>
-  <text x="${TITLE_MARGIN_X + 26}" y="${footerBaseline}" font-family="Poppins, sans-serif" font-size="36" font-weight="700" fill="${rgba(footerInk, 0.96)}">${escapeXml(handle)}</text>
+  <circle cx="${TITLE_MARGIN_X + 5}" cy="${layout.handleBaseline - 9}" r="4.5" fill="${rgba(accent, 0.95)}"/>
+  <text x="${TITLE_MARGIN_X + 22}" y="${layout.handleBaseline}" font-family="Poppins, sans-serif" font-size="28" font-weight="600" fill="${rgba('#ffffff', 0.92)}">${escapeXml(handle)}</text>
 </svg>`;
 }
 

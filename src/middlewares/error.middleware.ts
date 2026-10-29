@@ -8,10 +8,16 @@ export function errorHandler(err: any, req: Request, res: Response, next: NextFu
   }
 
   const statusCode = err.status || err.statusCode || 500;
-  const message = err.message || 'Terjadi kesalahan pada server';
+  const isServerError = statusCode >= 500;
+  // Detail internal (pesan Prisma, nama kolom, constraint) tidak boleh keluar
+  // ke klien pada 5xx; simpan di log, kirim pesan generik.
+  const message =
+    isServerError && ENV.NODE_ENV === 'production'
+      ? 'Terjadi kesalahan pada server'
+      : err.message || 'Terjadi kesalahan pada server';
   const code = err.code || 'INTERNAL_SERVER_ERROR';
 
-  if (ENV.NODE_ENV === 'development') {
+  if (ENV.NODE_ENV !== 'test') {
     console.error('API Error:', err);
   }
 

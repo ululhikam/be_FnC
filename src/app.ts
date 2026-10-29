@@ -14,6 +14,13 @@ import { rateLimiter } from './middlewares/rateLimit.middleware.js';
 
 export const app = express();
 
+// Di belakang proxy (Vercel), Express harus diberi tahu jumlah hop tepercaya
+// agar `req.ip` berisi IP klien — bukan IP proxy. Tanpa ini semua pengguna
+// berbagi satu bucket rate limit dan kontrol anti-abuse per-IP tidak berfungsi.
+if (ENV.TRUST_PROXY > 0) {
+  app.set('trust proxy', ENV.TRUST_PROXY);
+}
+
 const allowedOrigins = new Set(
   ENV.ALLOWED_ORIGINS.split(',')
     .map((origin) => origin.trim().replace(/\/$/, ''))
@@ -61,7 +68,9 @@ if (staticPublicDir) {
   app.use(express.static(staticPublicDir, { redirect: false }));
 }
 
-if (ENV.NODE_ENV !== 'test') {
+// Request log hanya untuk lokal. Di produksi morgan ikut mencatat URL lengkap —
+// termasuk `?token=` pada redirect OAuth — sehingga JWT bisa masuk log Vercel.
+if (ENV.NODE_ENV === 'development') {
   app.use(morgan('dev'));
 }
 

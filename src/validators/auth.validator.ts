@@ -79,5 +79,4 @@ export const ChangeVerificationEmailSchema = z.object({
 export const InstagramVerifySchema = z.object({
   token: z.string().optional(),
   code: z.string().optional(),
-  handle: z.string().optional(),
 });

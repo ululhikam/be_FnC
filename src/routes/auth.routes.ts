@@ -23,6 +23,7 @@ import { InstagramService } from '../services/instagram.service.js';
 import { AuthService } from '../services/auth.service.js';
 import { prisma } from '../config/prisma.js';
 import { parseSignedRequest } from '../utils/meta-signed-request.util.js';
+import { signOAuthState, verifyOAuthState } from '../utils/oauth-state.util.js';
 
 const router = Router();
 
@@ -110,21 +111,28 @@ router.get(
 );
 
 // Meta Instagram OAuth 2.0 Flow (Redirect to Meta Instagram & Callback)
+const INSTAGRAM_ORIGINS = new Set(['connections', 'onboarding', 'register', 'login']);
+
+function instagramReturnPath(origin: string): string {
+  if (origin === 'onboarding') return '/onboarding/base';
+  if (origin === 'register') return '/register/base';
+  if (origin === 'login') return '/login';
+  return '/base-admin?panel=connections';
+}
+
 router.get('/instagram', (req, res) => {
-  const origin = (req.query.origin as string) || 'connections';
-  const returnErrorPath =
-    origin === 'onboarding'
-      ? '/onboarding/base'
-      : origin === 'register'
-      ? '/register/base'
-      : '/base-admin?panel=connections';
+  const rawOrigin = String(req.query.origin || 'connections');
+  const origin = INSTAGRAM_ORIGINS.has(rawOrigin) ? rawOrigin : 'connections';
+  const returnErrorPath = instagramReturnPath(origin);
 
   if (!ENV.INSTAGRAM_CLIENT_ID || !ENV.INSTAGRAM_CLIENT_SECRET) {
     const sep = returnErrorPath.includes('?') ? '&' : '?';
     return res.redirect(`${ENV.FRONTEND_URL}${returnErrorPath}${sep}error=instagram_not_configured`);
   }
 
-  // Token JWT admin yang sedang login bisa dioper via query parameter
+  // Token JWT admin yang sedang login bisa dioper via query parameter.
+  // Hanya dipakai sebagai penanda "hubungkan akun"; callback tetap memverifikasi
+  // tanda tangan state sebelum mempercayai userId.
   let userId = '';
   const tokenParam = (req.query.token as string) || '';
   if (tokenParam) {
@@ -136,13 +144,11 @@ router.get('/instagram', (req, res) => {
     }
   }
 
-  const statePayload = Buffer.from(
-    JSON.stringify({
-      userId,
-      baseHandle: req.query.base || '',
-      origin,
-    })
-  ).toString('base64url');
+  const statePayload = signOAuthState({
+    userId,
+    baseHandle: String(req.query.base || ''),
+    origin,
+  });
 
   const authUrl = InstagramService.getAuthorizationUrl(statePayload);
   res.redirect(authUrl);
@@ -155,25 +161,16 @@ router.get('/instagram/callback', async (req: Request, res: Response) => {
     const error = req.query.error as string;
     const errorDesc = req.query.error_description as string;
 
-    // Decode state
-    let stateData: any = {};
-    if (req.query.state) {
-      try {
-        stateData = JSON.parse(Buffer.from(String(req.query.state), 'base64url').toString('utf-8'));
-      } catch {
-        // Ignored
-      }
+    // State wajib bertanda tangan: isinya menentukan akun mana yang akan
+    // ditautkan / diberi sesi. Tanpa verifikasi ini siapa pun bisa membuat
+    // state yang menunjuk user lain (takeover akun).
+    const stateData = verifyOAuthState(String(req.query.state || ''));
+    if (!stateData) {
+      return res.redirect(`${ENV.FRONTEND_URL}/login?error=oauth_state_invalid`);
     }
 
-    origin = stateData.origin || 'connections';
-    const returnErrorPath =
-      origin === 'onboarding'
-        ? '/onboarding/base'
-        : origin === 'register'
-        ? '/register/base'
-        : origin === 'login'
-        ? '/login'
-        : '/base-admin?panel=connections';
+    origin = INSTAGRAM_ORIGINS.has(stateData.origin) ? stateData.origin : 'connections';
+    const returnErrorPath = instagramReturnPath(origin);
 
     if (error || !code) {
       const sep = returnErrorPath.includes('?') ? '&' : '?';
@@ -195,22 +192,12 @@ router.get('/instagram/callback', async (req: Request, res: Response) => {
         where: { instagramId: profile.id },
       });
 
-      if (!user) {
-        const cleanHandle = profile.username.startsWith('@') ? profile.username : `@${profile.username}`;
-        user = await prisma.user.findUnique({
-          where: { handle: cleanHandle },
-        });
-
-        if (user) {
-          user = await prisma.user.update({
-            where: { id: user.id },
-            data: {
-              instagramId: profile.id,
-              igAccount: cleanHandle,
-            },
-          });
-        }
-      }
+      // JANGAN menautkan akun berdasarkan kecocokan `handle`/username Instagram.
+      // Sebelumnya akun FnC dicari dengan `handle = @username_ig` lalu diberi
+      // `instagramId` — siapa pun bisa membuat akun Instagram bernama sama
+      // dengan handle korban dan langsung mendapat sesi korban. Penautan hanya
+      // sah lewat `instagramId` (login IG yang sudah pernah tersimpan) atau
+      // lewat alur "hubungkan akun" saat sudah login.
 
       if (!user) {
         let candidateHandle = profile.username.startsWith('@') ? profile.username : `@${profile.username}`;
@@ -360,14 +347,7 @@ router.get('/instagram/callback', async (req: Request, res: Response) => {
     );
   } catch (err: any) {
     console.error('[Instagram OAuth Callback Error]:', err.message);
-    const returnErrorPath =
-      origin === 'onboarding'
-        ? '/onboarding/base'
-        : origin === 'register'
-        ? '/register/base'
-        : origin === 'login'
-        ? '/login'
-        : '/base-admin?panel=connections';
+    const returnErrorPath = instagramReturnPath(origin);
     const sep = returnErrorPath.includes('?') ? '&' : '?';
     return res.redirect(
       `${ENV.FRONTEND_URL}${returnErrorPath}${sep}error=${encodeURIComponent(err.message || 'Gagal menghubungkan Instagram')}`

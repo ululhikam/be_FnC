@@ -96,7 +96,7 @@ Konsekuensi penting:
 | D8 | Kuota & biaya AI dijaga `RateLimitService` (Postgres) | In-memory | Serverless multi-instance; in-memory tidak konsisten |
 | D9 | Semua usulan AI = **usulan**, simpan tetap lewat endpoint lama | Auto-save metadata | Validasi backend tetap satu pintu; cegah halusinasi tersimpan |
 | D10 | Dua kill switch terpisah: `THUMBNAIL_ENABLED`, `AI_ENABLED` | Satu flag | Fitur visual bisa rilis tanpa AI; AI bisa dimatikan mendadak |
-| D11 | Domain watermark dari `frontendHostLabel()`, handle dari `base.handle`/`base.igAccount` | Hardcode domain, handle penulis | Dev/staging tidak menulis domain production; anonimitas penulis terjaga |
+| D11 | Domain watermark dari `FRONTEND_URL` (`utils/frontend-host.util.ts`), handle dari base (`baseHandle`) | Hardcode domain, handle penulis | Dev/staging tidak menulis domain production; anonimitas penulis terjaga |
 | D12 | Judul **3–5 kata**, maks 60 karakter, 1–4 baris auto-fit | Bebas | Keterbacaan di feed mobile (≈ 30% lebar layar) |
 | D13 | Provider default: **Gemini free tier**, cadangan **OpenRouter** (DeepSeek gratis), lewat adapter OpenAI-compatible yang sama | SDK/provider hardcoded, atau bergantung pada satu agregator | Kuota Gemini 5–20× lebih besar dan tanpa perantara; OpenRouter disiapkan sebagai failover karena satu key untuk banyak model |
 | D14 | Anggaran = **kuota permintaan** (RPM/RPD) provider, plafon internal di bawahnya | Budget USD | Free tier tidak menagih; risiko sebenarnya adalah 429 |
@@ -147,6 +147,7 @@ exportFessCanvasUnsafe(fessId)
         ├─ 3. susun postItems = [thumbnail, ...kartu, ...media] (maks 10)
         ├─ 4. persistIgState({ igPayload.items: postItems, igStatus: 'processing' })
         └─ 5. InstagramService.autoPostFess(...)
+                 └─ prepareCarouselItems: foto mentah → 4:5 + watermark handle/host
 ```
 
 Thumbnail **wajib** sudah masuk `igPayload.items` sebelum `autoPostFess`, karena `retryInstagramPost` memakai snapshot itu (`instagram.service.ts:2232-2235`).
@@ -184,8 +185,9 @@ scrim gradien tipis agar teks terbaca.
 | L1 | Scrim bawah | Gradien gelap dari ~y 1000 ke bawah: `alpha 0` → `0.62` → `0.95`, hanya di area teks |
 | L2 | Aksen | Garis pendek 96×5 px di atas judul + titik di depan handle, memakai warna turunan `Base.color` |
 | L3 | Judul | Poppins **800** uppercase, auto-fit 60→36 px, maks 3 baris, ukuran "kecil" supaya foto tetap dominan |
-| L4 | Handle base | `@handle` base (Poppins 600, 28 px) di baris paling bawah. Nama base & domain platform tidak dirender |
-| L5 | Zona aman | Margin 72 px; baseline judul terakhir 1246, baseline handle 1308 |
+| L4 | Pill handle base | `@handle` base di **pill rounded terpisah** sisi kiri (`Poppins 600`, 28 px, garis tepi putih 0.5). Dipotong elipsis hanya bila handle sangat panjang |
+| L5 | Pill URL platform | `fessncurious.vercel.app` di **pill rounded terpisah** sisi kanan (`Fira Mono`, 20 px, garis tepi 0.3). URL selalu utuh, tidak ikut terpotong |
+| L6 | Zona aman | Margin 72 px; baseline judul terakhir 1238; pill di y 1264 setinggi 60 px dengan radius penuh |
 
 Aturan tambahan:
 
@@ -209,9 +211,31 @@ Contoh komposisi:
 │  ▬▬                          │
 │  KANTIN KAMPUS               │
 │  TUTUP LEBIH AWAL            │
-│  • @unermenfess              │
+│ ( @unermenfess ) ( fessncurious.vercel.app ) │
 └──────────────────────────────┘
 ```
+
+### 5.1 Watermark foto asli (bukan thumbnail)
+
+Foto user yang ikut carousel juga diberi watermark, bukan hanya slide thumbnail.
+Diterapkan di `instagram-media.util.ts` → `normalizeImageBuffer()` saat
+`ensureIgImageUrl()` menerima `options.watermark`.
+
+| Layer | Isi | Aturan |
+|---|---|---|
+| F0 | Foto user | `fit: contain` 1080×1350 — utuh, tanpa crop. Area sisa diisi salinan foto `cover` + `blur(36)` + `brightness 0.86` (bukan putih) |
+| F1 | Scrim atas | Gradien gelap 16% tinggi kanvas: `alpha 0.55` di tepi atas → `0` |
+| F2 | Handle base | `@handle` base, Poppins 600 ±30 px, kiri-atas, margin 4,5% lebar (48 px), putih 0.94 |
+| F3 | Scrim bawah | Gradien gelap 16% tinggi kanvas: `alpha 0` → `0.62` di tepi bawah |
+| F4 | Host platform | `fessncurious.vercel.app`, Fira Mono ±22 px, kanan-bawah, rata kanan, putih 0.82 |
+
+Aturan:
+
+- Hanya item yang **belum** `normalized` (foto user mentah) yang di-watermark; card canvas dan thumbnail sudah jadi dan tidak di-watermark dua kali.
+- URL hasil watermark disimpan di `igPayload` dengan `normalized: true`, jadi retry tidak menggambar ulang.
+- Cache normalisasi memakai kunci `lebar×tinggi|handle|host|url`, sehingga foto yang sama dengan handle berbeda tidak saling menimpa.
+- Jalur cepat "sudah JPEG 1080×1350" dilewati bila watermark diminta (foto harus digambar ulang, lalu diunggah).
+- Handle yang kosong/basi jatuh ke `FALLBACK_HANDLE`; host kosong jatuh ke `FALLBACK_HOST` — tidak pernah ada watermark setengah jadi.
 
 ---
 

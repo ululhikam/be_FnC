@@ -249,6 +249,20 @@ describe('ThumbnailService — komposisi foto penuh', () => {
     const middle = pixel(540, 600);
     expect(middle.g).toBeGreaterThan(140);
   });
+
+  it('footer memakai dua pill rounded terpisah (handle & URL)', async () => {
+    const { pixel } = await render(1600, 900);
+    const brightness = (p: { r: number; g: number; b: number }) => (p.r + p.g + p.b) / 3;
+
+    // Garis tepi atas tiap pill harus lebih terang dari isinya.
+    const leftStroke = pixel(150, 1264);
+    const leftFill = pixel(150, 1272);
+    expect(brightness(leftStroke)).toBeGreaterThan(brightness(leftFill) + 30);
+
+    const rightStroke = pixel(950, 1264);
+    const rightFill = pixel(950, 1272);
+    expect(brightness(rightStroke)).toBeGreaterThan(brightness(rightFill) + 30);
+  });
 });
 
 describe('ThumbnailService.renderPreview', () => {

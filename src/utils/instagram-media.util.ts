@@ -1,6 +1,9 @@
 import axios from 'axios';
 import sharp from 'sharp';
+import type { OverlayOptions } from 'sharp';
 import { StorageService } from '../services/storage.service.js';
+import { renderSvgToPng } from './svg-render.util.js';
+import { watermarkLabel } from './thumbnail.util.js';
 
 /**
  * Instagram Content Publishing memiliki dua batasan yang saling terkait:
@@ -20,6 +23,17 @@ export interface IgTargetDimensions {
 }
 
 export const IG_CAROUSEL_TARGET: IgTargetDimensions = { width: 1080, height: 1350 };
+
+/** Watermark foto asli: handle base di atas, host platform di bawah. */
+export interface IgWatermark {
+  handle: string;
+  host: string;
+}
+
+export interface IgNormalizeOptions {
+  /** Dipasang setelah foto dinormalkan; `null`/kosong = tanpa watermark. */
+  watermark?: IgWatermark | null;
+}
 
 const JPEG_URL_RE = /\.(jpe?g)($|[?#])/i;
 const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024; // batas aman unduhan media
@@ -70,17 +84,18 @@ export async function ensureJpegUrl(url: string): Promise<string> {
  */
 export async function ensureIgImageUrl(
   url: string,
-  target: IgTargetDimensions = IG_CAROUSEL_TARGET
+  target: IgTargetDimensions = IG_CAROUSEL_TARGET,
+  options: IgNormalizeOptions = {}
 ): Promise<IgImageResult> {
   if (!/^https?:\/\//i.test(url)) {
     throw new Error('URL gambar Instagram harus berupa HTTP(S) publik.');
   }
 
-  const cacheKey = `${target.width}x${target.height}:${url}`;
+  const cacheKey = `${target.width}x${target.height}:${watermarkKey(options.watermark)}:${url}`;
   const cached = normalizedImageCache.get(cacheKey);
   if (cached) return cached;
 
-  const task = normalizeImageUrl(url, target);
+  const task = normalizeImageUrl(url, target, options);
   normalizedImageCache.set(cacheKey, task);
   if (normalizedImageCache.size > CACHE_LIMIT) {
     const oldest = normalizedImageCache.keys().next().value;
@@ -98,8 +113,10 @@ export async function ensureIgImageUrl(
 /** Unduh gambar lalu konversi/pad ke JPEG dengan dimensi persis target. */
 async function normalizeImageUrl(
   url: string,
-  target: IgTargetDimensions
+  target: IgTargetDimensions,
+  options: IgNormalizeOptions = {}
 ): Promise<IgImageResult> {
+  const watermark = normalizeWatermark(options.watermark);
   let buffer: Buffer;
   try {
     const res = await axios.get(url, {
@@ -117,23 +134,26 @@ async function normalizeImageUrl(
     throw new Error(`Gagal mengunduh gambar untuk normalisasi Instagram (${url}): ${err?.message || err}`);
   }
 
-  // Jalur cepat: sudah JPEG + dimensi tepat → tidak perlu upload ulang.
-  try {
-    const meta = await sharp(buffer).metadata();
-    if (
-      meta.format === 'jpeg' &&
-      meta.width === target.width &&
-      meta.height === target.height &&
-      (!meta.orientation || meta.orientation === 1) &&
-      buffer.length <= IG_MAX_JPEG_BYTES
-    ) {
-      return { url, width: target.width, height: target.height };
+  // Jalur cepat: sudah JPEG + dimensi tepat → tidak perlu upload ulang. Tidak
+  // berlaku saat watermark diminta, karena foto harus digambar ulang.
+  if (!watermark) {
+    try {
+      const meta = await sharp(buffer).metadata();
+      if (
+        meta.format === 'jpeg' &&
+        meta.width === target.width &&
+        meta.height === target.height &&
+        (!meta.orientation || meta.orientation === 1) &&
+        buffer.length <= IG_MAX_JPEG_BYTES
+      ) {
+        return { url, width: target.width, height: target.height };
+      }
+    } catch {
+      // Biarkan sharp di bawah menghasilkan error yang lebih jelas.
     }
-  } catch {
-    // Biarkan sharp di bawah menghasilkan error yang lebih jelas.
   }
 
-  const jpeg = await normalizeImageBuffer(buffer, target);
+  const jpeg = await normalizeImageBuffer(buffer, target, options);
   const mockFile: Express.Multer.File = {
     fieldname: 'file',
     originalname: `ig_${target.width}x${target.height}_${Date.now()}_${Math.random()
@@ -157,11 +177,13 @@ async function normalizeImageUrl(
   return { url: upload.url, width: target.width, height: target.height };
 }
 
-/** Sharp: rotate EXIF → contain di atas salinan foto blur → JPEG ≤ 8 MB. */
+/** Sharp: rotate EXIF → contain di atas salinan foto blur → watermark → JPEG ≤ 8 MB. */
 export async function normalizeImageBuffer(
   buffer: Buffer,
-  target: IgTargetDimensions = IG_CAROUSEL_TARGET
+  target: IgTargetDimensions = IG_CAROUSEL_TARGET,
+  options: IgNormalizeOptions = {}
 ): Promise<Buffer> {
+  const watermark = normalizeWatermark(options.watermark);
   let jpeg: Buffer;
   try {
     const source = sharp(buffer, { failOn: 'none' }).rotate();
@@ -189,9 +211,14 @@ export async function normalizeImageBuffer(
       .png()
       .toBuffer();
 
-    const base = sharp(backdrop).composite([
-      { input: foreground, gravity: 'centre' },
-    ]);
+    const layers: OverlayOptions[] = [{ input: foreground, gravity: 'centre' }];
+    if (watermark) {
+      // Overlay teks dirender lewat resvg (font bundled) supaya tipografi sama
+      // di lokal dan Vercel. sharp().composite(svg) akan memakai font sistem.
+      layers.push({ input: renderSvgToPng(buildWatermarkSvg(target, watermark)), top: 0, left: 0 });
+    }
+
+    const base = sharp(backdrop).composite(layers);
 
     jpeg = await base.clone().jpeg({ quality: 92, mozjpeg: true }).toBuffer();
 
@@ -206,6 +233,63 @@ export async function normalizeImageBuffer(
   }
 
   return jpeg;
+}
+
+/** Nama file aman untuk watermark (dipakai hanya di SVG). */
+function escapeXml(value: string): string {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+/** Watermark dinormalkan sekali agar cache key & render selalu sepakat. */
+function normalizeWatermark(value?: IgWatermark | null): IgWatermark | null {
+  if (!value) return null;
+  const handle = String(value.handle ?? '').trim();
+  const host = String(value.host ?? '').trim();
+  if (!handle && !host) return null;
+  return watermarkLabel(handle, host);
+}
+
+function watermarkKey(value?: IgWatermark | null): string {
+  const watermark = normalizeWatermark(value);
+  return watermark ? `${watermark.handle}|${watermark.host}` : 'none';
+}
+
+/**
+ * SVG transparan berisi watermark foto asli: `@handle` base di kiri-atas dan
+ * host platform di kanan-bawah. Scrim gradien tipis di tiap tepi membuat teks
+ * tetap terbaca di atas foto terang tanpa menutupi foto itu sendiri.
+ */
+export function buildWatermarkSvg(target: IgTargetDimensions, watermark: IgWatermark): string {
+  const { handle, host } = watermark;
+  const { width, height } = target;
+  const margin = Math.round(width * 0.045); // 48 px pada 1080
+  const handleSize = Math.round(width * 0.028); // ±30 px
+  const hostSize = Math.round(width * 0.02); // ±22 px
+  const scrimHeight = Math.round(height * 0.16);
+  const handleBaseline = margin + Math.round(handleSize * 0.95);
+  const hostBaseline = height - margin - Math.round(hostSize * 0.4);
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <defs>
+    <linearGradient id="wmTop" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#05070c" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#05070c" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="wmBottom" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#05070c" stop-opacity="0"/>
+      <stop offset="1" stop-color="#05070c" stop-opacity="0.62"/>
+    </linearGradient>
+  </defs>
+  <rect width="${width}" height="${scrimHeight}" fill="url(#wmTop)"/>
+  <rect y="${height - scrimHeight}" width="${width}" height="${scrimHeight}" fill="url(#wmBottom)"/>
+  <text x="${margin}" y="${handleBaseline}" font-family="Poppins, sans-serif" font-size="${handleSize}" font-weight="600" fill="#ffffff" fill-opacity="0.94">${escapeXml(handle)}</text>
+  <text x="${width - margin}" y="${hostBaseline}" text-anchor="end" font-family="Fira Mono, monospace" font-size="${hostSize}" font-weight="400" fill="#ffffff" fill-opacity="0.82">${escapeXml(host)}</text>
+</svg>`;
 }
 
 export interface CarouselGeometryItem {

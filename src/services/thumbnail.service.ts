@@ -8,16 +8,17 @@
  * Judul: dibuat AI (P2) bila base memakai mode `auto` dan AI aktif; selain itu
  * `fallbackTitle()` deterministik. Judul bersifat final — tidak bisa diedit.
  */
-import { Resvg } from '@resvg/resvg-js';
 import sharp from 'sharp';
 import opentype from 'opentype.js';
 import fs from 'fs';
 import { ENV } from '../config/env.js';
 import { prisma } from '../config/prisma.js';
-import { getFontFileFor, getFontFiles } from '../config/fonts.js';
+import { getFontFileFor } from '../config/fonts.js';
 import { StorageService } from './storage.service.js';
 import { AiService } from './ai/ai.service.js';
 import { fetchRemoteImage } from '../utils/remote-image.util.js';
+import { renderSvgToPng } from '../utils/svg-render.util.js';
+import { frontendHost } from '../utils/frontend-host.util.js';
 import {
   THUMBNAIL_HEIGHT,
   THUMBNAIL_WIDTH,
@@ -46,9 +47,15 @@ export const PREVIEW_FESS_ID = 'preview';
 
 const TITLE_MARGIN_X = 72;
 /** Baseline baris terakhir judul (judul menempel di dasar kartu). */
-const TITLE_LAST_BASELINE = 1246;
-/** Baseline handle base di paling bawah. */
-const HANDLE_BASELINE = 1308;
+const TITLE_LAST_BASELINE = 1238;
+/** Dua pill footer: handle base (kiri) & URL platform (kanan). */
+const PILL_TOP = 1264;
+const PILL_HEIGHT = 60;
+const PILL_GAP = 12;
+const HANDLE_FONT_SIZE = 28;
+const HANDLE_PADDING = 26;
+const HOST_FONT_SIZE = 20;
+const HOST_PADDING = 22;
 const BRAND_FALLBACK = '#0055ff';
 const NIGHT = '#05070c';
 
@@ -239,7 +246,8 @@ export class ThumbnailService {
 
     const { title, promptVersion } = await titlePromise;
     const brand = resolveBrandColor(input.base?.color, dominant);
-    const layout = buildCoverLayout(title);
+    const host = frontendHost();
+    const layout = buildCoverLayout(title, input.baseHandle, host);
 
     // Foto memenuhi seluruh kartu (cover, tanpa pita judul). Judul kecil
     // ditumpuk di area bawah lewat scrim tipis, jadi foto tetap dominan.
@@ -252,7 +260,6 @@ export class ThumbnailService {
     const overlay = buildOverlaySvg({
       layout,
       brand,
-      baseHandle: input.baseHandle,
     });
 
     const buffer = await sharp(background)
@@ -305,6 +312,24 @@ async function resolveCoverTitle(
 
 // ── Tata letak judul bawah ─────────────────────────────────────────────────
 
+/** Satu pill di footer thumbnail. */
+interface FooterPill {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  radius: number;
+  text: string;
+  fontSize: number;
+  fontFamily: string;
+  fontWeight: number;
+  textX: number;
+  textBaseline: number;
+  textAnchor: 'start' | 'end';
+  /** Kekuatan garis tepi (handle lebih tegas dari URL). */
+  stroke: number;
+}
+
 interface CoverLayout {
   fitted: FittedTitle;
   /** Baseline baris pertama judul. */
@@ -313,18 +338,18 @@ interface CoverLayout {
   lastBaseline: number;
   /** Awal gradien gelap di bawah foto. */
   scrimTop: number;
-  /** Baseline handle base (paling bawah). */
-  handleBaseline: number;
   /** Garis aksen pendek di atas judul. */
   accentTop: number;
+  /** Dua pill terpisah: handle base di kiri, URL platform di kanan. */
+  pills: FooterPill[];
 }
 
 /**
  * Judul kecil di bawah: blok teks ditumpuk dari bawah ke atas supaya selalu
- * menempel di dasar kartu, berapa pun jumlah barisnya. Foto memenuhi sisa
- * kanvas tanpa pita judul besar.
+ * menempel di dasar kartu, berapa pun jumlah barisnya. Di bawahnya ada dua pill
+ * rounded terpisah — handle base (kiri) dan URL platform (kanan).
  */
-function buildCoverLayout(title: string): CoverLayout {
+function buildCoverLayout(title: string, baseHandle: string, host: string): CoverLayout {
   const fitted = fitTitle(title, {
     // Faktor 0.95 memberi ruang aman: lebar glyph hasil resvg ±3% lebih besar
     // dari hasil pengukuran opentype.js.
@@ -341,14 +366,82 @@ function buildCoverLayout(title: string): CoverLayout {
   const accentTop = firstBaseline - Math.round(fitted.fontSize * 0.95) - 26;
   const scrimTop = clamp(accentTop - 96, 700, 1120);
 
-  return {
-    fitted,
-    firstBaseline,
-    lastBaseline,
-    scrimTop,
-    handleBaseline: HANDLE_BASELINE,
-    accentTop,
-  };
+  const { handle, host: hostLabel } = watermarkLabel(baseHandle, host);
+  const pills = buildFooterPills(handle, hostLabel);
+
+  return { fitted, firstBaseline, lastBaseline, scrimTop, accentTop, pills };
+}
+
+/**
+ * Dua pill footer. Pill URL mempertahankan lebar alaminya (selalu terbaca
+ * utuh); sisa ruang dipakai pill handle, dan hanya handle yang dipotong dengan
+ * elipsis bila terlalu panjang.
+ */
+function buildFooterPills(handle: string, host: string): FooterPill[] {
+  const available = THUMBNAIL_WIDTH - TITLE_MARGIN_X * 2;
+  const naturalHandle =
+    Math.ceil(measureFontWidth('sans', 600, handle, HANDLE_FONT_SIZE)) + HANDLE_PADDING * 2;
+  const naturalHost =
+    Math.ceil(measureFontWidth('mono', 400, host, HOST_FONT_SIZE)) + HOST_PADDING * 2;
+
+  // URL platform tidak boleh terpotong: batasi maksimal 45% lebar kanvas.
+  let hostWidth = Math.min(naturalHost, Math.round(available * 0.45));
+  // Handle dapat sisa ruang, maksimal selebar teks aslinya.
+  let handleWidth = Math.min(naturalHandle, available - PILL_GAP - hostWidth);
+  // Jaga handle tetap terbaca (minimal 200 px); URL yang mengalah bila perlu.
+  if (handleWidth < 200) {
+    handleWidth = 200;
+    hostWidth = available - PILL_GAP - handleWidth;
+  }
+
+  const handleText = fitTextToWidth(
+    handle,
+    HANDLE_FONT_SIZE,
+    handleWidth - HANDLE_PADDING * 2,
+    (text, size) => measureFontWidth('sans', 600, text, size)
+  );
+  const hostText = fitTextToWidth(
+    host,
+    HOST_FONT_SIZE,
+    hostWidth - HOST_PADDING * 2,
+    (text, size) => measureFontWidth('mono', 400, text, size)
+  );
+
+  const radius = PILL_HEIGHT / 2;
+  const rightEdge = THUMBNAIL_WIDTH - TITLE_MARGIN_X;
+
+  return [
+    {
+      x: TITLE_MARGIN_X,
+      y: PILL_TOP,
+      width: handleWidth,
+      height: PILL_HEIGHT,
+      radius,
+      text: handleText,
+      fontSize: HANDLE_FONT_SIZE,
+      fontFamily: 'Poppins, sans-serif',
+      fontWeight: 600,
+      textX: TITLE_MARGIN_X + HANDLE_PADDING,
+      textBaseline: PILL_TOP + Math.round(PILL_HEIGHT / 2 + HANDLE_FONT_SIZE * 0.35),
+      textAnchor: 'start',
+      stroke: 0.5,
+    },
+    {
+      x: rightEdge - hostWidth,
+      y: PILL_TOP,
+      width: hostWidth,
+      height: PILL_HEIGHT,
+      radius,
+      text: hostText,
+      fontSize: HOST_FONT_SIZE,
+      fontFamily: 'Fira Mono, monospace',
+      fontWeight: 400,
+      textX: rightEdge - HOST_PADDING,
+      textBaseline: PILL_TOP + Math.round(PILL_HEIGHT / 2 + HOST_FONT_SIZE * 0.35),
+      textAnchor: 'end',
+      stroke: 0.3,
+    },
+  ];
 }
 
 /** Warna merek: warna template/base bila valid, lalu palet foto, lalu biru merek. */
@@ -365,10 +458,9 @@ function resolveBrandColor(baseColor: unknown, dominant: string | null): string 
  * Overlay teks di atas foto penuh: scrim gelap hanya di area bawah supaya
  * foto tetap terlihat utuh, lalu judul kecil + handle base.
  */
-function buildOverlaySvg(input: { layout: CoverLayout; brand: string; baseHandle: string }): string {
+function buildOverlaySvg(input: { layout: CoverLayout; brand: string }): string {
   const { layout } = input;
   const accent = mixHex(input.brand, '#ffffff', 0.5);
-  const { handle } = watermarkLabel(input.baseHandle);
 
   const titleLines = layout.fitted.lines
     .map(
@@ -376,6 +468,17 @@ function buildOverlaySvg(input: { layout: CoverLayout; brand: string; baseHandle
         `<text x="${TITLE_MARGIN_X}" y="${layout.firstBaseline + index * layout.fitted.lineHeight}" ` +
         `font-family="Poppins, sans-serif" font-size="${layout.fitted.fontSize}" font-weight="800" ` +
         `fill="#ffffff" letter-spacing="-0.5">${escapeXml(line.toLocaleUpperCase('id-ID'))}</text>`
+    )
+    .join('');
+
+  const pills = layout.pills
+    .map(
+      (pill) =>
+        `<rect x="${pill.x}" y="${pill.y}" width="${pill.width}" height="${pill.height}" rx="${pill.radius}" ` +
+        `fill="${rgba(NIGHT, 0.34)}" stroke="${rgba('#ffffff', pill.stroke)}" stroke-width="1.5"/>` +
+        `<text x="${pill.textX}" y="${pill.textBaseline}" text-anchor="${pill.textAnchor}" ` +
+        `font-family="${pill.fontFamily}" font-size="${pill.fontSize}" font-weight="${pill.fontWeight}" ` +
+        `fill="${rgba('#ffffff', pill.fontWeight >= 600 ? 0.96 : 0.78)}">${escapeXml(pill.text)}</text>`
     )
     .join('');
 
@@ -390,38 +493,35 @@ function buildOverlaySvg(input: { layout: CoverLayout; brand: string; baseHandle
   <rect y="${layout.scrimTop}" width="${THUMBNAIL_WIDTH}" height="${THUMBNAIL_HEIGHT - layout.scrimTop}" fill="url(#scrim)"/>
   <rect x="${TITLE_MARGIN_X}" y="${layout.accentTop}" width="96" height="5" rx="2.5" fill="${rgba(accent, 0.95)}"/>
   ${titleLines}
-  <circle cx="${TITLE_MARGIN_X + 5}" cy="${layout.handleBaseline - 9}" r="4.5" fill="${rgba(accent, 0.95)}"/>
-  <text x="${TITLE_MARGIN_X + 22}" y="${layout.handleBaseline}" font-family="Poppins, sans-serif" font-size="28" font-weight="600" fill="${rgba('#ffffff', 0.92)}">${escapeXml(handle)}</text>
+  ${pills}
 </svg>`;
 }
 
 // ── Render SVG overlay (font bundled) ─────────────────────────────────────
 
 /**
- * Render overlay SVG → PNG dengan font bundled.
+ * Render overlay SVG → PNG dengan font bundled (lihat `svg-render.util`).
  *
  * Penting: `sharp().composite()` merender SVG memakai font sistem, sehingga di
  * Vercel (Linux, tanpa Poppins) hasilnya berbeda. resvg dengan `fonts/` yang
  * sama dengan kartu memastikan tipografi konsisten lokal ↔ produksi.
  */
-function renderOverlayPng(svg: string): Buffer {
-  const fontFiles = getFontFiles();
-  const resvg = new Resvg(svg, {
-    font: fontFiles.length
-      ? { fontFiles, loadSystemFonts: false, defaultFontFamily: 'Poppins' }
-      : { defaultFontFamily: 'Poppins' },
-  });
-  return Buffer.from(resvg.render().asPng());
-}
+const renderOverlayPng = renderSvgToPng;
 
 // ── Pengukuran teks ────────────────────────────────────────────────────────
 
 const fontCache = new Map<string, opentype.Font | null>();
 
-function measureTitleWidth(text: string, fontSize: number): number {
-  const key = 'sans:800';
+/** Lebar teks memakai font bundled; fallback rasio bila font tidak tersedia. */
+function measureFontWidth(
+  family: 'sans' | 'mono',
+  weight: number,
+  text: string,
+  fontSize: number
+): number {
+  const key = `${family}:${weight}`;
   if (!fontCache.has(key)) {
-    const file = getFontFileFor('sans', 800);
+    const file = getFontFileFor(family, weight);
     let font: opentype.Font | null = null;
     if (file) {
       try {
@@ -433,12 +533,33 @@ function measureTitleWidth(text: string, fontSize: number): number {
     fontCache.set(key, font);
   }
   const font = fontCache.get(key);
-  if (!font) return text.length * fontSize * 0.56;
+  const ratio = family === 'mono' ? 0.6 : 0.56;
+  if (!font) return text.length * fontSize * ratio;
   try {
     return font.getAdvanceWidth(text, fontSize, { kerning: true });
   } catch {
-    return text.length * fontSize * 0.56;
+    return text.length * fontSize * ratio;
   }
+}
+
+function measureTitleWidth(text: string, fontSize: number): number {
+  return measureFontWidth('sans', 800, text, fontSize);
+}
+
+/** Potong teks dengan elipsis sampai muat di lebar tertentu. */
+function fitTextToWidth(
+  text: string,
+  fontSize: number,
+  maxWidth: number,
+  measure: (text: string, size: number) => number
+): string {
+  const limit = Math.max(0, maxWidth);
+  if (measure(text, fontSize) <= limit) return text;
+  let value = text;
+  while (value.length > 1 && measure(`${value}…`, fontSize) > limit) {
+    value = value.slice(0, -1).trimEnd();
+  }
+  return `${value}…`;
 }
 
 // ── Helper kecil ───────────────────────────────────────────────────────────

@@ -186,7 +186,7 @@ scrim gradien tipis agar teks terbaca.
 | L2 | Aksen | Garis pendek 96×5 px di atas judul + titik di depan handle, memakai warna turunan `Base.color` |
 | L3 | Judul | Poppins **800** uppercase, auto-fit 60→36 px, maks 3 baris, ukuran "kecil" supaya foto tetap dominan |
 | L4 | Pill handle base | `@handle` base di **pill rounded terpisah** sisi kiri (`Poppins 600`, 28 px). Latar `#05070c` 0.62 + garis tepi putih 0.55 (2 px), teks putih 0.97. Dipotong elipsis hanya bila handle sangat panjang |
-| L5 | Pill URL platform | `fessncurious.vercel.app` di **pill rounded terpisah** sisi kanan (`Fira Mono`, 24 px, latar & garis tepi sama dengan pill handle). URL selalu utuh, tidak ikut terpotong |
+| L5 | Pill URL platform | `fessncurious.vercel.app` di **pill rounded terpisah** sisi kanan (`Poppins 600`, 28 px — sama dengan pill handle, bukan mono). URL selalu utuh, tidak ikut terpotong |
 | L6 | Zona aman | Margin 72 px; baseline judul terakhir 1238; pill di y 1264 setinggi 60 px dengan radius penuh |
 
 Aturan tambahan:
@@ -225,7 +225,7 @@ Diterapkan di `instagram-media.util.ts` → `normalizeImageBuffer()` saat
 |---|---|---|
 | F0 | Foto user | `fit: contain` 1080×1350 — utuh, tanpa crop. Area sisa diisi salinan foto `cover` + `blur(36)` + `brightness 0.86` (bukan putih) |
 | F1 | Pill handle base | `@handle` base, Poppins 600 32 px, **pill solid** di kiri-atas (margin 4,5% = 48 px). Latar `#05070c` 0.72 + garis tepi putih 0.6 (2 px), radius penuh |
-| F2 | Pill host platform | `fessncurious.vercel.app`, Fira Mono 24 px, **pill solid** di kanan-bawah, rata kanan, gaya sama dengan pill handle |
+| F2 | Pill host platform | `fessncurious.vercel.app`, Poppins 600 32 px (tipografi sama dengan handle), **pill solid** di kanan-bawah, rata kanan, gaya sama dengan pill handle |
 
 Aturan:
 

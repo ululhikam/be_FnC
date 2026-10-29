@@ -52,8 +52,8 @@ const PILL_HEIGHT = 60;
 const PILL_GAP = 12;
 const HANDLE_FONT_SIZE = 28;
 const HANDLE_PADDING = 26;
-const HOST_FONT_SIZE = 24;
-const HOST_PADDING = 24;
+const HOST_FONT_SIZE = 28;
+const HOST_PADDING = 26;
 const BRAND_FALLBACK = '#0055ff';
 const NIGHT = '#05070c';
 
@@ -324,7 +324,7 @@ interface FooterPill {
   textX: number;
   textBaseline: number;
   textAnchor: 'start' | 'end';
-  /** Kekuatan garis tepi (handle lebih tegas dari URL). */
+  /** Kekuatan garis tepi pill (sama untuk handle & URL). */
   stroke: number;
 }
 
@@ -380,7 +380,7 @@ function buildFooterPills(handle: string, host: string): FooterPill[] {
   const naturalHandle =
     Math.ceil(measureFontWidth('sans', 600, handle, HANDLE_FONT_SIZE)) + HANDLE_PADDING * 2;
   const naturalHost =
-    Math.ceil(measureFontWidth('mono', 400, host, HOST_FONT_SIZE)) + HOST_PADDING * 2;
+    Math.ceil(measureFontWidth('sans', 600, host, HOST_FONT_SIZE)) + HOST_PADDING * 2;
 
   // URL platform tidak boleh terpotong: batasi maksimal 45% lebar kanvas.
   let hostWidth = Math.min(naturalHost, Math.round(available * 0.45));
@@ -402,7 +402,7 @@ function buildFooterPills(handle: string, host: string): FooterPill[] {
     host,
     HOST_FONT_SIZE,
     hostWidth - HOST_PADDING * 2,
-    (text, size) => measureFontWidth('mono', 400, text, size)
+    (text, size) => measureFontWidth('sans', 600, text, size)
   );
 
   const radius = PILL_HEIGHT / 2;
@@ -432,8 +432,8 @@ function buildFooterPills(handle: string, host: string): FooterPill[] {
       radius,
       text: hostText,
       fontSize: HOST_FONT_SIZE,
-      fontFamily: 'Fira Mono, monospace',
-      fontWeight: 400,
+      fontFamily: 'Poppins, sans-serif',
+      fontWeight: 600,
       textX: rightEdge - HOST_PADDING,
       textBaseline: PILL_TOP + Math.round(PILL_HEIGHT / 2 + HOST_FONT_SIZE * 0.35),
       textAnchor: 'end',

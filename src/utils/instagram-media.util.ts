@@ -263,8 +263,8 @@ function watermarkKey(value?: IgWatermark | null): string {
 /**
  * SVG transparan berisi watermark foto asli: `@handle` base di kiri-atas dan
  * host platform di kanan-bawah. Keduanya memakai **pill solid** (latar gelap
- * pekat + garis tepi putih) supaya tetap jelas di atas foto terang/gelap —
- * teks polos tanpa plat terlalu samar di foto ramai.
+ * pekat + garis tepi putih) dan tipografi yang sama — Poppins 600 — supaya
+ * tetap jelas di atas foto terang/gelap dan terlihat satu keluarga.
  */
 export function buildWatermarkSvg(target: IgTargetDimensions, watermark: IgWatermark): string {
   const { handle, host } = watermark;
@@ -272,15 +272,15 @@ export function buildWatermarkSvg(target: IgTargetDimensions, watermark: IgWater
 
   const margin = Math.round(width * 0.045); // 48 px pada 1080
   const handleSize = Math.round(width * 0.03); // 32 px
-  const hostSize = Math.round(width * 0.022); // 24 px
+  const hostSize = handleSize; // tipografi sama dengan handle (bukan mono)
   const handlePadX = Math.round(handleSize * 0.85);
-  const hostPadX = Math.round(hostSize * 0.9);
+  const hostPadX = handlePadX;
   const handleHeight = Math.round(handleSize * 1.85);
-  const hostHeight = Math.round(hostSize * 1.9);
+  const hostHeight = handleHeight;
 
   // Lebar pill mengikuti teks; hanya dipotong bila melebihi 60% kanvas.
   const handleMaxWidth = Math.round(width * 0.6);
-  const hostMaxWidth = Math.round(width * 0.55);
+  const hostMaxWidth = Math.round(width * 0.6);
   const handleText = fitTextToWidth(
     handle,
     handleSize,
@@ -291,11 +291,11 @@ export function buildWatermarkSvg(target: IgTargetDimensions, watermark: IgWater
     host,
     hostSize,
     hostMaxWidth - hostPadX * 2,
-    (text, size) => measureFontWidth('mono', 400, text, size)
+    (text, size) => measureFontWidth('sans', 600, text, size)
   );
   const handleWidth =
     Math.ceil(measureFontWidth('sans', 600, handleText, handleSize)) + handlePadX * 2;
-  const hostWidth = Math.ceil(measureFontWidth('mono', 400, hostText, hostSize)) + hostPadX * 2;
+  const hostWidth = Math.ceil(measureFontWidth('sans', 600, hostText, hostSize)) + hostPadX * 2;
 
   const handleY = margin;
   const hostY = height - margin - hostHeight;
@@ -307,7 +307,7 @@ export function buildWatermarkSvg(target: IgTargetDimensions, watermark: IgWater
   <rect x="${margin}" y="${handleY}" width="${handleWidth}" height="${handleHeight}" rx="${Math.round(handleHeight / 2)}" fill="#05070c" fill-opacity="0.72" stroke="#ffffff" stroke-opacity="0.6" stroke-width="2"/>
   <text x="${margin + handlePadX}" y="${handleBaseline}" font-family="Poppins, sans-serif" font-size="${handleSize}" font-weight="600" fill="#ffffff">${escapeXml(handleText)}</text>
   <rect x="${hostX}" y="${hostY}" width="${hostWidth}" height="${hostHeight}" rx="${Math.round(hostHeight / 2)}" fill="#05070c" fill-opacity="0.72" stroke="#ffffff" stroke-opacity="0.6" stroke-width="2"/>
-  <text x="${width - margin - hostPadX}" y="${hostBaseline}" text-anchor="end" font-family="Fira Mono, monospace" font-size="${hostSize}" font-weight="400" fill="#ffffff">${escapeXml(hostText)}</text>
+  <text x="${width - margin - hostPadX}" y="${hostBaseline}" text-anchor="end" font-family="Poppins, sans-serif" font-size="${hostSize}" font-weight="600" fill="#ffffff">${escapeXml(hostText)}</text>
 </svg>`;
 }
 

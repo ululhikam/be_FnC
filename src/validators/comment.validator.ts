@@ -14,6 +14,11 @@ const CommentTextSchema = z
 
 export const AddCommentSchema = z.object({
   text: CommentTextSchema,
+  /**
+   * Komentar induk untuk balasan. Backend meratakan balasan-dari-balasan
+   * ke induk teratas agar thread tetap dua tingkat dan garis koneksi rapi.
+   */
+  parent_id: z.string().trim().min(1, 'Komentar induk tidak valid').max(64).optional().nullable(),
 });
 
 /** Edit memakai aturan panjang yang sama dengan komentar baru. */

@@ -157,6 +157,7 @@ export class CommentService {
 
       return {
         id: c.id,
+        parent_id: c.parentId ?? null,
         author,
         text: c.text,
         created_at: new Date(c.createdAt).getTime(),
@@ -172,7 +173,12 @@ export class CommentService {
   /**
    * Add comment to a fess
    */
-  static async addComment(fessId: string, text: string, currentUser?: CommentViewer) {
+  static async addComment(
+    fessId: string,
+    text: string,
+    currentUser?: CommentViewer,
+    parentId?: string | null
+  ) {
     const fess = await prisma.fess.findUnique({ where: { id: fessId } });
     if (!fess) fail('Fess tidak ditemukan', 404, 'NOT_FOUND');
 
@@ -183,6 +189,8 @@ export class CommentService {
       fail('Fess ini belum terbit sehingga belum bisa dikomentari.', 403, 'FESS_NOT_PUBLISHED');
     }
 
+    const resolvedParentId = await CommentService.resolveReplyParent(fessId, parentId);
+
     const authorName = await CommentService.resolveNewCommentAuthor(currentUser, fess);
 
     const [comment] = await prisma.$transaction([
@@ -190,6 +198,7 @@ export class CommentService {
         data: {
           fessId,
           userId: currentUser?.id || null,
+          parentId: resolvedParentId,
           author: authorName,
           text: text.trim(),
         },
@@ -216,6 +225,7 @@ export class CommentService {
 
     return {
       id: comment.id,
+      parent_id: comment.parentId ?? null,
       author: comment.author,
       text: comment.text,
       created_at: new Date(comment.createdAt).getTime(),
@@ -223,6 +233,25 @@ export class CommentService {
       can_edit: Boolean(currentUser),
       can_delete: Boolean(currentUser),
     };
+  }
+
+  /**
+   * Balasan hanya boleh menempel ke komentar di fess yang sama. Balasan dari
+   * balasan diratakan ke induk teratas supaya tampilan tetap dua tingkat.
+   */
+  private static async resolveReplyParent(
+    fessId: string,
+    parentId?: string | null
+  ): Promise<string | null> {
+    if (!parentId) return null;
+
+    const parent = await prisma.comment.findFirst({
+      where: { id: parentId, fessId },
+      select: { id: true, parentId: true },
+    });
+    if (!parent) fail('Komentar yang dibalas tidak ditemukan', 404, 'PARENT_NOT_FOUND');
+
+    return parent.parentId || parent.id;
   }
 
   /**

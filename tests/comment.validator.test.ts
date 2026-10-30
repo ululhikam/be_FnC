@@ -25,4 +25,13 @@ describe('CommentTextSchema', () => {
     expect(EditCommentSchema.safeParse({ text: '   ' }).success).toBe(false);
     expect(EditCommentSchema.parse({ text: '  baru  ' }).text).toBe('baru');
   });
+
+  it('menerima parent_id opsional dan memangkas spasinya', () => {
+    expect(AddCommentSchema.parse({ text: 'halo' }).parent_id).toBeUndefined();
+    expect(AddCommentSchema.parse({ text: 'halo', parent_id: null }).parent_id).toBeNull();
+    expect(AddCommentSchema.parse({ text: 'halo', parent_id: ' c_parent ' }).parent_id).toBe(
+      'c_parent'
+    );
+    expect(AddCommentSchema.safeParse({ text: 'halo', parent_id: '   ' }).success).toBe(false);
+  });
 });

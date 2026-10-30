@@ -238,14 +238,18 @@ model Comment {
   id        String   @id @default(cuid())
   fessId    String
   userId    String?
+  parentId  String?
   author    String   @default("Anonim")
   text      String
   createdAt DateTime @default(now())
 
-  fess Fess  @relation(fields: [fessId], references: [id], onDelete: Cascade)
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  fess    Fess      @relation(fields: [fessId], references: [id], onDelete: Cascade)
+  user    User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  parent  Comment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: SetNull)
+  replies Comment[] @relation("CommentReplies")
 
   @@index([fessId, createdAt])
+  @@index([parentId])
 }
 
 model Notification {

@@ -11,6 +11,7 @@ vi.mock('../src/config/prisma.js', () => ({
     },
     comment: {
       findMany: vi.fn(),
+      findFirst: vi.fn(),
       findUnique: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
@@ -159,6 +160,24 @@ describe('CommentService Unit Tests', () => {
     expect(asModerator.data[1]).toMatchObject({ is_mine: false, can_delete: true });
   });
 
+  it('menampilkan parent_id agar balasan bisa digambar sebagai thread', async () => {
+    vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+      id: 'fess_1',
+      status: 'published',
+      baseId: 'base_1',
+      baseHandle: '@base_a',
+    } as any);
+    vi.mocked(prisma.comment.findMany).mockResolvedValueOnce([
+      commentRow({ id: 'c_root', parentId: null }),
+      commentRow({ id: 'c_reply', parentId: 'c_root' }),
+    ] as any);
+
+    const result = await CommentService.getComments('fess_1');
+
+    expect(result.data[0].parent_id).toBeNull();
+    expect(result.data[1].parent_id).toBe('c_root');
+  });
+
   it('should add comment and notify author', async () => {
     vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
       id: 'fess_1',
@@ -222,6 +241,92 @@ describe('CommentService Unit Tests', () => {
         data: expect.objectContaining({ author: 'Base Kedua' }),
       })
     );
+  });
+
+  it('menyimpan parent_id saat membalas komentar', async () => {
+    vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+      id: 'fess_1',
+      userId: null,
+      content: 'Original fess content',
+      status: 'published',
+      baseId: 'base_1',
+      baseHandle: '@base_a',
+    } as any);
+    vi.mocked(prisma.comment.findFirst).mockResolvedValueOnce({
+      id: 'c_root',
+      parentId: null,
+    } as any);
+    vi.mocked(prisma.comment.create).mockImplementationOnce((async ({ data }: any) => ({
+      id: 'c_reply',
+      parentId: data.parentId,
+      author: data.author,
+      text: data.text,
+      createdAt: new Date(),
+    })) as any);
+    vi.mocked(prisma.fess.update).mockResolvedValueOnce({} as any);
+
+    const reply = await CommentService.addComment('fess_1', 'Balasan', USER, 'c_root');
+
+    expect(prisma.comment.findFirst).toHaveBeenCalledWith({
+      where: { id: 'c_root', fessId: 'fess_1' },
+      select: { id: true, parentId: true },
+    });
+    expect(prisma.comment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ parentId: 'c_root' }),
+      })
+    );
+    expect(reply.parent_id).toBe('c_root');
+  });
+
+  it('meratakan balasan dari balasan ke induk teratas', async () => {
+    vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+      id: 'fess_1',
+      userId: null,
+      content: 'Original fess content',
+      status: 'published',
+      baseId: 'base_1',
+      baseHandle: '@base_a',
+    } as any);
+    vi.mocked(prisma.comment.findFirst).mockResolvedValueOnce({
+      id: 'c_reply',
+      parentId: 'c_root',
+    } as any);
+    vi.mocked(prisma.comment.create).mockImplementationOnce((async ({ data }: any) => ({
+      id: 'c_reply_2',
+      parentId: data.parentId,
+      author: data.author,
+      text: data.text,
+      createdAt: new Date(),
+    })) as any);
+    vi.mocked(prisma.fess.update).mockResolvedValueOnce({} as any);
+
+    const reply = await CommentService.addComment('fess_1', 'Balasan lanjutan', USER, 'c_reply');
+
+    expect(prisma.comment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ parentId: 'c_root' }),
+      })
+    );
+    expect(reply.parent_id).toBe('c_root');
+  });
+
+  it('menolak komentar induk dari fess lain atau yang tidak ada', async () => {
+    vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+      id: 'fess_1',
+      userId: null,
+      content: 'Original fess content',
+      status: 'published',
+      baseId: 'base_1',
+      baseHandle: '@base_a',
+    } as any);
+    vi.mocked(prisma.comment.findFirst).mockResolvedValueOnce(null);
+
+    await expect(
+      CommentService.addComment('fess_1', 'Balasan', USER, 'c_fess_lain')
+    ).rejects.toMatchObject({ status: 404, code: 'PARENT_NOT_FOUND' });
+
+    expect(prisma.comment.create).not.toHaveBeenCalled();
   });
 
   it('menolak komentar pada fess yang belum terbit', async () => {

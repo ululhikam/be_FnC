@@ -19,9 +19,9 @@ export class CommentController {
   static async addComment(req: Request, res: Response, next: NextFunction) {
     try {
       const id = String(req.params.id);
-      const { text } = req.body;
+      const { text, parent_id } = req.body;
 
-      const comment = await CommentService.addComment(id, text, req.user);
+      const comment = await CommentService.addComment(id, text, req.user, parent_id);
       return successResponse(res, comment, 201);
     } catch (error) {
       next(error);

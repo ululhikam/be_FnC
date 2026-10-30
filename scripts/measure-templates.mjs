@@ -1,6 +1,12 @@
-#!/usr/bin/env node
 /**
  * measure-templates.mjs — menurunkan SELURUH geometri template dari file SVG-nya.
+ *
+ * Sengaja TANPA shebang `#!/usr/bin/env node`. Skrip ini bukan hanya dijalankan
+ * langsung (`npm run template:measure` memakai `node ...mjs`, jadi shebang tidak
+ * dibutuhkan), tetapi juga di-import dinamis oleh `src/utils/template-admin.util.ts`
+ * saat Vitest berjalan — dan transformer Vitest/esbuild menolak file yang diawali
+ * shebang dengan `SyntaxError: Invalid or unexpected token`, sehingga seluruh
+ * `tests/template-admin.util.test.ts` gagal.
  *
  * Tidak ada angka per-template yang di-hardcode. Semua nilai (posisi, ukuran font,
  * line height, lebar kolom, batas bawah, kapasitas baris, font kutipan, dan

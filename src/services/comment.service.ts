@@ -17,6 +17,9 @@ interface IdentityBase {
   id?: string;
   name: string;
   handle: string;
+  avatar?: string | null;
+  color?: string | null;
+  initial?: string | null;
 }
 
 interface CommentIdentityUser {
@@ -24,6 +27,14 @@ interface CommentIdentityUser {
   username: string;
   role: string;
   managedBases?: IdentityBase[];
+}
+
+interface ResolvedCommentAuthor {
+  name: string;
+  /** URL/data-URL foto base atau inisial teks; null untuk komentator anonim. */
+  avatar: string | null;
+  /** Warna brand base, dipakai sebagai latar avatar. */
+  color: string | null;
 }
 
 interface CommentFess {
@@ -63,25 +74,45 @@ export function anonymousCommentAlias(fessId: string, userId: string): string {
 }
 
 /**
- * Nama yang tampil di komentar.
+ * Identitas yang tampil di komentar.
  *
- * - Base Admin tampil sebagai nama base yang dikelolanya (bukan akun pribadi).
+ * - Base Admin tampil sebagai nama base yang dikelolanya (bukan akun pribadi),
+ *   lengkap dengan avatar/warna base agar mudah dikenali.
  * - Super Admin tampil sebagai "Tim FnC".
- * - Pengguna biasa tampil sebagai alias anonim per thread.
+ * - Pengguna biasa tampil sebagai alias anonim per thread tanpa avatar pribadi.
  */
-function resolveCommentAuthor(user: CommentIdentityUser, fess: CommentFess): string {
+function resolveCommentAuthor(
+  user: CommentIdentityUser,
+  fess: CommentFess
+): ResolvedCommentAuthor {
   if (user.role === 'Base Admin') {
     const bases = user.managedBases || [];
     const own =
       bases.find((base) => base.id && base.id === fess.baseId) ||
       bases.find((base) => normalizeHandle(base.handle) === normalizeHandle(fess.baseHandle)) ||
       bases[0];
-    return own?.name || 'Base Admin';
+    const name = own?.name || 'Base Admin';
+    const configuredAvatar = typeof own?.avatar === 'string' ? own.avatar.trim() : '';
+    const initial = typeof own?.initial === 'string' ? own.initial.trim() : '';
+
+    return {
+      name,
+      // Base boleh belum punya foto. Pakai inisial base, lalu inisial nama
+      // base, supaya komentar base tidak jatuh ke ikon pengguna generik.
+      avatar: configuredAvatar || initial || name.slice(0, 2).toUpperCase() || null,
+      color: own?.color || null,
+    };
   }
 
-  if (user.role === 'Super Admin') return 'Tim FnC';
+  if (user.role === 'Super Admin') {
+    return { name: 'Tim FnC', avatar: null, color: null };
+  }
 
-  return anonymousCommentAlias(fess.id, user.id);
+  return {
+    name: anonymousCommentAlias(fess.id, user.id),
+    avatar: null,
+    color: null,
+  };
 }
 
 /** Base Admin hanya boleh memoderasi komentar di base yang ia kelola. */
@@ -130,7 +161,14 @@ export class CommentService {
               username: true,
               role: true,
               managedBases: {
-                select: { id: true, name: true, handle: true },
+                select: {
+                  id: true,
+                  name: true,
+                  handle: true,
+                  avatar: true,
+                  color: true,
+                  initial: true,
+                },
                 orderBy: { createdAt: 'asc' },
               },
             },
@@ -150,15 +188,17 @@ export class CommentService {
     const data = comments.map((c) => {
       // Baris legacy bisa menyimpan username asli. Selama `userId` ada, nama
       // tampilan dihitung ulang agar handle tidak pernah bocor di feed.
-      const author = c.user
+      const identity = c.user
         ? resolveCommentAuthor(c.user as CommentIdentityUser, fess)
-        : c.author || 'Anonim';
+        : { name: c.author || 'Anonim', avatar: null, color: null };
       const isMine = Boolean(viewer && c.userId === viewer.id);
 
       return {
         id: c.id,
         parent_id: c.parentId ?? null,
-        author,
+        author: identity.name,
+        author_avatar: identity.avatar,
+        author_color: identity.color,
         text: c.text,
         created_at: new Date(c.createdAt).getTime(),
         is_mine: isMine,
@@ -191,7 +231,7 @@ export class CommentService {
 
     const resolvedParentId = await CommentService.resolveReplyParent(fessId, parentId);
 
-    const authorName = await CommentService.resolveNewCommentAuthor(currentUser, fess);
+    const identity = await CommentService.resolveNewCommentAuthor(currentUser, fess);
 
     const [comment] = await prisma.$transaction([
       prisma.comment.create({
@@ -199,7 +239,7 @@ export class CommentService {
           fessId,
           userId: currentUser?.id || null,
           parentId: resolvedParentId,
-          author: authorName,
+          author: identity.name,
           text: text.trim(),
         },
       }),
@@ -217,7 +257,7 @@ export class CommentService {
           type: 'comment',
           fessId: fess.id,
           fessContent: fess.content.slice(0, 60),
-          actor: authorName,
+          actor: identity.name,
           text: `membalas fessmu: "${text.slice(0, 40)}${text.length > 40 ? '...' : ''}"`,
         },
       });
@@ -227,6 +267,8 @@ export class CommentService {
       id: comment.id,
       parent_id: comment.parentId ?? null,
       author: comment.author,
+      author_avatar: identity.avatar,
+      author_color: identity.color,
       text: comment.text,
       created_at: new Date(comment.createdAt).getTime(),
       is_mine: Boolean(currentUser),
@@ -261,8 +303,8 @@ export class CommentService {
   private static async resolveNewCommentAuthor(
     currentUser: CommentViewer | undefined,
     fess: CommentFess
-  ): Promise<string> {
-    if (!currentUser) return 'Anonim';
+  ): Promise<ResolvedCommentAuthor> {
+    if (!currentUser) return { name: 'Anonim', avatar: null, color: null };
 
     const bases =
       currentUser.role === 'Base Admin' && (currentUser.managedBases || []).length
@@ -270,7 +312,7 @@ export class CommentService {
             where: {
               handle: { in: currentUser.managedBases },
             },
-            select: { id: true, name: true, handle: true },
+            select: { id: true, name: true, handle: true, avatar: true, color: true, initial: true },
             orderBy: { createdAt: 'asc' },
           })
         : [];

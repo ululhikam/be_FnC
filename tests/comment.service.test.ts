@@ -119,7 +119,14 @@ describe('CommentService Unit Tests', () => {
           role: 'Base Admin',
           managedBases: [
             { id: 'base_1', name: 'Base Pertama', handle: '@base_a' },
-            { id: 'base_2', name: 'Base Kedua', handle: '@base_b' },
+            {
+              id: 'base_2',
+              name: 'Base Kedua',
+              handle: '@base_b',
+              avatar: 'https://cdn.example.com/base-kedua.png',
+              color: '#ff00aa',
+              initial: 'BK',
+            },
           ],
         },
       }),
@@ -130,6 +137,61 @@ describe('CommentService Unit Tests', () => {
     // Base yang memiliki fess dipilih lebih dulu, bukan sekadar base pertama.
     expect(result.data[0].author).toBe('Base Kedua');
     expect(result.data[0].author).not.toContain(BASE_ADMIN.username);
+    // Avatar dan warna base ikut supaya komentar base bisa dikenali.
+    expect(result.data[0].author_avatar).toBe('https://cdn.example.com/base-kedua.png');
+    expect(result.data[0].author_color).toBe('#ff00aa');
+  });
+
+  it('memakai inisial base saat foto base belum diatur', async () => {
+    vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+      id: 'fess_1',
+      status: 'published',
+      baseId: 'base_1',
+      baseHandle: '@base_a',
+    } as any);
+    vi.mocked(prisma.comment.findMany).mockResolvedValueOnce([
+      commentRow({
+        userId: BASE_ADMIN.id,
+        user: {
+          id: BASE_ADMIN.id,
+          username: BASE_ADMIN.username,
+          role: 'Base Admin',
+          managedBases: [
+            { id: 'base_1', name: 'Base Pertama', handle: '@base_a', avatar: null, initial: 'BP' },
+          ],
+        },
+      }),
+    ] as any);
+
+    const result = await CommentService.getComments('fess_1');
+
+    expect(result.data[0].author_avatar).toBe('BP');
+    expect(result.data[0].author_color).toBeNull();
+  });
+
+  it('tidak membocorkan avatar pribadi pengguna biasa', async () => {
+    vi.mocked(prisma.fess.findUnique).mockResolvedValueOnce({
+      id: 'fess_1',
+      status: 'published',
+      baseId: 'base_1',
+      baseHandle: '@base_a',
+    } as any);
+    vi.mocked(prisma.comment.findMany).mockResolvedValueOnce([
+      commentRow({
+        user: {
+          id: USER.id,
+          username: USER.username,
+          role: 'User',
+          managedBases: [],
+          avatar: 'https://cdn.example.com/private-user.png',
+        },
+      }),
+    ] as any);
+
+    const result = await CommentService.getComments('fess_1');
+
+    expect(result.data[0].author_avatar).toBeNull();
+    expect(result.data[0].author_color).toBeNull();
   });
 
   it('menandai komentar milik sendiri dan hak hapus untuk moderator', async () => {
@@ -221,7 +283,14 @@ describe('CommentService Unit Tests', () => {
     } as any);
     vi.mocked(prisma.base.findMany).mockResolvedValueOnce([
       { id: 'base_1', name: 'Base Pertama', handle: '@base_a' },
-      { id: 'base_2', name: 'Base Kedua', handle: '@base_b' },
+      {
+        id: 'base_2',
+        name: 'Base Kedua',
+        handle: '@base_b',
+        avatar: 'https://cdn.example.com/base-kedua.png',
+        color: '#ff00aa',
+        initial: 'BK',
+      },
     ] as any);
     vi.mocked(prisma.comment.create).mockImplementationOnce((async ({ data }: any) => ({
       id: 'c_admin',
@@ -231,16 +300,24 @@ describe('CommentService Unit Tests', () => {
     })) as any);
     vi.mocked(prisma.fess.update).mockResolvedValueOnce({} as any);
 
-    await CommentService.addComment('fess_1', 'Halo dari base', BASE_ADMIN);
+    const created = await CommentService.addComment('fess_1', 'Halo dari base', BASE_ADMIN);
 
     expect(prisma.base.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { handle: { in: ['@base_a', '@base_b'] } } })
+    );
+    expect(prisma.base.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ avatar: true, color: true, initial: true }),
+      })
     );
     expect(prisma.comment.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ author: 'Base Kedua' }),
       })
     );
+    // Respons POST juga membawa avatar base agar komentar baru langsung tampil.
+    expect(created.author_avatar).toBe('https://cdn.example.com/base-kedua.png');
+    expect(created.author_color).toBe('#ff00aa');
   });
 
   it('menyimpan parent_id saat membalas komentar', async () => {

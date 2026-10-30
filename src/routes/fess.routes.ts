@@ -18,7 +18,11 @@ import {
   ReportActionSchema,
   ManualIgPostSchema,
 } from '../validators/fess.validator.js';
-import { AddCommentSchema, GetCommentsQuerySchema } from '../validators/comment.validator.js';
+import {
+  AddCommentSchema,
+  EditCommentSchema,
+  GetCommentsQuerySchema,
+} from '../validators/comment.validator.js';
 
 const router = Router();
 
@@ -116,5 +120,12 @@ router.post(
 // Nested Comments Endpoints
 router.get('/:id/comments', optionalAuth, validateQuery(GetCommentsQuerySchema), CommentController.getComments);
 router.post('/:id/comments', requireAuth, validateBody(AddCommentSchema), CommentController.addComment);
+router.patch(
+  '/:id/comments/:commentId',
+  requireAuth,
+  validateBody(EditCommentSchema),
+  CommentController.updateComment
+);
+router.delete('/:id/comments/:commentId', requireAuth, CommentController.deleteComment);
 
 export default router;

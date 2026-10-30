@@ -1,4 +1,98 @@
+import crypto from 'crypto';
 import { prisma } from '../config/prisma.js';
+import { ENV } from '../config/env.js';
+
+/** Secret terpisah dari JWT agar alias tidak bisa dipakai untuk menebak token. */
+const COMMENT_ALIAS_SECRET = `${ENV.JWT_SECRET}:comment-alias`;
+
+export interface CommentViewer {
+  id: string;
+  username: string;
+  role: string;
+  /** Diisi `requireAuth` sebagai daftar handle base yang dikelola. */
+  managedBases?: string[];
+}
+
+interface IdentityBase {
+  id?: string;
+  name: string;
+  handle: string;
+}
+
+interface CommentIdentityUser {
+  id: string;
+  username: string;
+  role: string;
+  managedBases?: IdentityBase[];
+}
+
+interface CommentFess {
+  id: string;
+  baseId?: string | null;
+  baseHandle?: string | null;
+}
+
+const normalizeHandle = (value?: string | null) =>
+  String(value || '')
+    .replace(/^@/, '')
+    .toLowerCase();
+
+function fail(message: string, status: number, code: string): never {
+  const err: any = new Error(message);
+  err.status = status;
+  err.code = code;
+  throw err;
+}
+
+/**
+ * Alias anonim yang stabil per (fess, user).
+ *
+ * Satu pengguna mendapat alias yang sama di sepanjang thread sehingga pembaca
+ * bisa mengikuti percakapan ("orang yang sama membalas"), tetapi alias berbeda
+ * di thread lain agar aktivitas lintas-fess tidak bisa dilacak. Turunan HMAC
+ * memastikan alias tidak bisa dihitung dari userId/handle publik.
+ */
+export function anonymousCommentAlias(fessId: string, userId: string): string {
+  const digest = crypto
+    .createHmac('sha256', COMMENT_ALIAS_SECRET)
+    .update(`${fessId}:${userId}`)
+    .digest('hex')
+    .slice(0, 4)
+    .toUpperCase();
+  return `Anonim #${digest}`;
+}
+
+/**
+ * Nama yang tampil di komentar.
+ *
+ * - Base Admin tampil sebagai nama base yang dikelolanya (bukan akun pribadi).
+ * - Super Admin tampil sebagai "Tim FnC".
+ * - Pengguna biasa tampil sebagai alias anonim per thread.
+ */
+function resolveCommentAuthor(user: CommentIdentityUser, fess: CommentFess): string {
+  if (user.role === 'Base Admin') {
+    const bases = user.managedBases || [];
+    const own =
+      bases.find((base) => base.id && base.id === fess.baseId) ||
+      bases.find((base) => normalizeHandle(base.handle) === normalizeHandle(fess.baseHandle)) ||
+      bases[0];
+    return own?.name || 'Base Admin';
+  }
+
+  if (user.role === 'Super Admin') return 'Tim FnC';
+
+  return anonymousCommentAlias(fess.id, user.id);
+}
+
+/** Base Admin hanya boleh memoderasi komentar di base yang ia kelola. */
+function canModerate(viewer: CommentViewer | undefined, fess: CommentFess): boolean {
+  if (!viewer) return false;
+  if (viewer.role === 'Super Admin') return true;
+  if (viewer.role !== 'Base Admin') return false;
+  return (viewer.managedBases || []).some(
+    (handle) => normalizeHandle(handle) === normalizeHandle(fess.baseHandle)
+  );
+}
 
 export class CommentService {
   /**
@@ -14,43 +108,63 @@ export class CommentService {
   /**
    * Get comments for a fess
    */
-  static async getComments(fessId: string, page = 1, limit = 20) {
+  static async getComments(fessId: string, page = 1, limit = 20, viewer?: CommentViewer) {
     const skip = (page - 1) * limit;
 
     // Dua query ini tidak saling bergantung. Jalankan paralel agar daftar
     // komentar tidak menunggu query validasi fess lebih dulu.
     const [fess, comments] = await Promise.all([
-      prisma.fess.findUnique({ where: { id: fessId }, select: { id: true, status: true } }),
+      prisma.fess.findUnique({
+        where: { id: fessId },
+        select: { id: true, status: true, baseId: true, baseHandle: true },
+      }),
       prisma.comment.findMany({
         where: { fessId },
         skip,
         take: limit,
         orderBy: { createdAt: 'asc' },
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              role: true,
+              managedBases: {
+                select: { id: true, name: true, handle: true },
+                orderBy: { createdAt: 'asc' },
+              },
+            },
+          },
+        },
       }),
     ]);
 
-    if (!fess) {
-      const err: any = new Error('Fess tidak ditemukan');
-      err.status = 404;
-      err.code = 'NOT_FOUND';
-      throw err;
-    }
+    if (!fess) fail('Fess tidak ditemukan', 404, 'NOT_FOUND');
 
     // Komentar fess non-terbit tidak boleh dibaca publik: isinya bisa memuat
     // potongan konten yang belum lolos moderasi.
-    if (!CommentService.isPubliclyVisible(fess)) {
-      const err: any = new Error('Fess tidak ditemukan');
-      err.status = 404;
-      err.code = 'NOT_FOUND';
-      throw err;
-    }
+    if (!CommentService.isPubliclyVisible(fess)) fail('Fess tidak ditemukan', 404, 'NOT_FOUND');
 
-    const data = comments.map((c) => ({
-      id: c.id,
-      author: c.author,
-      text: c.text,
-      created_at: new Date(c.createdAt).getTime(),
-    }));
+    const viewerCanModerate = canModerate(viewer, fess);
+
+    const data = comments.map((c) => {
+      // Baris legacy bisa menyimpan username asli. Selama `userId` ada, nama
+      // tampilan dihitung ulang agar handle tidak pernah bocor di feed.
+      const author = c.user
+        ? resolveCommentAuthor(c.user as CommentIdentityUser, fess)
+        : c.author || 'Anonim';
+      const isMine = Boolean(viewer && c.userId === viewer.id);
+
+      return {
+        id: c.id,
+        author,
+        text: c.text,
+        created_at: new Date(c.createdAt).getTime(),
+        is_mine: isMine,
+        can_edit: isMine,
+        can_delete: isMine || viewerCanModerate,
+      };
+    });
 
     return { data };
   }
@@ -58,30 +172,18 @@ export class CommentService {
   /**
    * Add comment to a fess
    */
-  static async addComment(
-    fessId: string,
-    text: string,
-    currentUser?: { id: string; username: string }
-  ) {
+  static async addComment(fessId: string, text: string, currentUser?: CommentViewer) {
     const fess = await prisma.fess.findUnique({ where: { id: fessId } });
-    if (!fess) {
-      const err: any = new Error('Fess tidak ditemukan');
-      err.status = 404;
-      err.code = 'NOT_FOUND';
-      throw err;
-    }
+    if (!fess) fail('Fess tidak ditemukan', 404, 'NOT_FOUND');
 
     // Komentar pada fess yang belum/tidak terbit hanya akan muncul ke publik
     // setelah fess itu terbit, dan saat ini membuka jalan bagi penyerang untuk
     // menguji/membanjiri antrean moderasi. Tolak sampai fess benar-benar terbit.
     if (!CommentService.isPubliclyVisible(fess)) {
-      const err: any = new Error('Fess ini belum terbit sehingga belum bisa dikomentari.');
-      err.status = 403;
-      err.code = 'FESS_NOT_PUBLISHED';
-      throw err;
+      fail('Fess ini belum terbit sehingga belum bisa dikomentari.', 403, 'FESS_NOT_PUBLISHED');
     }
 
-    const authorName = currentUser?.username || 'Anon_Reader';
+    const authorName = await CommentService.resolveNewCommentAuthor(currentUser, fess);
 
     const [comment] = await prisma.$transaction([
       prisma.comment.create({
@@ -117,6 +219,109 @@ export class CommentService {
       author: comment.author,
       text: comment.text,
       created_at: new Date(comment.createdAt).getTime(),
+      is_mine: Boolean(currentUser),
+      can_edit: Boolean(currentUser),
+      can_delete: Boolean(currentUser),
     };
+  }
+
+  /**
+   * `requireAuth` hanya membawa handle base. Nama base diambil di sini agar
+   * komentar Base Admin tampil sebagai nama base, bukan username pribadinya.
+   */
+  private static async resolveNewCommentAuthor(
+    currentUser: CommentViewer | undefined,
+    fess: CommentFess
+  ): Promise<string> {
+    if (!currentUser) return 'Anonim';
+
+    const bases =
+      currentUser.role === 'Base Admin' && (currentUser.managedBases || []).length
+        ? await prisma.base.findMany({
+            where: {
+              handle: { in: currentUser.managedBases },
+            },
+            select: { id: true, name: true, handle: true },
+            orderBy: { createdAt: 'asc' },
+          })
+        : [];
+
+    return resolveCommentAuthor(
+      {
+        id: currentUser.id,
+        username: currentUser.username,
+        role: currentUser.role,
+        managedBases: bases,
+      },
+      fess
+    );
+  }
+
+  private static async loadCommentForWrite(fessId: string, commentId: string) {
+    const comment = await prisma.comment.findUnique({
+      where: { id: commentId },
+      select: { id: true, fessId: true, userId: true, author: true, text: true },
+    });
+
+    if (!comment || comment.fessId !== fessId) fail('Komentar tidak ditemukan', 404, 'NOT_FOUND');
+
+    const fess = await prisma.fess.findUnique({
+      where: { id: fessId },
+      select: { id: true, baseId: true, baseHandle: true },
+    });
+    if (!fess) fail('Fess tidak ditemukan', 404, 'NOT_FOUND');
+
+    return { comment, fess };
+  }
+
+  /** Edit komentar milik sendiri. Moderator tidak boleh mengubah kata pengguna. */
+  static async updateComment(
+    fessId: string,
+    commentId: string,
+    text: string,
+    currentUser: CommentViewer
+  ) {
+    const { comment } = await CommentService.loadCommentForWrite(fessId, commentId);
+
+    if (comment.userId !== currentUser.id) {
+      fail('Kamu hanya bisa mengubah komentar milikmu sendiri.', 403, 'FORBIDDEN');
+    }
+
+    const updated = await prisma.comment.update({
+      where: { id: comment.id },
+      data: { text: text.trim() },
+    });
+
+    return {
+      id: updated.id,
+      author: updated.author,
+      text: updated.text,
+      created_at: new Date(updated.createdAt).getTime(),
+      is_mine: true,
+      can_edit: true,
+      can_delete: true,
+    };
+  }
+
+  /** Hapus komentar: penulis sendiri, Base Admin pengelola base, atau Super Admin. */
+  static async deleteComment(fessId: string, commentId: string, currentUser: CommentViewer) {
+    const { comment, fess } = await CommentService.loadCommentForWrite(fessId, commentId);
+
+    const isAuthor = comment.userId === currentUser.id;
+    if (!isAuthor && !canModerate(currentUser, fess)) {
+      fail('Kamu tidak berwenang menghapus komentar ini.', 403, 'FORBIDDEN');
+    }
+
+    await prisma.$transaction([
+      prisma.comment.delete({ where: { id: comment.id } }),
+      // Guard `gt: 0` supaya data lama yang tidak konsisten tidak menghasilkan
+      // komentar terhitung negatif.
+      prisma.fess.updateMany({
+        where: { id: fessId, commentsCount: { gt: 0 } },
+        data: { commentsCount: { decrement: 1 } },
+      }),
+    ]);
+
+    return { id: comment.id, deleted: true };
   }
 }

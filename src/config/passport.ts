@@ -68,9 +68,11 @@ if (ENV.GOOGLE_CLIENT_ID && ENV.GOOGLE_CLIENT_SECRET) {
           const avatar = profile.photos?.[0]?.value;
 
           // Portal picked on the login/register page is round-tripped through
-          // Google as the OAuth `state` (see GET /auth/google).
-          const stateRole = typeof req.query?.state === 'string' ? req.query.state : '';
-          const role = stateRole === 'Base Admin' ? 'Base Admin' : 'User';
+          // Google inside the signed `state` (see GET /auth/google) and already
+          // verified by `requireGoogleOAuthState` on the callback route. Never
+          // read the role from the raw query string: that value is attacker
+          // controlled and decides which role a brand-new account gets.
+          const role = req.googleOAuthState?.role === 'Base Admin' ? 'Base Admin' : 'User';
 
           // Check if user already exists
           let user = await prisma.user.findFirst({

@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import passport from 'passport';
 import { AuthController } from '../controllers/auth.controller.js';
@@ -23,7 +23,12 @@ import { InstagramService } from '../services/instagram.service.js';
 import { AuthService } from '../services/auth.service.js';
 import { prisma } from '../config/prisma.js';
 import { parseSignedRequest } from '../utils/meta-signed-request.util.js';
-import { signOAuthState, verifyOAuthState } from '../utils/oauth-state.util.js';
+import {
+  signOAuthState,
+  signGoogleOAuthState,
+  verifyGoogleOAuthState,
+  verifyOAuthState,
+} from '../utils/oauth-state.util.js';
 import { authRateLimit, bodyIdentity } from '../middlewares/authRateLimit.middleware.js';
 
 const router = Router();
@@ -145,25 +150,52 @@ router.post('/email-verification/change-email', validateBody(ChangeVerificationE
 router.post('/instagram/verify', requireAuth, validateBody(InstagramVerifySchema), AuthController.verifyInstagram);
 
 // Passport Google OAuth Flow (Redirect to Google & Callback)
+
+/**
+ * Verifikasi `state` sebelum passport menukar `code` menjadi token.
+ *
+ * `passport-oauth2` hanya memeriksa state bila ada sesi; alur ini memakai
+ * `session: false`, sehingga pemeriksaan bawaan dilewati dan nilai apa pun
+ * diterima. Tanpa gate ini, penyerang bisa menyelesaikan OAuth dengan akunnya
+ * sendiri lalu menyodorkan URL callback ke korban (login CSRF).
+ *
+ * Kegagalan consent (`?error=...`) dibiarkan lewat agar `failureRedirect`
+ * passport tetap memberi pesan `google_failed` yang ramah.
+ */
+function requireGoogleOAuthState(req: Request, res: Response, next: NextFunction) {
+  if (req.query.error) return next();
+
+  const state = typeof req.query.state === 'string' ? req.query.state : '';
+  const payload = verifyGoogleOAuthState(state);
+  if (!payload) {
+    return res.redirect(`${ENV.FRONTEND_URL}/login?error=oauth_state_invalid`);
+  }
+
+  req.googleOAuthState = payload;
+  return next();
+}
+
 router.get('/google', (req, res, next) => {
   if (!ENV.GOOGLE_CLIENT_ID || !ENV.GOOGLE_CLIENT_SECRET) {
     return res.redirect(`${ENV.FRONTEND_URL}/login?error=google_not_configured`);
   }
 
   // `role` picks which portal the visitor is signing into; it round-trips
-  // through Google as the OAuth `state` so the callback can auto-register
-  // the account with the right role.
+  // through Google inside the signed `state` so the callback can auto-register
+  // the account with the right role — and so the value cannot be forged.
   const role = req.query.role === 'Base Admin' ? 'Base Admin' : 'User';
+  const state = signGoogleOAuthState({ role, origin: 'login' });
 
   passport.authenticate('google', {
     scope: ['profile', 'email'],
     session: false,
-    state: role,
+    state,
   })(req, res, next);
 });
 
 router.get(
   '/google/callback',
+  requireGoogleOAuthState,
   passport.authenticate('google', { session: false, failureRedirect: `${ENV.FRONTEND_URL}/login?error=google_failed` }),
   async (req: Request, res: Response) => {
     const user = req.user as any;

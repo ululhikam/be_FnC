@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { generateEmailVerificationTicket, verifyToken } from '../utils/jwt.util.js';
 import { errorResponse } from '../utils/response.util.js';
 import { prisma } from '../config/prisma.js';
+import type { GoogleOAuthStatePayload } from '../utils/oauth-state.util.js';
 
 export interface AuthenticatedUser {
   id: string;
@@ -32,6 +33,11 @@ declare global {
     interface Request {
       /** Diisi `optionalAuth` saat token valid tetapi akunnya dibekukan. */
       authBlocked?: 'BANNED';
+      /**
+       * Diisi `requireGoogleOAuthState` setelah `state` callback Google
+       * terverifikasi — sumber tunggal untuk peran akun baru.
+       */
+      googleOAuthState?: GoogleOAuthStatePayload;
     }
   }
 }

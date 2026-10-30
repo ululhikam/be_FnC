@@ -617,9 +617,12 @@ Diverifikasi langsung di kode:
 - [x] SEC-29, SEC-30 — `safeExternalUrl()` menyaring protokol pada `:href` dari API;
       setiap `target="_blank"` yang tersisa sudah ber-`rel="noopener noreferrer"`
 - [x] SEC-31 — email verifikasi dipindah dari query ke fragment
-- [ ] Sisanya (SEC-35 … SEC-37) masuk backlog perbaikan rutin.
+- [x] SEC-35 — endpoint `PATCH`/`DELETE /fesses/:id/comments/:commentId`; edit hanya
+      penulis, hapus oleh penulis/Base Admin pengelola base/Super Admin; alias anonim
+      stabil per thread dan komentar Base Admin tampil sebagai nama base
+- [ ] Sisanya (SEC-36, SEC-37) masuk backlog perbaikan rutin.
 
-### 7.1 Status implementasi per temuan (branch `fix/security-hardening`)
+### 7.1 Status implementasi per temuan (branch `fix/security-hardening` + `fix/google-oauth-state`)
 
 | ID | Perubahan | Berkas |
 | --- | --- | --- |
@@ -654,6 +657,7 @@ Diverifikasi langsung di kode:
 | SEC-32 | `otpHashMatches()` memakai `crypto.timingSafeEqual` pada hash SHA-256 | `services/auth.service.ts` |
 | SEC-34 | Decrement `membersCount`/`followingCount` memakai `updateMany` bergerbang `> 0`; `formatMembers()` meng-clamp negatif/NaN ke 0 | `services/base.service.ts`, `utils/format.util.ts` |
 | SEC-33 | `getInstagramStatus` menyertakan `status` dan membalas 404 untuk fess non-terbit kecuali pengelola base | `services/fess.service.ts` |
+| SEC-35 | `PATCH`/`DELETE` komentar dengan otorisasi penulis vs moderator base; `commentsCount` diturunkan lewat `updateMany` bergerbang `gt: 0`; nama tampilan dihitung server: alias `Anonim #xxxx` per thread untuk pengguna, nama base untuk Base Admin | `services/comment.service.ts`, `controllers/comment.controller.ts`, `routes/fess.routes.ts`, `validators/comment.validator.ts` |
 
 ---
 

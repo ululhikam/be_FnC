@@ -21,7 +21,7 @@ export const TITLE_MAX_LINES = 4;
 const WIDOW_SEARCH_STEPS = 5;
 export const FALLBACK_TITLE = 'Curhat Anonim';
 export const FALLBACK_HANDLE = '@fessncurious';
-export const FALLBACK_HOST = 'fessncurious.vercel.app';
+export const FALLBACK_HOST = 'www.fnc.web.id';
 
 export interface CoverMedia {
   id: string | null;

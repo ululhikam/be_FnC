@@ -25,6 +25,7 @@ import { getEmojiSvgMarkup } from '../config/emoji.js';
 import { ENV } from '../config/env.js';
 import { TOPICS } from '../constants/topics.js';
 import { assertPublicHost, isPublicHttpUrl } from '../utils/remote-image.util.js';
+import { FALLBACK_HOST } from '../utils/thumbnail.util.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -789,7 +790,7 @@ export class CanvasService {
         font-weight="bold" fill="${accentInk}" opacity="0.28">&#8220;</text>
 `
           : '';
-      const footerRight = totalPages > 1 ? `${idx + 1}/${totalPages}` : 'fessncurious.vercel.app';
+      const footerRight = totalPages > 1 ? `${idx + 1}/${totalPages}` : FALLBACK_HOST;
 
       return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
   <defs>
@@ -1695,13 +1696,13 @@ function quoteHandleLabel(fess: FessLike): string {
 }
 
 /**
- * Host frontend tanpa protokol untuk footer kartu, mis. `fessncurious.vercel.app`.
+ * Host frontend tanpa protokol untuk footer kartu, mis. `www.fnc.web.id`.
  * Mengikuti `FRONTEND_URL`, jadi kartu yang dirender di lokal/dev/produksi
  * menunjuk ke alamat aplikasi yang sedang dipakai.
  */
 function frontendHostLabel(override?: string): string {
   const raw = String(override || ENV.FRONTEND_URL || '').trim();
-  if (!raw) return 'fessncurious.vercel.app';
+  if (!raw) return FALLBACK_HOST;
   try {
     return new URL(raw).host || raw;
   } catch {

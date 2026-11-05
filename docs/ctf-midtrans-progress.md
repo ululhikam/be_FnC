@@ -506,6 +506,24 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 
 Semua item di bawah ini **rencana**; belum ada aksi terhadap production.
 
+### Status production per 2026-11-05
+
+Production berjalan di backend `be-fnc` (`https://be.fnc.web.id`) dan frontend `fess.n.curious` (`https://www.fnc.web.id`, `https://fnc.web.id`).
+
+| Item | Status | Catatan |
+| --- | --- | --- |
+| Migrasi 21 file | Selesai | `_prisma_migrations` bersih, tidak ada migrasi tertunda/gagal. |
+| Kunci Midtrans production | Terpasang | Server Key, Signature Secret, Client Key, Merchant ID disinkronkan ke Vercel `be-fnc`. Divalidasi: Server Key diterima `api.midtrans.com` dan ditolak sandbox. |
+| `MIDTRANS_IS_PRODUCTION` | `true` | Sebelumnya `false` walau berisi kunci production. |
+| Signature webhook | Lulus | Signature Secret **dan** Server Key diterima, hex uppercase diterima, secret salah `401`. |
+| `PAYMENTS_ENABLED` | `true` | Aktif atas keputusan pemilik produk. |
+| `BASE_PAYOUTS_ENABLED` | `false` | Kill switch payout tetap mati. |
+| CORS | Lulus | `www.fnc.web.id`, `fnc.web.id`, `fessncurious.vercel.app` diterima; origin asing `403`. |
+| **Channel pembayaran Midtrans** | **Belum aktif** | Charge ke `api.midtrans.com` membalas `402 Payment channel is not activated.` untuk semua VA, Mandiri Bill, GoPay, ShopeePay, dan `404 Merchant pop id is not found` untuk QRIS. Harus diaktifkan di dashboard Midtrans. |
+| **Notification URL Midtrans** | **Belum dipastikan** | Set ke `https://be.fnc.web.id/api/payments/midtrans/notification` di dashboard Midtrans (Settings → Payment → Notification URL). Belum ada `PaymentEvent` production, jadi belum ada notifikasi yang pernah masuk. |
+
+**Kesimpulan:** kode dan kredensial siap, tetapi top-up production belum bisa dipakai sampai channel pembayaran diaktifkan dan notification URL dipasang di dashboard Midtrans. Setelah channel aktif, ulangi uji top-up kecil dan pastikan `PaymentEvent` berstatus `PROCESSED`.
+
 ### Pre-flight
 
 - [ ] Review dan merge branch `feat/ctf-midtrans` setelah sign-off eksplisit.

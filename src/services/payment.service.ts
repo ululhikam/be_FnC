@@ -7,9 +7,10 @@ import { prisma } from '../config/prisma.js';
 import {
   BASE_REVENUE_PER_FESS_IDR,
   CTF_PER_PAID_FESS,
-  PAYMENT_METHODS,
   findPaymentMethod,
   normalizeCouponCode,
+  offeredPaymentMethods,
+  type PaymentMethod,
   type PaymentMethodCode,
 } from '../constants/payments.js';
 import { parseMidtransDate } from '../utils/midtrans-date.util.js';
@@ -85,6 +86,20 @@ function amountMatches(rawAmount: unknown, expectedAmount: number) {
   return Math.round(value * 100) === Math.round(expectedAmount * 100);
 }
 
+/**
+ * Pesan untuk user ketika Midtrans menolak charge. Pesan asli Midtrans
+ * ("Payment channel is not activated.") berbahasa Inggris dan tidak bisa
+ * ditindaklanjuti user, jadi disimpan di `rawResponse` untuk admin dan diganti
+ * arahan yang jelas di sini.
+ */
+function chargeRejectionMessage(method: PaymentMethod): string {
+  return (
+    `${method.label} belum bisa dipakai untuk top-up saat ini karena kanal pembayarannya ` +
+    'belum aktif di Midtrans. Tidak ada tagihan yang dibuat dan saldo CTF-mu tidak terpotong. ' +
+    'Pilih metode pembayaran lain, atau coba lagi nanti.'
+  );
+}
+
 function paymentChannelFor(method: PaymentMethodCode): string {
   switch (method) {
     case 'bca_va':
@@ -93,6 +108,8 @@ function paymentChannelFor(method: PaymentMethodCode): string {
       return 'bni';
     case 'bri_va':
       return 'bri';
+    case 'cimb_va':
+      return 'cimb';
     case 'permata_va':
       return 'permata';
     case 'mandiri_bill':
@@ -146,7 +163,7 @@ export class PaymentService {
       ctf_per_paid_fess: CTF_PER_PAID_FESS,
       base_revenue_per_paid_fess_idr: BASE_REVENUE_PER_FESS_IDR,
       packages: await PaymentPackageService.listActive(),
-      methods: PAYMENT_METHODS,
+      methods: offeredPaymentMethods(),
     };
   }
 
@@ -266,15 +283,32 @@ export class PaymentService {
       });
     } catch (error) {
       const midtransError = error instanceof MidtransError ? error : null;
-      const httpStatus = Number((midtransError?.details as any)?.httpStatus);
-      const explicitRejection = httpStatus >= 400 && httpStatus < 500;
+      const details = midtransError?.details as
+        | { httpStatus?: number; status_code?: unknown; status_message?: unknown }
+        | undefined;
+      const httpStatus = Number(details?.httpStatus);
+      const bodyStatus = Number(details?.status_code);
+      const midtransMessage = String(details?.status_message ?? midtransError?.message ?? '');
+      // Midtrans bisa membalas HTTP 200 dengan `status_code` 4xx di body
+      // (channel belum aktif). Itu penolakan pasti, bukan status tak pasti,
+      // jadi order harus FAILED agar user tidak menunggu pembayaran hantu.
+      const explicitRejection =
+        (httpStatus >= 400 && httpStatus < 500) || (bodyStatus >= 400 && bodyStatus < 500);
+      const channelInactive =
+        bodyStatus === 402 ||
+        httpStatus === 402 ||
+        /payment channel is not activated|merchant pop id is not found/i.test(midtransMessage);
       await prisma.paymentOrder
         .update({
           where: { id: order.id },
           data: {
             status: explicitRejection ? PaymentOrderStatus.FAILED : PaymentOrderStatus.PENDING,
             failedAt: explicitRejection ? new Date() : undefined,
-            midtransStatus: explicitRejection ? 'charge_rejected' : 'charge_uncertain',
+            midtransStatus: explicitRejection
+              ? channelInactive
+                ? 'channel_unavailable'
+                : 'charge_rejected'
+              : 'charge_uncertain',
             rawResponse: {
               charge_error: {
                 code: midtransError?.code || 'MIDTRANS_ERROR',
@@ -285,7 +319,27 @@ export class PaymentService {
           },
         })
         .catch(() => undefined);
-      throw error;
+
+      // Pesan Midtrans bersifat teknis dan berbahasa Inggris, jadi tidak pernah
+      // diteruskan apa adanya ke user. Pesan aslinya tetap tersimpan pada
+      // `rawResponse.charge_error` agar bisa ditelusuri admin.
+      if (channelInactive) {
+        throw paymentError('PAYMENT_METHOD_UNAVAILABLE', chargeRejectionMessage(method), 409);
+      }
+      if (explicitRejection) {
+        throw paymentError(
+          'PAYMENT_REJECTED',
+          'Pembayaran ditolak oleh penyedia pembayaran. Tidak ada tagihan yang dibuat; ' +
+            'coba lagi atau pilih metode pembayaran lain.',
+          409
+        );
+      }
+      throw paymentError(
+        'PAYMENT_GATEWAY_UNAVAILABLE',
+        'Layanan pembayaran sedang tidak dapat dihubungi. Tidak ada tagihan yang dibuat; ' +
+          'coba lagi beberapa saat lagi.',
+        503
+      );
     }
 
     const actions = actionsFrom(result.actions);

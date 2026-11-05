@@ -5,6 +5,7 @@ import { MidtransError, MidtransService } from '../src/services/midtrans.service
 
 const original = {
   serverKey: ENV.MIDTRANS_SERVER_KEY,
+  signatureSecret: ENV.MIDTRANS_SIGNATURE_SECRET,
   isProduction: ENV.MIDTRANS_IS_PRODUCTION,
   frontendUrl: ENV.FRONTEND_URL,
 };
@@ -12,6 +13,7 @@ const original = {
 describe('MidtransService', () => {
   beforeEach(() => {
     ENV.MIDTRANS_SERVER_KEY = 'SB-Mid-server-test';
+    ENV.MIDTRANS_SIGNATURE_SECRET = '';
     ENV.MIDTRANS_IS_PRODUCTION = false;
     ENV.FRONTEND_URL = 'https://fessncurious-dev.vercel.app';
   });
@@ -22,6 +24,7 @@ describe('MidtransService', () => {
 
   afterAll(() => {
     ENV.MIDTRANS_SERVER_KEY = original.serverKey;
+    ENV.MIDTRANS_SIGNATURE_SECRET = original.signatureSecret;
     ENV.MIDTRANS_IS_PRODUCTION = original.isProduction;
     ENV.FRONTEND_URL = original.frontendUrl;
   });
@@ -58,6 +61,9 @@ describe('MidtransService', () => {
     expect(MidtransService.buildChargePayload({ ...base, method: 'bca_va' }).bank_transfer).toEqual({
       bank: 'bca',
     });
+    expect(MidtransService.buildChargePayload({ ...base, method: 'cimb_va' }).bank_transfer).toEqual({
+      bank: 'cimb',
+    });
     expect(MidtransService.buildChargePayload({ ...base, method: 'mandiri_bill' }).echannel).toEqual({
       bill_info1: 'Top-up CTF',
       bill_info2: 'Fess n Curious',
@@ -89,6 +95,57 @@ describe('MidtransService', () => {
       MidtransService.verifySignature({ ...payload, gross_amount: '1.00', signature_key: signature })
     ).toBe(false);
     expect(MidtransService.verifySignature({ ...payload, signature_key: '' })).toBe(false);
+  });
+
+  it('prefers MIDTRANS_SIGNATURE_SECRET over the server key', () => {
+    ENV.MIDTRANS_SIGNATURE_SECRET = 'Signature-Secret-Key-test';
+    const payload = {
+      order_id: 'FNC-ORDER-3',
+      status_code: '200',
+      gross_amount: '5000.00',
+      transaction_status: 'settlement',
+    };
+    const sign = (secret: string) =>
+      crypto
+        .createHash('sha512')
+        .update(`${payload.order_id}${payload.status_code}${payload.gross_amount}${secret}`)
+        .digest('hex');
+
+    expect(MidtransService.hasSignatureSecret()).toBe(true);
+    expect(
+      MidtransService.verifySignature({
+        ...payload,
+        signature_key: sign('Signature-Secret-Key-test'),
+      })
+    ).toBe(true);
+    // Server key tetap diterima sebagai cadangan agar notifikasi lama tidak
+    // tiba-tiba ditolak saat Signature Secret Key baru diisi.
+    expect(
+      MidtransService.verifySignature({
+        ...payload,
+        signature_key: sign(ENV.MIDTRANS_SERVER_KEY),
+      })
+    ).toBe(true);
+    expect(
+      MidtransService.verifySignature({ ...payload, signature_key: sign('secret-lain') })
+    ).toBe(false);
+  });
+
+  it('accepts an uppercase signature hex digest', () => {
+    const payload = {
+      order_id: 'FNC-ORDER-4',
+      status_code: '200',
+      gross_amount: '5000.00',
+    };
+    const signature = crypto
+      .createHash('sha512')
+      .update(
+        `${payload.order_id}${payload.status_code}${payload.gross_amount}${ENV.MIDTRANS_SERVER_KEY}`
+      )
+      .digest('hex')
+      .toUpperCase();
+
+    expect(MidtransService.verifySignature({ ...payload, signature_key: signature })).toBe(true);
   });
 
   it('maps a successful charge response into instructions', async () => {
@@ -159,6 +216,44 @@ describe('MidtransService', () => {
       expect(error).toBeInstanceOf(MidtransError);
       expect(error).toMatchObject({ code: 'MIDTRANS_CHARGE_FAILED', status: 502 });
       expect(JSON.stringify(error)).not.toContain('SB-Mid-server-test');
+    }
+  });
+
+  it('treats an HTTP 200 charge with a 4xx body status_code as a rejection', async () => {
+    // Midtrans membalas HTTP 200 untuk channel yang belum aktif; tanpa cek
+    // status_code di body, order tersimpan PENDING tanpa VA/QR.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              status_code: '402',
+              status_message: 'Payment channel is not activated.',
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        )
+      )
+    );
+
+    try {
+      await MidtransService.charge({
+        orderId: 'FNC-ORDER-1',
+        amountIdr: 5000,
+        packageCode: 'coba_dulu',
+        packageName: 'Coba Dulu',
+        method: 'qris',
+        customer: { name: 'tester' },
+      });
+      throw new Error('expected charge to fail');
+    } catch (error) {
+      expect(error).toBeInstanceOf(MidtransError);
+      expect(error).toMatchObject({
+        code: 'MIDTRANS_CHARGE_FAILED',
+        status: 502,
+        message: 'Payment channel is not activated.',
+      });
     }
   });
 

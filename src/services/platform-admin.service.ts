@@ -960,8 +960,16 @@ export class PlatformAdminService {
           mode: ENV.MIDTRANS_IS_PRODUCTION ? 'production' : 'sandbox',
           payments_enabled: ENV.PAYMENTS_ENABLED,
           server_key_configured: Boolean(ENV.MIDTRANS_SERVER_KEY),
+          signature_secret_configured: Boolean(ENV.MIDTRANS_SIGNATURE_SECRET),
           client_key_configured: Boolean(ENV.MIDTRANS_CLIENT_KEY),
           merchant_id_configured: Boolean(ENV.MIDTRANS_MERCHANT_ID),
+          // Server Key selalu diterima sebagai cadangan, jadi verifikasi aktif
+          // selama salah satu kunci tersedia.
+          webhook_signature_source: ENV.MIDTRANS_SIGNATURE_SECRET
+            ? 'signature_secret_key'
+            : ENV.MIDTRANS_SERVER_KEY
+              ? 'server_key'
+              : null,
         },
         instagram: {
           app_configured: Boolean(ENV.INSTAGRAM_CLIENT_ID && ENV.INSTAGRAM_CLIENT_SECRET),

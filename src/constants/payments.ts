@@ -23,6 +23,7 @@ export type PaymentMethodCode =
   | 'bni_va'
   | 'bri_va'
   | 'permata_va'
+  | 'cimb_va'
   | 'mandiri_bill'
   | 'gopay'
   | 'shopeepay';
@@ -34,6 +35,10 @@ export type PaymentMethod = {
   description: string;
 };
 
+/**
+ * Katalog semua metode yang dikenal kode: dipakai untuk menampilkan pilihan ke
+ * user, membaca order lama, dan memetakan payload Midtrans.
+ */
 export const PAYMENT_METHODS: PaymentMethod[] = [
   {
     code: 'qris',
@@ -58,6 +63,12 @@ export const PAYMENT_METHODS: PaymentMethod[] = [
     label: 'BRI Virtual Account',
     group: 'va',
     description: 'Bayar dari BRImo atau ATM BRI.',
+  },
+  {
+    code: 'cimb_va',
+    label: 'CIMB Niaga Virtual Account',
+    group: 'va',
+    description: 'Bayar dari OCTO Mobile atau ATM CIMB Niaga.',
   },
   {
     code: 'permata_va',
@@ -85,8 +96,26 @@ export const PAYMENT_METHODS: PaymentMethod[] = [
   },
 ];
 
+/**
+ * Semua metode di `PAYMENT_METHODS` ditawarkan ke user.
+ *
+ * Catatan 5 Nov 2026: dashboard Midtrans menandai CIMB Niaga, BNI, BRI, GoPay,
+ * Mandiri Bill, dan Permata sebagai Active, tetapi Core API production masih
+ * membalas `402 Payment channel is not activated.` untuk semuanya. Karena status
+ * dashboard tidak bisa dijadikan patokan, metode tidak lagi disembunyikan:
+ * semua ditampilkan, dan bila Midtrans menolak, user menerima pesan yang jelas
+ * (`chargeRejectionMessage` di `payment.service.ts`) bukan error mentah.
+ *
+ * Kalau nanti ada metode yang harus disembunyikan, filter di
+ * `offeredPaymentMethods` dan tolak di `createOrder`.
+ */
 export function findPaymentMethod(code: string): PaymentMethod | undefined {
   return PAYMENT_METHODS.find((method) => method.code === code);
+}
+
+/** Daftar metode untuk `/payments/packages`: seluruh katalog, tanpa filter. */
+export function offeredPaymentMethods(): PaymentMethod[] {
+  return PAYMENT_METHODS;
 }
 
 export const PAYMENT_PACKAGES: PaymentPackage[] = [

@@ -57,8 +57,15 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 
 - Minimum top-up: Rp5.000.
 - Kartu kredit/debit **tidak** dipakai di v1.
-- Metode aktif: QRIS, GoPay, ShopeePay, VA BCA/BNI/BRI/Permata, Mandiri Bill.
-- Snap dan halaman pembayaran eksternal tidak dipakai; flow pembayaran sepenuhnya in-app.
+- Metode yang ditampilkan: **seluruh katalog** — QRIS, VA BNI/BRI/CIMB Niaga/Permata/BCA,
+  Mandiri Bill, GoPay, dan ShopeePay. Status kanal di dashboard Midtrans tidak dipakai untuk
+  menyembunyikan metode karena tidak sinkron dengan Core API (per 2026-11-05 Core API production
+  masih menolak semua kanal dengan `402`, termasuk yang bertanda Active). Bila Midtrans menolak,
+  `createOrder` menandai order `FAILED` (`midtransStatus=channel_unavailable`) dan user menerima
+  pesan berbahasa Indonesia yang menyebut metode tersebut belum aktif plus jaminan saldo tidak
+  terpotong; pesan asli Midtrans hanya disimpan di `rawResponse.charge_error` untuk admin.
+- Snap dan halaman pembayaran eksternal tidak dipakai; flow pembayaran sepenuhnya in-app
+  lewat Core API (`POST /v2/charge`).
 - **Sumber kebenaran paket (sejak 2026-10-28): tabel `PaymentPackage`, bukan konstanta.**
   `PAYMENT_PACKAGES` di `src/constants/payments.ts` hanya fallback bila tabel belum ada
   (deploy sebelum migrasi). Super Admin mengubah paket di
@@ -127,6 +134,7 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 | Vercel project dev frontend | ✅ Dibuat | `fessncurious-dev` → `fessncurious-dev.vercel.app` |
 | Migrasi dev | ✅ Sampai `20261024040000_welcome_ctf_bonus` | Termasuk reserved payout, `Fess.publishedAt`, dan enum `WELCOME_BONUS` |
 | Midtrans sandbox keys | ✅ Aktif di dev | `MIDTRANS_SERVER_KEY` / `MIDTRANS_CLIENT_KEY` terpasang sebagai Vercel Sensitive env di `be-fnc-dev`; key sandbox valid walau tanpa prefix `SB-Mid-` |
+| Midtrans Signature Secret Key | ⚠️ Opsional | `MIDTRANS_SIGNATURE_SECRET` (Settings > Access Keys). Bila diisi, verifikasi `signature_key` notifikasi memakai kunci ini lebih dulu; Server Key tetap diterima sebagai cadangan |
 | Midtrans notification URL | ✅ Terverifikasi | `https://be-fnc-dev.vercel.app/api/payments/midtrans/notification`; notifikasi asli QRIS dan BCA VA diterima dan diproses |
 | Dev backend deployment terbaru | Selesai | `dpl_4AdsNFxCAyEchyKvaQWSb9dap7SQ` -> https://be-fnc-dev.vercel.app (welcome bonus; flag off) |
 | Dev frontend deployment terbaru | Selesai | `dpl_B1tkYEbzu3aEN6z2k2QLUAV1cUJf` -> https://fessncurious-dev.vercel.app (bank picker rekening payout; flag off) |
@@ -172,6 +180,10 @@ BASE_PAYOUT_FEE_IDR=6500
 # Midtrans sandbox — isi nilainya di lokal/Vercel, jangan commit
 MIDTRANS_IS_PRODUCTION=false
 MIDTRANS_SERVER_KEY=
+# Signature Secret Key dari Settings > Access Keys. Dipakai lebih dulu untuk
+# memverifikasi signature_key notifikasi; Server Key tetap diterima sebagai
+# cadangan bila nilainya kosong.
+MIDTRANS_SIGNATURE_SECRET=
 MIDTRANS_CLIENT_KEY=
 MIDTRANS_MERCHANT_ID=
 
@@ -472,6 +484,14 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 | 2026-10-24 | Meta/Instagram dinyatakan berfungsi (OAuth + callback); tetap opsional dan bukan gate. Base tanpa sosmed tetap FnC-only. |
 | 2026-10-24 | Fase 4 selesai: badge billing composer, modal saldo kurang + CTA top-up, badge publik, status koneksi Instagram nyata, serta audit copy legal/help/FAQ/landing. |
 | 2026-10-24 | Backend full suite 306 test lulus; build backend & frontend lulus. |
+| 2026-11-05 | Dukungan **Signature Secret Key** Midtrans: env baru `MIDTRANS_SIGNATURE_SECRET` dipakai lebih dulu saat memverifikasi `signature_key` notifikasi (Server Key tetap cadangan), signature hex besar/kecil diterima, dan status tiga kunci (Server / Signature Secret / Client) tampil di `/super-admin/system`. |
+| 2026-11-05 | Verifikasi dev: `MIDTRANS_SIGNATURE_SECRET` (format `Mid-server-…`, bukan kunci Basic Auth) diterima; signature dari secret salah dan signature yang diubah ditolak `401 INVALID_SIGNATURE`. Ditemukan `MIDTRANS_SERVER_KEY`/`CLIENT_KEY`/`MERCHANT_ID` di project Vercel `be-fnc-dev` masih nilai lama sehingga `/payments/orders` gagal `502 MIDTRANS_CHARGE_FAILED` (Midtrans `401`); ketiga nilai disinkronkan dari `.env.development`. |
+| 2026-11-05 | E2E sandbox dev lulus setelah sinkronisasi key: order `FNC-MW3JQA30-3FBC7961A5` (Hemat, Rp10.000, 55 CTF) dibayar via simulator BCA VA; order `PAID` dengan `midtransStatus=settlement`, dua `PaymentEvent` `PROCESSED` (`signatureValid=true`), saldo `0 → 55 CTF`, satu `CtfLedgerEntry` `TOPUP`. `PAYMENTS_ENABLED=true` tetap aktif di dev atas persetujuan pemilik produk; production tidak disentuh. |
+| 2026-11-05 | **Bug production:** 11 order production (26 Okt–5 Nov) berakhir `PENDING` tanpa VA/QR karena `MidtransService.charge()` hanya memeriksa HTTP status. Midtrans Core API membalas **HTTP 200** dengan `status_code` `402` ("Payment channel is not activated.") atau `404` ("Merchant pop id is not found") di body, sehingga kegagalan dianggap sukses. Perbaikan: `charge()` menolak body `status_code` di luar 2xx, dan `createOrder` menandai order `FAILED` (`charge_rejected`) alih-alih menggantung `PENDING`. 2 test regresi baru; backend full suite 680/680 lulus. |
+| 2026-11-05 | **Blocker channel production:** uji charge ke `api.midtrans.com` untuk 11 metode membalas HTTP `200` dengan `status_code` `402 Payment channel is not activated.` (semua VA termasuk CIMB, Mandiri Bill, GoPay, ShopeePay) dan `404 Merchant pop id is not found` (QRIS). Akun merchant sudah terverifikasi, tetapi **channel pembayaran belum diaktifkan belum bisa dipakai**: top-up production akan gagal sampai channel diaktifkan di dashboard Midtrans. Dengan fix di atas, kegagalan itu minimal tercatat `FAILED` + pesan jelas, bukan menggantung `PENDING`. |
+| 2026-11-05 | **Klarifikasi channel:** pemilik akun mengonfirmasi yang **Active** hanya CIMB Niaga, BNI, BRI, GoPay, Bank Mandiri, dan PermataBank; QRIS dinamis GoPay dan BSI masih *in progress*. Karena itu daftar metode yang ditawarkan dipangkas ke 6 channel tersebut (`ACTIVE_PAYMENT_METHOD_CODES`), `cimb_va` ditambahkan, dan QRIS/BCA VA/ShopeePay disembunyikan tanpa dihapus dari katalog. `createOrder` menolak metode nonaktif dengan `409 PAYMENT_METHOD_UNAVAILABLE` agar tidak ada order menggantung. |
+| 2026-11-05 | **Bukti pembanding sandbox vs production:** dengan kunci sandbox 10 metode berhasil (`201`: CIMB/BNI/BRI/Permata/BCA/BSI VA, Mandiri Bill, GoPay, QRIS, ShopeePay); dengan kunci production 6 channel yang diklaim aktif semuanya tetap `402 Payment channel is not activated.`. Artinya kode/payload benar (sandbox menerima bentuk yang sama) dan hambatannya murni di sisi aktivasi kanal production. Snap production **berhasil** membuat token (`201 app.midtrans.com/snap/v1/transactions`), jadi akun production aktif — yang belum aktif hanya kanal Core API. |
+| 2026-11-05 | **Pembatalan pemangkasan metode (keputusan pemilik produk):** menyembunyikan metode berdasarkan status dashboard berisiko menghilangkan pilihan yang sebenarnya bisa dipakai, karena status dashboard tidak sinkron dengan Core API. Semua 9 metode katalog kembali ditampilkan (`offeredPaymentMethods()` = seluruh `PAYMENT_METHODS`, `ACTIVE_PAYMENT_METHOD_CODES`/`isMethodOffered` dihapus) dan `createOrder` tidak lagi menolak metode di muka. Sebagai gantinya kegagalan dibuat jelas: penolakan 4xx dari Midtrans (termasuk HTTP 200 + `status_code` 402/404) menandai order `FAILED` dengan `midtransStatus=channel_unavailable`, lalu user menerima pesan Indonesia yang menyebut metode tersebut belum aktif dan menegaskan tidak ada tagihan/saldo terpotong (`PAYMENT_METHOD_UNAVAILABLE`, 409). Pesan mentah Midtrans hanya disimpan di `rawResponse.charge_error`. Error lain dipetakan ke `PAYMENT_REJECTED` (409) dan `PAYMENT_GATEWAY_UNAVAILABLE` (503) agar pesan Inggris tidak bocor ke UI. |
 | 2026-10-24 | Deploy dev: backend `dpl_7DkTGmqcWVXTCugUn8AwKMrW9yad`, frontend `dpl_BAAeh6V3KC6j4aWB7R2enYdMEHUA`; smoke API billing/Instagram lulus, flag pembayaran tetap mati. |
 | 2026-10-24 | E2E fess berbayar dev lulus: 1 CTF didebit (160 → 159), replay idempotent tidak double charge, revenue base Rp80 `PENDING`. Ditemukan dan diperbaiki timeout transaksi `P2028` dengan `maxWait=10s`/`timeout=30s`. |
 | 2026-10-24 | Copy UI biaya diperjelas: `Posting · 1 CTF`, saldo sebelum → sesudah di modal, dan tombol `Posting & Potong 1 CTF`; badge publik `Berbayar · 1 CTF/fess`. Diverifikasi Playwright di dev. |
@@ -492,9 +512,30 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 | 2026-10-28 | Paket top-up dipindah ke tabel `PaymentPackage` (migrasi `20261028020000_payment_packages`, seed 5 paket lama via SQL) agar Super Admin bisa mengubah nominal/CTF tanpa deploy. Endpoint baru `GET/POST /admin/payments/packages`, `PATCH /admin/payments/packages/:code`, `POST /admin/payments/packages/:code/status` dengan re-auth, alasan, audit, dan rate limit. Katalog publik tetap camelCase dan tetap kompatibel `TopUpFlow`; fallback konstanta hanya saat tabel belum ada. `PAYMENTS_ENABLED` tetap env-only. |
 | 2026-10-29 | Kupon promo ditambahkan (migrasi `20261028030000_coupons`): tabel `Coupon` + `CouponRedemption`, kolom snapshot `PaymentOrder.couponCode`/`discountIdr`. Diskon `FIXED`/`PERCENT` (dibatasi `maxDiscountIdr`) mengurangi harga bayar, bukan jumlah CTF, dan sisa bayar wajib ≥ Rp1.000. Kuota total opsional + 1x per akun; kuota dikunci atomik saat order dibuat (`RESERVED`), dikonfirmasi saat lunas, dilepas hanya saat `FAILED` (order `EXPIRED` tetap memegang kuota). Endpoint admin `GET/POST /admin/payments/coupons`, `PATCH /:code`, `POST /:code/status` (re-auth + alasan + audit `COUPON_*`) dan pratinjau pengguna `POST /payments/coupons/preview`. Konsol `/super-admin/keuangan?tab=payments` mendapat kartu “Kupon promo”; halaman top-up mendapat input kupon dengan pratinjau harga. 35 test kupon baru (13 util + 22 service), backend full suite 457/457, build backend/frontend lulus, verifikasi API dev 18/18 dan UI headless 10/10. |
 
-## 10. Checklist production (belum dijalankan)
+## 10. Checklist production
 
-Semua item di bawah ini **rencana**; belum ada aksi terhadap production.
+Bagian ini awalnya berisi rencana pre-flight. Sejak 2026-11-05 sebagian item sudah dijalankan; status aktualnya ada di tabel di bawah, sedangkan checklist di bawahnya tetap menjadi acuan canary yang belum selesai.
+
+> Catatan prosedur: deploy production 2026-11-05 dilakukan lewat `vercel deploy --prod` dari mesin lokal, **bukan** lewat GitHub → `main`. Ini menyimpang dari aturan repo (`AGENTS.md`: deploy production hanya lewat GitHub). Jalur yang benar disiapkan lewat PR #4 di kedua repo; setelah PR di-merge, deploy GitHub akan menimpa build lokal ini.
+
+### Status production per 2026-11-05
+
+Production berjalan di backend `be-fnc` (`https://be.fnc.web.id`) dan frontend `fess.n.curious` (`https://www.fnc.web.id`, `https://fnc.web.id`).
+
+| Item | Status | Catatan |
+| --- | --- | --- |
+| Migrasi 21 file | Selesai | `_prisma_migrations` bersih, tidak ada migrasi tertunda/gagal. |
+| Kunci Midtrans production | Terpasang | Server Key, Signature Secret, Client Key, Merchant ID disinkronkan ke Vercel `be-fnc`. Divalidasi: Server Key diterima `api.midtrans.com` dan ditolak sandbox. |
+| `MIDTRANS_IS_PRODUCTION` | `true` | Sebelumnya `false` walau berisi kunci production. |
+| Signature webhook | Lulus | Signature Secret **dan** Server Key diterima, hex uppercase diterima, secret salah `401`. |
+| `PAYMENTS_ENABLED` | `true` | Aktif atas keputusan pemilik produk. |
+| `BASE_PAYOUTS_ENABLED` | `false` | Kill switch payout tetap mati. |
+| CORS | Lulus | `www.fnc.web.id`, `fnc.web.id`, `fessncurious.vercel.app` diterima; origin asing `403`. |
+| **Channel pembayaran Midtrans** | **Aktif di Snap, ditolak di Core API** | Snap production membuat token `201` (akun aktif). Core API production menolak semua metode: `402 Payment channel is not activated.` untuk BNI/BRI/CIMB/Permata/Mandiri/BCA/BSI VA, Mandiri Bill, GoPay, ShopeePay; `404 Merchant pop id is not found` untuk QRIS. Merchant ID `M260082370` sama dengan sandbox (yang 10 metodenya `201`), jadi bukan salah kunci. |
+| **Notification URL Midtrans** | **Belum dipastikan** | Set ke `https://be.fnc.web.id/api/payments/midtrans/notification` di dashboard Midtrans (Settings → Payment → Notification URL). Belum ada `PaymentEvent` production, jadi belum ada notifikasi yang pernah masuk. |
+| Metode ditawarkan | Semua (9) | QRIS, VA BNI/BRI/CIMB Niaga/Permata/BCA, Mandiri Bill, GoPay, ShopeePay. Tidak ada yang disembunyikan; penolakan Midtrans dijelaskan ke user. |
+
+**Kesimpulan:** kode dan kredensial siap. Top-up production **belum bisa dipakai** sampai Midtrans mengaktifkan channel pembayaran untuk merchant production (bukan hal yang bisa dilakukan dari kode). Snap production sudah bisa membuat token, jadi akun sendiri aktif — yang tertunda adalah aktivasi channel Core API. Setelah aktif, ulangi uji top-up kecil dan pastikan `PaymentEvent` berstatus `PROCESSED`.
 
 ### Pre-flight
 

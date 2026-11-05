@@ -162,6 +162,10 @@ export const ENV = {
   MIDTRANS_SERVER_KEY: process.env.MIDTRANS_SERVER_KEY || '',
   MIDTRANS_CLIENT_KEY: process.env.MIDTRANS_CLIENT_KEY || '',
   MIDTRANS_MERCHANT_ID: process.env.MIDTRANS_MERCHANT_ID || '',
+  // Kunci tanda tangan notifikasi webhook (Settings > Access Keys).
+  // Dashboard Midtrans menampilkannya terpisah dari Server Key. Kalau kosong,
+  // verifikasi tetap memakai Server Key seperti sebelumnya.
+  MIDTRANS_SIGNATURE_SECRET: process.env.MIDTRANS_SIGNATURE_SECRET || '',
   PAYMENT_RECONCILE_SECRET: process.env.PAYMENT_RECONCILE_SECRET || '',
 
   // Thumbnail Instagram (render lokal, tanpa AI). Default OFF sampai QA selesai.

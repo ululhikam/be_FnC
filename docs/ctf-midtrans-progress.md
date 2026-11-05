@@ -527,10 +527,11 @@ Production berjalan di backend `be-fnc` (`https://be.fnc.web.id`) dan frontend `
 | `PAYMENTS_ENABLED` | `true` | Aktif atas keputusan pemilik produk. |
 | `BASE_PAYOUTS_ENABLED` | `false` | Kill switch payout tetap mati. |
 | CORS | Lulus | `www.fnc.web.id`, `fnc.web.id`, `fessncurious.vercel.app` diterima; origin asing `403`. |
-| **Channel pembayaran Midtrans** | **Belum aktif** | Charge ke `api.midtrans.com` membalas `402 Payment channel is not activated.` untuk semua VA, Mandiri Bill, GoPay, ShopeePay, dan `404 Merchant pop id is not found` untuk QRIS. Harus diaktifkan di dashboard Midtrans. |
+| **Channel pembayaran Midtrans** | **Aktif di sandbox, belum di production** | Sandbox: 10 metode berhasil (`201`). Production: semua metode ditolak — `402 Payment channel is not activated.` untuk VA (BNI/BRI/CIMB/Permata/Mandiri/BCA/BSI), Mandiri Bill, GoPay, ShopeePay; `404 Merchant pop id is not found` untuk QRIS. Merchant ID sama (`M260082370`), jadi bukan salah kunci: aktivasi production belum tuntas. |
 | **Notification URL Midtrans** | **Belum dipastikan** | Set ke `https://be.fnc.web.id/api/payments/midtrans/notification` di dashboard Midtrans (Settings → Payment → Notification URL). Belum ada `PaymentEvent` production, jadi belum ada notifikasi yang pernah masuk. |
+| Metode ditawarkan | 6 channel | BNI, BRI, CIMB Niaga, Permata, Mandiri Bill, GoPay (`ACTIVE_PAYMENT_METHOD_CODES`). QRIS/BCA/BSI/ShopeePay disembunyikan sampai aktif. |
 
-**Kesimpulan:** kode dan kredensial siap, tetapi top-up production belum bisa dipakai sampai channel pembayaran diaktifkan dan notification URL dipasang di dashboard Midtrans. Setelah channel aktif, ulangi uji top-up kecil dan pastikan `PaymentEvent` berstatus `PROCESSED`.
+**Kesimpulan:** kode dan kredensial siap. Top-up production **belum bisa dipakai** sampai Midtrans mengaktifkan channel pembayaran untuk merchant production (bukan hal yang bisa dilakukan dari kode). Snap production sudah bisa membuat token, jadi akun sendiri aktif — yang tertunda adalah aktivasi channel Core API. Setelah aktif, ulangi uji top-up kecil dan pastikan `PaymentEvent` berstatus `PROCESSED`.
 
 ### Pre-flight
 

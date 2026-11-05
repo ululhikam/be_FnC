@@ -57,8 +57,13 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 
 - Minimum top-up: Rp5.000.
 - Kartu kredit/debit **tidak** dipakai di v1.
-- Metode aktif: QRIS, GoPay, ShopeePay, VA BCA/BNI/BRI/Permata, Mandiri Bill.
-- Snap dan halaman pembayaran eksternal tidak dipakai; flow pembayaran sepenuhnya in-app.
+- Metode aktif (dipilih user): VA BNI/BRI/CIMB Niaga/Permata, Mandiri Bill, dan GoPay.
+  QRIS, BCA VA, BSI, dan ShopeePay belum aktif di akun Midtrans production sehingga
+  **tidak ditawarkan** — memilihnya hanya menghasilkan `402 Payment channel is not activated.`
+  Kode metode tetap ada di katalog agar order lama masih terbaca; aktifkan kembali dengan
+  menambah kodenya ke `ACTIVE_PAYMENT_METHOD_CODES` di `src/constants/payments.ts`.
+- Snap dan halaman pembayaran eksternal tidak dipakai; flow pembayaran sepenuhnya in-app
+  lewat Core API (`POST /v2/charge`).
 - **Sumber kebenaran paket (sejak 2026-10-28): tabel `PaymentPackage`, bukan konstanta.**
   `PAYMENT_PACKAGES` di `src/constants/payments.ts` hanya fallback bila tabel belum ada
   (deploy sebelum migrasi). Super Admin mengubah paket di
@@ -481,7 +486,8 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 | 2026-11-05 | Verifikasi dev: `MIDTRANS_SIGNATURE_SECRET` (format `Mid-server-…`, bukan kunci Basic Auth) diterima; signature dari secret salah dan signature yang diubah ditolak `401 INVALID_SIGNATURE`. Ditemukan `MIDTRANS_SERVER_KEY`/`CLIENT_KEY`/`MERCHANT_ID` di project Vercel `be-fnc-dev` masih nilai lama sehingga `/payments/orders` gagal `502 MIDTRANS_CHARGE_FAILED` (Midtrans `401`); ketiga nilai disinkronkan dari `.env.development`. |
 | 2026-11-05 | E2E sandbox dev lulus setelah sinkronisasi key: order `FNC-MW3JQA30-3FBC7961A5` (Hemat, Rp10.000, 55 CTF) dibayar via simulator BCA VA; order `PAID` dengan `midtransStatus=settlement`, dua `PaymentEvent` `PROCESSED` (`signatureValid=true`), saldo `0 → 55 CTF`, satu `CtfLedgerEntry` `TOPUP`. `PAYMENTS_ENABLED=true` tetap aktif di dev atas persetujuan pemilik produk; production tidak disentuh. |
 | 2026-11-05 | **Bug production:** 11 order production (26 Okt–5 Nov) berakhir `PENDING` tanpa VA/QR karena `MidtransService.charge()` hanya memeriksa HTTP status. Midtrans Core API membalas **HTTP 200** dengan `status_code` `402` ("Payment channel is not activated.") atau `404` ("Merchant pop id is not found") di body, sehingga kegagalan dianggap sukses. Perbaikan: `charge()` menolak body `status_code` di luar 2xx, dan `createOrder` menandai order `FAILED` (`charge_rejected`) alih-alih menggantung `PENDING`. 2 test regresi baru; backend full suite 680/680 lulus. |
-| 2026-11-05 | **Blocker channel production:** uji charge ke `api.midtrans.com` untuk 8 metode membalas HTTP `200` dengan `status_code` `402 Payment channel is not activated.` (BCA/BNI/BRI/Permata VA, Mandiri Bill, GoPay, ShopeePay) dan `404 Merchant pop id is not found` (QRIS). Akun merchant sudah terverifikasi, tetapi **channel pembayaran belum diaktifkan belum bisa dipakai**: top-up production akan gagal sampai channel diaktifkan di dashboard Midtrans. Dengan fix di atas, kegagalan itu minimal tercatat `FAILED` + pesan jelas, bukan menggantung `PENDING`. |
+| 2026-11-05 | **Blocker channel production:** uji charge ke `api.midtrans.com` untuk 11 metode membalas HTTP `200` dengan `status_code` `402 Payment channel is not activated.` (semua VA termasuk CIMB, Mandiri Bill, GoPay, ShopeePay) dan `404 Merchant pop id is not found` (QRIS). Akun merchant sudah terverifikasi, tetapi **channel pembayaran belum diaktifkan belum bisa dipakai**: top-up production akan gagal sampai channel diaktifkan di dashboard Midtrans. Dengan fix di atas, kegagalan itu minimal tercatat `FAILED` + pesan jelas, bukan menggantung `PENDING`. |
+| 2026-11-05 | **Klarifikasi channel:** pemilik akun mengonfirmasi yang **Active** hanya CIMB Niaga, BNI, BRI, GoPay, Bank Mandiri, dan PermataBank; QRIS dinamis GoPay dan BSI masih *in progress*. Karena itu daftar metode yang ditawarkan dipangkas ke 6 channel tersebut (`ACTIVE_PAYMENT_METHOD_CODES`), `cimb_va` ditambahkan, dan QRIS/BCA VA/ShopeePay disembunyikan tanpa dihapus dari katalog. `createOrder` menolak metode nonaktif dengan `409 PAYMENT_METHOD_UNAVAILABLE` agar tidak ada order menggantung. |
 | 2026-10-24 | Deploy dev: backend `dpl_7DkTGmqcWVXTCugUn8AwKMrW9yad`, frontend `dpl_BAAeh6V3KC6j4aWB7R2enYdMEHUA`; smoke API billing/Instagram lulus, flag pembayaran tetap mati. |
 | 2026-10-24 | E2E fess berbayar dev lulus: 1 CTF didebit (160 → 159), replay idempotent tidak double charge, revenue base Rp80 `PENDING`. Ditemukan dan diperbaiki timeout transaksi `P2028` dengan `maxWait=10s`/`timeout=30s`. |
 | 2026-10-24 | Copy UI biaya diperjelas: `Posting · 1 CTF`, saldo sebelum → sesudah di modal, dan tombol `Posting & Potong 1 CTF`; badge publik `Berbayar · 1 CTF/fess`. Diverifikasi Playwright di dev. |

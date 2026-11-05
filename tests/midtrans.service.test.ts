@@ -61,6 +61,9 @@ describe('MidtransService', () => {
     expect(MidtransService.buildChargePayload({ ...base, method: 'bca_va' }).bank_transfer).toEqual({
       bank: 'bca',
     });
+    expect(MidtransService.buildChargePayload({ ...base, method: 'cimb_va' }).bank_transfer).toEqual({
+      bank: 'cimb',
+    });
     expect(MidtransService.buildChargePayload({ ...base, method: 'mandiri_bill' }).echannel).toEqual({
       bill_info1: 'Top-up CTF',
       bill_info2: 'Fess n Curious',

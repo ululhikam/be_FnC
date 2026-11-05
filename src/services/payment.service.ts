@@ -7,9 +7,10 @@ import { prisma } from '../config/prisma.js';
 import {
   BASE_REVENUE_PER_FESS_IDR,
   CTF_PER_PAID_FESS,
-  PAYMENT_METHODS,
   findPaymentMethod,
+  isMethodOffered,
   normalizeCouponCode,
+  offeredPaymentMethods,
   type PaymentMethodCode,
 } from '../constants/payments.js';
 import { parseMidtransDate } from '../utils/midtrans-date.util.js';
@@ -93,6 +94,8 @@ function paymentChannelFor(method: PaymentMethodCode): string {
       return 'bni';
     case 'bri_va':
       return 'bri';
+    case 'cimb_va':
+      return 'cimb';
     case 'permata_va':
       return 'permata';
     case 'mandiri_bill':
@@ -146,7 +149,7 @@ export class PaymentService {
       ctf_per_paid_fess: CTF_PER_PAID_FESS,
       base_revenue_per_paid_fess_idr: BASE_REVENUE_PER_FESS_IDR,
       packages: await PaymentPackageService.listActive(),
-      methods: PAYMENT_METHODS,
+      methods: offeredPaymentMethods(),
     };
   }
 
@@ -171,6 +174,13 @@ export class PaymentService {
     if (!pkg) throw paymentError('UNKNOWN_PACKAGE', 'Paket top-up tidak ditemukan', 400);
     const method = findPaymentMethod(input.method);
     if (!method) throw paymentError('UNKNOWN_PAYMENT_METHOD', 'Metode pembayaran tidak dikenal', 400);
+    if (!isMethodOffered(method.code)) {
+      throw paymentError(
+        'PAYMENT_METHOD_UNAVAILABLE',
+        'Metode pembayaran ini belum tersedia. Pilih metode lain.',
+        409
+      );
+    }
 
     const normalizedCoupon = input.couponCode ? normalizeCouponCode(input.couponCode) : '';
     if (input.couponCode && !normalizedCoupon) {

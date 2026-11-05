@@ -23,6 +23,7 @@ export type PaymentMethodCode =
   | 'bni_va'
   | 'bri_va'
   | 'permata_va'
+  | 'cimb_va'
   | 'mandiri_bill'
   | 'gopay'
   | 'shopeepay';
@@ -34,6 +35,12 @@ export type PaymentMethod = {
   description: string;
 };
 
+/**
+ * Katalog semua metode yang dikenal kode. Dipakai untuk membaca order lama
+ * (mis. order QRIS sebelum channel dinonaktifkan) dan memetakan payload
+ * Midtrans. Untuk menawarkan metode ke user, lihat
+ * `ACTIVE_PAYMENT_METHOD_CODES` di bawah.
+ */
 export const PAYMENT_METHODS: PaymentMethod[] = [
   {
     code: 'qris',
@@ -58,6 +65,12 @@ export const PAYMENT_METHODS: PaymentMethod[] = [
     label: 'BRI Virtual Account',
     group: 'va',
     description: 'Bayar dari BRImo atau ATM BRI.',
+  },
+  {
+    code: 'cimb_va',
+    label: 'CIMB Niaga Virtual Account',
+    group: 'va',
+    description: 'Bayar dari OCTO Mobile atau ATM CIMB Niaga.',
   },
   {
     code: 'permata_va',
@@ -85,8 +98,42 @@ export const PAYMENT_METHODS: PaymentMethod[] = [
   },
 ];
 
+/**
+ * Metode yang ditawarkan ke user, urut sesuai tampilan.
+ *
+ * Hanya berisi channel yang **benar-benar aktif** di akun Midtrans production.
+ * Daftar ini dicocokkan dengan channel aktif di dashboard (CIMB Niaga, BNI,
+ * BRI, GoPay, Mandiri, Permata). QRIS (dinamis GoPay), BCA VA, BSI, dan
+ * ShopeePay belum aktif sehingga sengaja tidak ditawarkan - memilihnya hanya
+ * menghasilkan `402 Payment channel is not activated.` dari Midtrans. Setelah
+ * channel baru aktif, tambahkan kodenya di sini.
+ */
+export const ACTIVE_PAYMENT_METHOD_CODES: PaymentMethodCode[] = [
+  'bni_va',
+  'bri_va',
+  'cimb_va',
+  'permata_va',
+  'mandiri_bill',
+  'gopay',
+];
+
+/**
+ * Katalog lengkap tetap dipertahankan agar order lama (mis. QRIS atau BCA VA
+ * dari sebelum channel dinonaktifkan) masih bisa dibaca labelnya dan
+ * instruksi pembayarannya. Untuk order baru, cek dulu `isMethodOffered`.
+ */
 export function findPaymentMethod(code: string): PaymentMethod | undefined {
   return PAYMENT_METHODS.find((method) => method.code === code);
+}
+
+/** Apakah channel metode ini sedang aktif di Midtrans. */
+export function isMethodOffered(code: PaymentMethodCode): boolean {
+  return ACTIVE_PAYMENT_METHOD_CODES.includes(code);
+}
+
+/** Daftar metode aktif untuk respons `/payments/packages`. */
+export function offeredPaymentMethods(): PaymentMethod[] {
+  return PAYMENT_METHODS.filter((method) => ACTIVE_PAYMENT_METHOD_CODES.includes(method.code));
 }
 
 export const PAYMENT_PACKAGES: PaymentPackage[] = [

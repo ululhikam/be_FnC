@@ -156,6 +156,10 @@ export class MidtransService {
         payload.payment_type = 'bank_transfer';
         payload.bank_transfer = { bank: 'permata' };
         break;
+      case 'cimb_va':
+        payload.payment_type = 'bank_transfer';
+        payload.bank_transfer = { bank: 'cimb' };
+        break;
       case 'mandiri_bill':
         payload.payment_type = 'echannel';
         payload.echannel = {

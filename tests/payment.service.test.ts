@@ -59,8 +59,8 @@ const order = {
   discountIdr: 0,
   currency: 'IDR',
   status: 'PENDING',
-  paymentMethod: 'qris',
-  paymentChannel: 'qris',
+  paymentMethod: 'bni_va',
+  paymentChannel: 'bni',
   midtransTransactionId: null,
   midtransStatus: null,
   qrString: null,
@@ -203,7 +203,36 @@ describe('PaymentService', () => {
     expect(packages.enabled).toBe(false);
     expect(packages.ctf_per_paid_fess).toBe(1);
     expect(packages.packages.map((pkg) => pkg.code)).toContain('coba_dulu');
-    expect(packages.methods.map((method) => method.code)).toContain('qris');
+    expect(packages.methods.map((method) => method.code)).toContain('bni_va');
+  });
+
+  it('offers only the payment channels that are active in Midtrans', async () => {
+    ENV.PAYMENTS_ENABLED = true;
+    const { methods } = await PaymentService.getPackages();
+    // Channel aktif: BNI, BRI, CIMB Niaga, Permata, Mandiri Bill, GoPay.
+    expect(methods.map((method) => method.code)).toEqual([
+      'bni_va',
+      'bri_va',
+      'cimb_va',
+      'permata_va',
+      'mandiri_bill',
+      'gopay',
+    ]);
+    // Belum aktif di akun Midtrans, jadi tidak boleh ditawarkan.
+    for (const code of ['qris', 'bca_va', 'shopeepay']) {
+      expect(methods.map((method) => method.code)).not.toContain(code);
+    }
+  });
+
+  it('rejects an order for a channel that is not active yet', async () => {
+    ENV.PAYMENTS_ENABLED = true;
+    await expect(
+      PaymentService.createOrder(
+        { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
+        { packageCode: 'coba_dulu', method: 'qris', requestKey: 'req-12345678' }
+      )
+    ).rejects.toMatchObject({ code: 'PAYMENT_METHOD_UNAVAILABLE', status: 409 });
+    expect(prisma.paymentOrder.create).not.toHaveBeenCalled();
   });
 
   it('refuses to create an order while payments are disabled', async () => {
@@ -211,7 +240,7 @@ describe('PaymentService', () => {
     await expect(
       PaymentService.createOrder(
         { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
-        { packageCode: 'coba_dulu', method: 'qris', requestKey: 'req-12345678' }
+        { packageCode: 'coba_dulu', method: 'bni_va', requestKey: 'req-12345678' }
       )
     ).rejects.toMatchObject({ code: 'PAYMENTS_DISABLED', status: 503 });
     expect(prisma.paymentOrder.create).not.toHaveBeenCalled();
@@ -227,7 +256,7 @@ describe('PaymentService', () => {
 
     const result = await PaymentService.createOrder(
       { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
-      { packageCode: 'coba_dulu', method: 'qris', requestKey: 'req-12345678' }
+      { packageCode: 'coba_dulu', method: 'bni_va', requestKey: 'req-12345678' }
     );
 
     expect(result.idempotent).toBe(false);
@@ -253,7 +282,7 @@ describe('PaymentService', () => {
     await expect(
       PaymentService.createOrder(
         { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
-        { packageCode: 'coba_dulu', method: 'qris', requestKey: 'req-12345678' }
+        { packageCode: 'coba_dulu', method: 'bni_va', requestKey: 'req-12345678' }
       )
     ).rejects.toMatchObject({ code: 'MIDTRANS_CHARGE_FAILED' });
 
@@ -286,7 +315,7 @@ describe('PaymentService', () => {
       { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
       {
         packageCode: 'coba_dulu',
-        method: 'qris',
+        method: 'bni_va',
         requestKey: 'req-12345678',
         couponCode: 'hemat10',
       }
@@ -335,7 +364,7 @@ describe('PaymentService', () => {
         { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
         {
           packageCode: 'coba_dulu',
-          method: 'qris',
+          method: 'bni_va',
           requestKey: 'req-12345678',
           couponCode: 'HEMAT10',
         }
@@ -359,7 +388,7 @@ describe('PaymentService', () => {
         { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
         {
           packageCode: 'coba_dulu',
-          method: 'qris',
+          method: 'bni_va',
           requestKey: 'req-12345678',
           couponCode: 'LAINNYA',
         }
@@ -433,7 +462,7 @@ describe('PaymentService', () => {
     await expect(
       PaymentService.createOrder(
         { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
-        { packageCode: 'coba_dulu', method: 'qris', requestKey: 'req-12345678' }
+        { packageCode: 'coba_dulu', method: 'bni_va', requestKey: 'req-12345678' }
       )
     ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT', status: 409 });
   });

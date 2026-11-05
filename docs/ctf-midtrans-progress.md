@@ -502,9 +502,11 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 | 2026-10-28 | Paket top-up dipindah ke tabel `PaymentPackage` (migrasi `20261028020000_payment_packages`, seed 5 paket lama via SQL) agar Super Admin bisa mengubah nominal/CTF tanpa deploy. Endpoint baru `GET/POST /admin/payments/packages`, `PATCH /admin/payments/packages/:code`, `POST /admin/payments/packages/:code/status` dengan re-auth, alasan, audit, dan rate limit. Katalog publik tetap camelCase dan tetap kompatibel `TopUpFlow`; fallback konstanta hanya saat tabel belum ada. `PAYMENTS_ENABLED` tetap env-only. |
 | 2026-10-29 | Kupon promo ditambahkan (migrasi `20261028030000_coupons`): tabel `Coupon` + `CouponRedemption`, kolom snapshot `PaymentOrder.couponCode`/`discountIdr`. Diskon `FIXED`/`PERCENT` (dibatasi `maxDiscountIdr`) mengurangi harga bayar, bukan jumlah CTF, dan sisa bayar wajib ≥ Rp1.000. Kuota total opsional + 1x per akun; kuota dikunci atomik saat order dibuat (`RESERVED`), dikonfirmasi saat lunas, dilepas hanya saat `FAILED` (order `EXPIRED` tetap memegang kuota). Endpoint admin `GET/POST /admin/payments/coupons`, `PATCH /:code`, `POST /:code/status` (re-auth + alasan + audit `COUPON_*`) dan pratinjau pengguna `POST /payments/coupons/preview`. Konsol `/super-admin/keuangan?tab=payments` mendapat kartu “Kupon promo”; halaman top-up mendapat input kupon dengan pratinjau harga. 35 test kupon baru (13 util + 22 service), backend full suite 457/457, build backend/frontend lulus, verifikasi API dev 18/18 dan UI headless 10/10. |
 
-## 10. Checklist production (belum dijalankan)
+## 10. Checklist production
 
-Semua item di bawah ini **rencana**; belum ada aksi terhadap production.
+Bagian ini awalnya berisi rencana pre-flight. Sejak 2026-11-05 sebagian item sudah dijalankan; status aktualnya ada di tabel di bawah, sedangkan checklist di bawahnya tetap menjadi acuan canary yang belum selesai.
+
+> Catatan prosedur: deploy production 2026-11-05 dilakukan lewat `vercel deploy --prod` dari mesin lokal, **bukan** lewat GitHub → `main`. Ini menyimpang dari aturan repo (`AGENTS.md`: deploy production hanya lewat GitHub). Jalur yang benar disiapkan lewat PR #4 di kedua repo; setelah PR di-merge, deploy GitHub akan menimpa build lokal ini.
 
 ### Status production per 2026-11-05
 

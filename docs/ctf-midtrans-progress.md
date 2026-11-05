@@ -527,7 +527,7 @@ Production berjalan di backend `be-fnc` (`https://be.fnc.web.id`) dan frontend `
 | `PAYMENTS_ENABLED` | `true` | Aktif atas keputusan pemilik produk. |
 | `BASE_PAYOUTS_ENABLED` | `false` | Kill switch payout tetap mati. |
 | CORS | Lulus | `www.fnc.web.id`, `fnc.web.id`, `fessncurious.vercel.app` diterima; origin asing `403`. |
-| **Channel pembayaran Midtrans** | **Aktif di sandbox, belum di production** | Sandbox: 10 metode berhasil (`201`). Production: semua metode ditolak — `402 Payment channel is not activated.` untuk VA (BNI/BRI/CIMB/Permata/Mandiri/BCA/BSI), Mandiri Bill, GoPay, ShopeePay; `404 Merchant pop id is not found` untuk QRIS. Merchant ID sama (`M260082370`), jadi bukan salah kunci: aktivasi production belum tuntas. |
+| **Channel pembayaran Midtrans** | **Aktif di Snap, ditolak di Core API** | Snap production membuat token `201` (akun aktif). Core API production menolak semua metode: `402 Payment channel is not activated.` untuk BNI/BRI/CIMB/Permata/Mandiri/BCA/BSI VA, Mandiri Bill, GoPay, ShopeePay; `404 Merchant pop id is not found` untuk QRIS. Merchant ID `M260082370` sama dengan sandbox (yang 10 metodenya `201`), jadi bukan salah kunci. |
 | **Notification URL Midtrans** | **Belum dipastikan** | Set ke `https://be.fnc.web.id/api/payments/midtrans/notification` di dashboard Midtrans (Settings → Payment → Notification URL). Belum ada `PaymentEvent` production, jadi belum ada notifikasi yang pernah masuk. |
 | Metode ditawarkan | 6 channel | BNI, BRI, CIMB Niaga, Permata, Mandiri Bill, GoPay (`ACTIVE_PAYMENT_METHOD_CODES`). QRIS/BCA/BSI/ShopeePay disembunyikan sampai aktif. |
 

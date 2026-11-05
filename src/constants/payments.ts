@@ -36,10 +36,8 @@ export type PaymentMethod = {
 };
 
 /**
- * Katalog semua metode yang dikenal kode. Dipakai untuk membaca order lama
- * (mis. order QRIS sebelum channel dinonaktifkan) dan memetakan payload
- * Midtrans. Untuk menawarkan metode ke user, lihat
- * `ACTIVE_PAYMENT_METHOD_CODES` di bawah.
+ * Katalog semua metode yang dikenal kode: dipakai untuk menampilkan pilihan ke
+ * user, membaca order lama, dan memetakan payload Midtrans.
  */
 export const PAYMENT_METHODS: PaymentMethod[] = [
   {
@@ -99,41 +97,25 @@ export const PAYMENT_METHODS: PaymentMethod[] = [
 ];
 
 /**
- * Metode yang ditawarkan ke user, urut sesuai tampilan.
+ * Semua metode di `PAYMENT_METHODS` ditawarkan ke user.
  *
- * Hanya berisi channel yang **benar-benar aktif** di akun Midtrans production.
- * Daftar ini dicocokkan dengan channel aktif di dashboard (CIMB Niaga, BNI,
- * BRI, GoPay, Mandiri, Permata). QRIS (dinamis GoPay), BCA VA, BSI, dan
- * ShopeePay belum aktif sehingga sengaja tidak ditawarkan - memilihnya hanya
- * menghasilkan `402 Payment channel is not activated.` dari Midtrans. Setelah
- * channel baru aktif, tambahkan kodenya di sini.
- */
-export const ACTIVE_PAYMENT_METHOD_CODES: PaymentMethodCode[] = [
-  'bni_va',
-  'bri_va',
-  'cimb_va',
-  'permata_va',
-  'mandiri_bill',
-  'gopay',
-];
-
-/**
- * Katalog lengkap tetap dipertahankan agar order lama (mis. QRIS atau BCA VA
- * dari sebelum channel dinonaktifkan) masih bisa dibaca labelnya dan
- * instruksi pembayarannya. Untuk order baru, cek dulu `isMethodOffered`.
+ * Catatan 5 Nov 2026: dashboard Midtrans menandai CIMB Niaga, BNI, BRI, GoPay,
+ * Mandiri Bill, dan Permata sebagai Active, tetapi Core API production masih
+ * membalas `402 Payment channel is not activated.` untuk semuanya. Karena status
+ * dashboard tidak bisa dijadikan patokan, metode tidak lagi disembunyikan:
+ * semua ditampilkan, dan bila Midtrans menolak, user menerima pesan yang jelas
+ * (`chargeRejectionMessage` di `payment.service.ts`) bukan error mentah.
+ *
+ * Kalau nanti ada metode yang harus disembunyikan, filter di
+ * `offeredPaymentMethods` dan tolak di `createOrder`.
  */
 export function findPaymentMethod(code: string): PaymentMethod | undefined {
   return PAYMENT_METHODS.find((method) => method.code === code);
 }
 
-/** Apakah channel metode ini sedang aktif di Midtrans. */
-export function isMethodOffered(code: PaymentMethodCode): boolean {
-  return ACTIVE_PAYMENT_METHOD_CODES.includes(code);
-}
-
-/** Daftar metode aktif untuk respons `/payments/packages`. */
+/** Daftar metode untuk `/payments/packages`: seluruh katalog, tanpa filter. */
 export function offeredPaymentMethods(): PaymentMethod[] {
-  return PAYMENT_METHODS.filter((method) => ACTIVE_PAYMENT_METHOD_CODES.includes(method.code));
+  return PAYMENT_METHODS;
 }
 
 export const PAYMENT_PACKAGES: PaymentPackage[] = [

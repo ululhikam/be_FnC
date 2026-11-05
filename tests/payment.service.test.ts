@@ -206,32 +206,32 @@ describe('PaymentService', () => {
     expect(packages.methods.map((method) => method.code)).toContain('bni_va');
   });
 
-  it('offers only the payment channels that are active in Midtrans', async () => {
+  it('offers every catalog method, including channels that may still be inactive', async () => {
     ENV.PAYMENTS_ENABLED = true;
     const { methods } = await PaymentService.getPackages();
-    // Channel aktif: BNI, BRI, CIMB Niaga, Permata, Mandiri Bill, GoPay.
+    // Semua metode ditampilkan. Kalau Midtrans menolak karena kanal belum
+    // aktif, user menerima pesan yang jelas (lihat test di bawah).
     expect(methods.map((method) => method.code)).toEqual([
+      'qris',
+      'bca_va',
       'bni_va',
       'bri_va',
       'cimb_va',
       'permata_va',
       'mandiri_bill',
       'gopay',
+      'shopeepay',
     ]);
-    // Belum aktif di akun Midtrans, jadi tidak boleh ditawarkan.
-    for (const code of ['qris', 'bca_va', 'shopeepay']) {
-      expect(methods.map((method) => method.code)).not.toContain(code);
-    }
   });
 
-  it('rejects an order for a channel that is not active yet', async () => {
+  it('still rejects a method code that is not in the catalog', async () => {
     ENV.PAYMENTS_ENABLED = true;
     await expect(
       PaymentService.createOrder(
         { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
-        { packageCode: 'coba_dulu', method: 'qris', requestKey: 'req-12345678' }
+        { packageCode: 'coba_dulu', method: 'bitcoin' as any, requestKey: 'req-12345678' }
       )
-    ).rejects.toMatchObject({ code: 'PAYMENT_METHOD_UNAVAILABLE', status: 409 });
+    ).rejects.toMatchObject({ code: 'UNKNOWN_PAYMENT_METHOD', status: 400 });
     expect(prisma.paymentOrder.create).not.toHaveBeenCalled();
   });
 
@@ -268,7 +268,7 @@ describe('PaymentService', () => {
     expect(prisma.paymentOrder.create).toHaveBeenCalledOnce();
   });
 
-  it('marks the order FAILED when Midtrans rejects the channel inside an HTTP 200 body', async () => {
+  it('marks the order FAILED and explains the failure when Midtrans rejects the channel', async () => {
     vi.mocked(prisma.paymentOrder.create).mockResolvedValue(order as any);
     vi.mocked(prisma.paymentOrder.update).mockResolvedValue(order as any);
     vi.mocked(MidtransService.charge).mockRejectedValueOnce(
@@ -279,18 +279,31 @@ describe('PaymentService', () => {
       })
     );
 
-    await expect(
-      PaymentService.createOrder(
-        { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
-        { packageCode: 'coba_dulu', method: 'bni_va', requestKey: 'req-12345678' }
-      )
-    ).rejects.toMatchObject({ code: 'MIDTRANS_CHARGE_FAILED' });
+    // Pesan mentah Midtrans berbahasa Inggris dan tidak bisa ditindaklanjuti
+    // user, jadi pesan aslinya disimpan di rawResponse dan user menerima
+    // penjelasan berbahasa Indonesia.
+    const promise = PaymentService.createOrder(
+      { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
+      { packageCode: 'coba_dulu', method: 'qris', requestKey: 'req-12345678' }
+    );
+    await expect(promise).rejects.toMatchObject({
+      code: 'PAYMENT_METHOD_UNAVAILABLE',
+      status: 409,
+    });
+    await expect(promise).rejects.toThrow(/QRIS belum bisa dipakai/);
+    await expect(promise).rejects.toThrow(/saldo CTF-mu tidak terpotong/);
+    await expect(promise).rejects.not.toThrow(/not activated/);
 
     expect(prisma.paymentOrder.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           status: 'FAILED',
-          midtransStatus: 'charge_rejected',
+          midtransStatus: 'channel_unavailable',
+          rawResponse: expect.objectContaining({
+            charge_error: expect.objectContaining({
+              message: 'Payment channel is not activated.',
+            }),
+          }),
         }),
       })
     );

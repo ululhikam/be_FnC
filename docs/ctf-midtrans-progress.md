@@ -57,11 +57,13 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 
 - Minimum top-up: Rp5.000.
 - Kartu kredit/debit **tidak** dipakai di v1.
-- Metode aktif (dipilih user): VA BNI/BRI/CIMB Niaga/Permata, Mandiri Bill, dan GoPay.
-  QRIS, BCA VA, BSI, dan ShopeePay belum aktif di akun Midtrans production sehingga
-  **tidak ditawarkan** — memilihnya hanya menghasilkan `402 Payment channel is not activated.`
-  Kode metode tetap ada di katalog agar order lama masih terbaca; aktifkan kembali dengan
-  menambah kodenya ke `ACTIVE_PAYMENT_METHOD_CODES` di `src/constants/payments.ts`.
+- Metode yang ditampilkan: **seluruh katalog** — QRIS, VA BNI/BRI/CIMB Niaga/Permata/BCA,
+  Mandiri Bill, GoPay, dan ShopeePay. Status kanal di dashboard Midtrans tidak dipakai untuk
+  menyembunyikan metode karena tidak sinkron dengan Core API (per 2026-11-05 Core API production
+  masih menolak semua kanal dengan `402`, termasuk yang bertanda Active). Bila Midtrans menolak,
+  `createOrder` menandai order `FAILED` (`midtransStatus=channel_unavailable`) dan user menerima
+  pesan berbahasa Indonesia yang menyebut metode tersebut belum aktif plus jaminan saldo tidak
+  terpotong; pesan asli Midtrans hanya disimpan di `rawResponse.charge_error` untuk admin.
 - Snap dan halaman pembayaran eksternal tidak dipakai; flow pembayaran sepenuhnya in-app
   lewat Core API (`POST /v2/charge`).
 - **Sumber kebenaran paket (sejak 2026-10-28): tabel `PaymentPackage`, bukan konstanta.**
@@ -489,6 +491,7 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 | 2026-11-05 | **Blocker channel production:** uji charge ke `api.midtrans.com` untuk 11 metode membalas HTTP `200` dengan `status_code` `402 Payment channel is not activated.` (semua VA termasuk CIMB, Mandiri Bill, GoPay, ShopeePay) dan `404 Merchant pop id is not found` (QRIS). Akun merchant sudah terverifikasi, tetapi **channel pembayaran belum diaktifkan belum bisa dipakai**: top-up production akan gagal sampai channel diaktifkan di dashboard Midtrans. Dengan fix di atas, kegagalan itu minimal tercatat `FAILED` + pesan jelas, bukan menggantung `PENDING`. |
 | 2026-11-05 | **Klarifikasi channel:** pemilik akun mengonfirmasi yang **Active** hanya CIMB Niaga, BNI, BRI, GoPay, Bank Mandiri, dan PermataBank; QRIS dinamis GoPay dan BSI masih *in progress*. Karena itu daftar metode yang ditawarkan dipangkas ke 6 channel tersebut (`ACTIVE_PAYMENT_METHOD_CODES`), `cimb_va` ditambahkan, dan QRIS/BCA VA/ShopeePay disembunyikan tanpa dihapus dari katalog. `createOrder` menolak metode nonaktif dengan `409 PAYMENT_METHOD_UNAVAILABLE` agar tidak ada order menggantung. |
 | 2026-11-05 | **Bukti pembanding sandbox vs production:** dengan kunci sandbox 10 metode berhasil (`201`: CIMB/BNI/BRI/Permata/BCA/BSI VA, Mandiri Bill, GoPay, QRIS, ShopeePay); dengan kunci production 6 channel yang diklaim aktif semuanya tetap `402 Payment channel is not activated.`. Artinya kode/payload benar (sandbox menerima bentuk yang sama) dan hambatannya murni di sisi aktivasi kanal production. Snap production **berhasil** membuat token (`201 app.midtrans.com/snap/v1/transactions`), jadi akun production aktif — yang belum aktif hanya kanal Core API. |
+| 2026-11-05 | **Pembatalan pemangkasan metode (keputusan pemilik produk):** menyembunyikan metode berdasarkan status dashboard berisiko menghilangkan pilihan yang sebenarnya bisa dipakai, karena status dashboard tidak sinkron dengan Core API. Semua 9 metode katalog kembali ditampilkan (`offeredPaymentMethods()` = seluruh `PAYMENT_METHODS`, `ACTIVE_PAYMENT_METHOD_CODES`/`isMethodOffered` dihapus) dan `createOrder` tidak lagi menolak metode di muka. Sebagai gantinya kegagalan dibuat jelas: penolakan 4xx dari Midtrans (termasuk HTTP 200 + `status_code` 402/404) menandai order `FAILED` dengan `midtransStatus=channel_unavailable`, lalu user menerima pesan Indonesia yang menyebut metode tersebut belum aktif dan menegaskan tidak ada tagihan/saldo terpotong (`PAYMENT_METHOD_UNAVAILABLE`, 409). Pesan mentah Midtrans hanya disimpan di `rawResponse.charge_error`. Error lain dipetakan ke `PAYMENT_REJECTED` (409) dan `PAYMENT_GATEWAY_UNAVAILABLE` (503) agar pesan Inggris tidak bocor ke UI. |
 | 2026-10-24 | Deploy dev: backend `dpl_7DkTGmqcWVXTCugUn8AwKMrW9yad`, frontend `dpl_BAAeh6V3KC6j4aWB7R2enYdMEHUA`; smoke API billing/Instagram lulus, flag pembayaran tetap mati. |
 | 2026-10-24 | E2E fess berbayar dev lulus: 1 CTF didebit (160 → 159), replay idempotent tidak double charge, revenue base Rp80 `PENDING`. Ditemukan dan diperbaiki timeout transaksi `P2028` dengan `maxWait=10s`/`timeout=30s`. |
 | 2026-10-24 | Copy UI biaya diperjelas: `Posting · 1 CTF`, saldo sebelum → sesudah di modal, dan tombol `Posting & Potong 1 CTF`; badge publik `Berbayar · 1 CTF/fess`. Diverifikasi Playwright di dev. |
@@ -530,7 +533,7 @@ Production berjalan di backend `be-fnc` (`https://be.fnc.web.id`) dan frontend `
 | CORS | Lulus | `www.fnc.web.id`, `fnc.web.id`, `fessncurious.vercel.app` diterima; origin asing `403`. |
 | **Channel pembayaran Midtrans** | **Aktif di Snap, ditolak di Core API** | Snap production membuat token `201` (akun aktif). Core API production menolak semua metode: `402 Payment channel is not activated.` untuk BNI/BRI/CIMB/Permata/Mandiri/BCA/BSI VA, Mandiri Bill, GoPay, ShopeePay; `404 Merchant pop id is not found` untuk QRIS. Merchant ID `M260082370` sama dengan sandbox (yang 10 metodenya `201`), jadi bukan salah kunci. |
 | **Notification URL Midtrans** | **Belum dipastikan** | Set ke `https://be.fnc.web.id/api/payments/midtrans/notification` di dashboard Midtrans (Settings → Payment → Notification URL). Belum ada `PaymentEvent` production, jadi belum ada notifikasi yang pernah masuk. |
-| Metode ditawarkan | 6 channel | BNI, BRI, CIMB Niaga, Permata, Mandiri Bill, GoPay (`ACTIVE_PAYMENT_METHOD_CODES`). QRIS/BCA/BSI/ShopeePay disembunyikan sampai aktif. |
+| Metode ditawarkan | Semua (9) | QRIS, VA BNI/BRI/CIMB Niaga/Permata/BCA, Mandiri Bill, GoPay, ShopeePay. Tidak ada yang disembunyikan; penolakan Midtrans dijelaskan ke user. |
 
 **Kesimpulan:** kode dan kredensial siap. Top-up production **belum bisa dipakai** sampai Midtrans mengaktifkan channel pembayaran untuk merchant production (bukan hal yang bisa dilakukan dari kode). Snap production sudah bisa membuat token, jadi akun sendiri aktif — yang tertunda adalah aktivasi channel Core API. Setelah aktif, ulangi uji top-up kecil dan pastikan `PaymentEvent` berstatus `PROCESSED`.
 

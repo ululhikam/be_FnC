@@ -232,6 +232,25 @@ export class MidtransService {
       );
     }
 
+    // Midtrans Core API kadang membalas HTTP 200 dengan `status_code` 4xx di
+    // body (mis. 402 "Payment channel is not activated.", 404 "Merchant pop id
+    // is not found"). Tanpa pemeriksaan ini, order tersimpan PENDING tanpa
+    // VA/QR dan user menunggu pembayaran yang tidak pernah ada. Anggap sukses
+    // hanya bila status_code body juga 2xx.
+    const bodyStatusCode = Number(raw.status_code);
+    if (Number.isFinite(bodyStatusCode) && (bodyStatusCode < 200 || bodyStatusCode >= 300)) {
+      const message =
+        typeof raw.status_message === 'string'
+          ? raw.status_message
+          : 'Midtrans menolak permintaan pembayaran';
+      throw new MidtransError(
+        'MIDTRANS_CHARGE_FAILED',
+        message,
+        502,
+        { httpStatus: response.status, status_code: raw.status_code, status_message: raw.status_message }
+      );
+    }
+
     return this.mapChargeResponse(raw);
   }
 

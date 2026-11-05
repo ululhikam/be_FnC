@@ -266,8 +266,16 @@ export class PaymentService {
       });
     } catch (error) {
       const midtransError = error instanceof MidtransError ? error : null;
-      const httpStatus = Number((midtransError?.details as any)?.httpStatus);
-      const explicitRejection = httpStatus >= 400 && httpStatus < 500;
+      const details = midtransError?.details as
+        | { httpStatus?: number; status_code?: unknown }
+        | undefined;
+      const httpStatus = Number(details?.httpStatus);
+      const bodyStatus = Number(details?.status_code);
+      // Midtrans bisa membalas HTTP 200 dengan `status_code` 4xx di body
+      // (channel belum aktif). Itu penolakan pasti, bukan status tak pasti,
+      // jadi order harus FAILED agar user tidak menunggu pembayaran hantu.
+      const explicitRejection =
+        (httpStatus >= 400 && httpStatus < 500) || (bodyStatus >= 400 && bodyStatus < 500);
       await prisma.paymentOrder
         .update({
           where: { id: order.id },

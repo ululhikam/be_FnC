@@ -3,7 +3,7 @@ import { ENV } from '../src/config/env.js';
 import { prisma } from '../src/config/prisma.js';
 import { invalidateCache } from '../src/utils/cache.util.js';
 import { CtfWalletService } from '../src/services/ctf-wallet.service.js';
-import { MidtransService } from '../src/services/midtrans.service.js';
+import { MidtransService, MidtransError } from '../src/services/midtrans.service.js';
 import { PaymentService } from '../src/services/payment.service.js';
 
 vi.mock('../src/config/prisma.js', () => {
@@ -237,6 +237,34 @@ describe('PaymentService', () => {
     expect(result.order.status).toBe('pending');
     expect(MidtransService.charge).toHaveBeenCalledOnce();
     expect(prisma.paymentOrder.create).toHaveBeenCalledOnce();
+  });
+
+  it('marks the order FAILED when Midtrans rejects the channel inside an HTTP 200 body', async () => {
+    vi.mocked(prisma.paymentOrder.create).mockResolvedValue(order as any);
+    vi.mocked(prisma.paymentOrder.update).mockResolvedValue(order as any);
+    vi.mocked(MidtransService.charge).mockRejectedValueOnce(
+      new MidtransError('MIDTRANS_CHARGE_FAILED', 'Payment channel is not activated.', 502, {
+        httpStatus: 200,
+        status_code: '402',
+        status_message: 'Payment channel is not activated.',
+      })
+    );
+
+    await expect(
+      PaymentService.createOrder(
+        { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
+        { packageCode: 'coba_dulu', method: 'qris', requestKey: 'req-12345678' }
+      )
+    ).rejects.toMatchObject({ code: 'MIDTRANS_CHARGE_FAILED' });
+
+    expect(prisma.paymentOrder.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'FAILED',
+          midtransStatus: 'charge_rejected',
+        }),
+      })
+    );
   });
 
   it('applies a coupon discount and reserves the quota with the order', async () => {

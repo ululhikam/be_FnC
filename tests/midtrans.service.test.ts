@@ -216,6 +216,44 @@ describe('MidtransService', () => {
     }
   });
 
+  it('treats an HTTP 200 charge with a 4xx body status_code as a rejection', async () => {
+    // Midtrans membalas HTTP 200 untuk channel yang belum aktif; tanpa cek
+    // status_code di body, order tersimpan PENDING tanpa VA/QR.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              status_code: '402',
+              status_message: 'Payment channel is not activated.',
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        )
+      )
+    );
+
+    try {
+      await MidtransService.charge({
+        orderId: 'FNC-ORDER-1',
+        amountIdr: 5000,
+        packageCode: 'coba_dulu',
+        packageName: 'Coba Dulu',
+        method: 'qris',
+        customer: { name: 'tester' },
+      });
+      throw new Error('expected charge to fail');
+    } catch (error) {
+      expect(error).toBeInstanceOf(MidtransError);
+      expect(error).toMatchObject({
+        code: 'MIDTRANS_CHARGE_FAILED',
+        status: 502,
+        message: 'Payment channel is not activated.',
+      });
+    }
+  });
+
   it('returns null when Midtrans does not know an order', async () => {
     vi.stubGlobal(
       'fetch',

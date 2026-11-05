@@ -72,6 +72,22 @@ function basicAuthHeader() {
   return `Basic ${Buffer.from(`${ENV.MIDTRANS_SERVER_KEY}:`).toString('base64')}`;
 }
 
+/**
+ * Kunci yang boleh dipakai untuk memverifikasi `signature_key` notifikasi.
+ *
+ * Dashboard Midtrans (Settings > Access Keys) menampilkan **Signature Secret
+ * Key** terpisah dari Server Key. Bila keduanya berbeda dan kita hanya memakai
+ * Server Key, SEMUA notifikasi sah akan ditolak 401 sehingga saldo CTF tidak
+ * pernah masuk. Karena itu Signature Secret Key dipakai lebih dulu, dan Server
+ * Key tetap diterima sebagai cadangan supaya notifikasi yang dibuat sebelum
+ * nilai ini diisi tidak ikut gagal.
+ */
+function signatureSecrets(): string[] {
+  return [ENV.MIDTRANS_SIGNATURE_SECRET, ENV.MIDTRANS_SERVER_KEY]
+    .map((value) => value.trim())
+    .filter((value, index, list) => Boolean(value) && list.indexOf(value) === index);
+}
+
 function baseUrl() {
   return ENV.MIDTRANS_IS_PRODUCTION
     ? 'https://api.midtrans.com/v2'
@@ -90,6 +106,11 @@ function asActions(value: unknown): MidtransAction[] {
 export class MidtransService {
   static isConfigured() {
     return Boolean(ENV.MIDTRANS_SERVER_KEY);
+  }
+
+  /** Signature Secret Key sudah diisi (verifikasi tidak bergantung Server Key). */
+  static hasSignatureSecret() {
+    return Boolean(ENV.MIDTRANS_SIGNATURE_SECRET.trim());
   }
 
   static buildChargePayload(input: MidtransChargeInput): Record<string, unknown> {
@@ -266,26 +287,34 @@ export class MidtransService {
   }
 
   /**
-   * Midtrans signature: SHA512(order_id + status_code + gross_amount + server_key).
-   * Compare in constant time so an attacker cannot learn the expected digest.
+   * Midtrans signature: SHA512(order_id + status_code + gross_amount + secret).
+   *
+   * `secret` adalah Signature Secret Key bila diisi, jika tidak Server Key.
+   * Bandingkan dalam constant time supaya penyerang tidak bisa menebak digest.
    */
   static verifySignature(payload: Record<string, unknown>): boolean {
-    assertConfigured();
+    const secrets = signatureSecrets();
+    // Tanpa kredensial sama sekali, ini kesalahan konfigurasi (503), bukan
+    // tanda tangan yang salah (401) — jangan diam-diam menolak semua notifikasi.
+    if (secrets.length === 0) assertConfigured();
     const orderId = String(payload.order_id ?? '');
     const statusCode = String(payload.status_code ?? '');
     const grossAmount = String(payload.gross_amount ?? '');
     const signature = String(payload.signature_key ?? '');
     if (!orderId || !statusCode || !grossAmount || !signature) return false;
 
-    const expected = crypto
-      .createHash('sha512')
-      .update(`${orderId}${statusCode}${grossAmount}${ENV.MIDTRANS_SERVER_KEY}`)
-      .digest('hex');
+    const actualBuffer = Buffer.from(signature.toLowerCase(), 'utf8');
+    const base = `${orderId}${statusCode}${grossAmount}`;
 
-    const expectedBuffer = Buffer.from(expected, 'utf8');
-    const actualBuffer = Buffer.from(signature, 'utf8');
-    if (expectedBuffer.length !== actualBuffer.length) return false;
-    return crypto.timingSafeEqual(expectedBuffer, actualBuffer);
+    return secrets.some((secret) => {
+      const expected = crypto
+        .createHash('sha512')
+        .update(`${base}${secret}`)
+        .digest('hex');
+      const expectedBuffer = Buffer.from(expected, 'utf8');
+      if (expectedBuffer.length !== actualBuffer.length) return false;
+      return crypto.timingSafeEqual(expectedBuffer, actualBuffer);
+    });
   }
 
   private static mapChargeResponse(raw: Record<string, unknown>): MidtransChargeResult {

@@ -5,6 +5,7 @@ import { MidtransError, MidtransService } from '../src/services/midtrans.service
 
 const original = {
   serverKey: ENV.MIDTRANS_SERVER_KEY,
+  signatureSecret: ENV.MIDTRANS_SIGNATURE_SECRET,
   isProduction: ENV.MIDTRANS_IS_PRODUCTION,
   frontendUrl: ENV.FRONTEND_URL,
 };
@@ -12,6 +13,7 @@ const original = {
 describe('MidtransService', () => {
   beforeEach(() => {
     ENV.MIDTRANS_SERVER_KEY = 'SB-Mid-server-test';
+    ENV.MIDTRANS_SIGNATURE_SECRET = '';
     ENV.MIDTRANS_IS_PRODUCTION = false;
     ENV.FRONTEND_URL = 'https://fessncurious-dev.vercel.app';
   });
@@ -22,6 +24,7 @@ describe('MidtransService', () => {
 
   afterAll(() => {
     ENV.MIDTRANS_SERVER_KEY = original.serverKey;
+    ENV.MIDTRANS_SIGNATURE_SECRET = original.signatureSecret;
     ENV.MIDTRANS_IS_PRODUCTION = original.isProduction;
     ENV.FRONTEND_URL = original.frontendUrl;
   });
@@ -89,6 +92,57 @@ describe('MidtransService', () => {
       MidtransService.verifySignature({ ...payload, gross_amount: '1.00', signature_key: signature })
     ).toBe(false);
     expect(MidtransService.verifySignature({ ...payload, signature_key: '' })).toBe(false);
+  });
+
+  it('prefers MIDTRANS_SIGNATURE_SECRET over the server key', () => {
+    ENV.MIDTRANS_SIGNATURE_SECRET = 'Signature-Secret-Key-test';
+    const payload = {
+      order_id: 'FNC-ORDER-3',
+      status_code: '200',
+      gross_amount: '5000.00',
+      transaction_status: 'settlement',
+    };
+    const sign = (secret: string) =>
+      crypto
+        .createHash('sha512')
+        .update(`${payload.order_id}${payload.status_code}${payload.gross_amount}${secret}`)
+        .digest('hex');
+
+    expect(MidtransService.hasSignatureSecret()).toBe(true);
+    expect(
+      MidtransService.verifySignature({
+        ...payload,
+        signature_key: sign('Signature-Secret-Key-test'),
+      })
+    ).toBe(true);
+    // Server key tetap diterima sebagai cadangan agar notifikasi lama tidak
+    // tiba-tiba ditolak saat Signature Secret Key baru diisi.
+    expect(
+      MidtransService.verifySignature({
+        ...payload,
+        signature_key: sign(ENV.MIDTRANS_SERVER_KEY),
+      })
+    ).toBe(true);
+    expect(
+      MidtransService.verifySignature({ ...payload, signature_key: sign('secret-lain') })
+    ).toBe(false);
+  });
+
+  it('accepts an uppercase signature hex digest', () => {
+    const payload = {
+      order_id: 'FNC-ORDER-4',
+      status_code: '200',
+      gross_amount: '5000.00',
+    };
+    const signature = crypto
+      .createHash('sha512')
+      .update(
+        `${payload.order_id}${payload.status_code}${payload.gross_amount}${ENV.MIDTRANS_SERVER_KEY}`
+      )
+      .digest('hex')
+      .toUpperCase();
+
+    expect(MidtransService.verifySignature({ ...payload, signature_key: signature })).toBe(true);
   });
 
   it('maps a successful charge response into instructions', async () => {

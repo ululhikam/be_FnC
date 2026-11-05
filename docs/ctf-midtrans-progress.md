@@ -127,6 +127,7 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 | Vercel project dev frontend | ✅ Dibuat | `fessncurious-dev` → `fessncurious-dev.vercel.app` |
 | Migrasi dev | ✅ Sampai `20261024040000_welcome_ctf_bonus` | Termasuk reserved payout, `Fess.publishedAt`, dan enum `WELCOME_BONUS` |
 | Midtrans sandbox keys | ✅ Aktif di dev | `MIDTRANS_SERVER_KEY` / `MIDTRANS_CLIENT_KEY` terpasang sebagai Vercel Sensitive env di `be-fnc-dev`; key sandbox valid walau tanpa prefix `SB-Mid-` |
+| Midtrans Signature Secret Key | ⚠️ Opsional | `MIDTRANS_SIGNATURE_SECRET` (Settings > Access Keys). Bila diisi, verifikasi `signature_key` notifikasi memakai kunci ini lebih dulu; Server Key tetap diterima sebagai cadangan |
 | Midtrans notification URL | ✅ Terverifikasi | `https://be-fnc-dev.vercel.app/api/payments/midtrans/notification`; notifikasi asli QRIS dan BCA VA diterima dan diproses |
 | Dev backend deployment terbaru | Selesai | `dpl_4AdsNFxCAyEchyKvaQWSb9dap7SQ` -> https://be-fnc-dev.vercel.app (welcome bonus; flag off) |
 | Dev frontend deployment terbaru | Selesai | `dpl_B1tkYEbzu3aEN6z2k2QLUAV1cUJf` -> https://fessncurious-dev.vercel.app (bank picker rekening payout; flag off) |
@@ -172,6 +173,10 @@ BASE_PAYOUT_FEE_IDR=6500
 # Midtrans sandbox — isi nilainya di lokal/Vercel, jangan commit
 MIDTRANS_IS_PRODUCTION=false
 MIDTRANS_SERVER_KEY=
+# Signature Secret Key dari Settings > Access Keys. Dipakai lebih dulu untuk
+# memverifikasi signature_key notifikasi; Server Key tetap diterima sebagai
+# cadangan bila nilainya kosong.
+MIDTRANS_SIGNATURE_SECRET=
 MIDTRANS_CLIENT_KEY=
 MIDTRANS_MERCHANT_ID=
 
@@ -472,6 +477,7 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 | 2026-10-24 | Meta/Instagram dinyatakan berfungsi (OAuth + callback); tetap opsional dan bukan gate. Base tanpa sosmed tetap FnC-only. |
 | 2026-10-24 | Fase 4 selesai: badge billing composer, modal saldo kurang + CTA top-up, badge publik, status koneksi Instagram nyata, serta audit copy legal/help/FAQ/landing. |
 | 2026-10-24 | Backend full suite 306 test lulus; build backend & frontend lulus. |
+| 2026-11-05 | Dukungan **Signature Secret Key** Midtrans: env baru `MIDTRANS_SIGNATURE_SECRET` dipakai lebih dulu saat memverifikasi `signature_key` notifikasi (Server Key tetap cadangan), signature hex besar/kecil diterima, dan status tiga kunci (Server / Signature Secret / Client) tampil di `/super-admin/system`. |
 | 2026-10-24 | Deploy dev: backend `dpl_7DkTGmqcWVXTCugUn8AwKMrW9yad`, frontend `dpl_BAAeh6V3KC6j4aWB7R2enYdMEHUA`; smoke API billing/Instagram lulus, flag pembayaran tetap mati. |
 | 2026-10-24 | E2E fess berbayar dev lulus: 1 CTF didebit (160 → 159), replay idempotent tidak double charge, revenue base Rp80 `PENDING`. Ditemukan dan diperbaiki timeout transaksi `P2028` dengan `maxWait=10s`/`timeout=30s`. |
 | 2026-10-24 | Copy UI biaya diperjelas: `Posting · 1 CTF`, saldo sebelum → sesudah di modal, dan tombol `Posting & Potong 1 CTF`; badge publik `Berbayar · 1 CTF/fess`. Diverifikasi Playwright di dev. |

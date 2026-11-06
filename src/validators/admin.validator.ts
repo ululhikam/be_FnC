@@ -129,6 +129,22 @@ export const AdminPaymentPackageStatusSchema = z.object({
   password: z.string().min(1, 'Konfirmasi kata sandi wajib diisi').max(200),
 });
 
+/**
+ * Mode gateway pembayaran platform-wide. Perubahan hanya boleh oleh Super Admin
+ * dengan re-auth dan alasan; service menulis `AdminAuditLog` + `SystemLog`.
+ */
+export const AdminPaymentGatewaySchema = z.object({
+  mode: z.enum(['core_api', 'snap'], {
+    errorMap: () => ({ message: 'Mode gateway harus core_api atau snap' }),
+  }),
+  reason: z
+    .string()
+    .trim()
+    .min(5, 'Alasan wajib diisi minimal 5 karakter')
+    .max(500, 'Alasan maksimal 500 karakter'),
+  password: z.string().min(1, 'Konfirmasi kata sandi wajib diisi').max(200),
+});
+
 /** Tanggal kupon: ISO string dari UI, atau null bila tanpa batas. */
 const CouponDateSchema = z
   .string()

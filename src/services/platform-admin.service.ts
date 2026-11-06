@@ -5,6 +5,7 @@ import { BASE_PAYOUT_MIN_IDR, CTF_PER_PAID_FESS } from '../constants/payments.js
 import { normalizeHandle } from '../utils/format.util.js';
 import { AdminSecurityService } from './admin-security.service.js';
 import { BaseRevenueService, type RequestMeta } from './base-revenue.service.js';
+import { PaymentGatewayService } from './payment-gateway.service.js';
 
 type PlatformActor = {
   id: string;
@@ -917,7 +918,7 @@ export class PlatformAdminService {
    */
   static async getSystemSettings() {
     const now = new Date();
-    const [lastTokenRefresh, lastAudit] = await Promise.all([
+    const [lastTokenRefresh, lastAudit, gatewayMode] = await Promise.all([
       prisma.systemLog.findFirst({
         where: {
           source: 'CANVAS_WORKER',
@@ -930,6 +931,7 @@ export class PlatformAdminService {
         orderBy: { createdAt: 'desc' },
         select: { createdAt: true, action: true },
       }),
+      PaymentGatewayService.getMode(),
     ]);
 
     return {
@@ -958,6 +960,7 @@ export class PlatformAdminService {
       integrations: {
         midtrans: {
           mode: ENV.MIDTRANS_IS_PRODUCTION ? 'production' : 'sandbox',
+          gateway_mode: gatewayMode,
           payments_enabled: ENV.PAYMENTS_ENABLED,
           server_key_configured: Boolean(ENV.MIDTRANS_SERVER_KEY),
           signature_secret_configured: Boolean(ENV.MIDTRANS_SIGNATURE_SECRET),

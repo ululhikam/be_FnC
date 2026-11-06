@@ -64,8 +64,19 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
   `createOrder` menandai order `FAILED` (`midtransStatus=channel_unavailable`) dan user menerima
   pesan berbahasa Indonesia yang menyebut metode tersebut belum aktif plus jaminan saldo tidak
   terpotong; pesan asli Midtrans hanya disimpan di `rawResponse.charge_error` untuk admin.
-- Snap dan halaman pembayaran eksternal tidak dipakai; flow pembayaran sepenuhnya in-app
-  lewat Core API (`POST /v2/charge`).
+- Mode gateway bisa dipilih Super Admin tanpa deploy: **Core API** (default) atau **Snap popup**.
+  - Core API: `POST /v2/charge`; VA, QRIS, dan deeplink ditampilkan langsung di halaman top-up.
+  - Snap: `POST /snap/v1/transactions`; pengguna membayar di popup `snap.js`. `redirect_url`
+    menjadi fallback bila Client Key atau script Snap tidak tersedia.
+  - Mode disimpan di `SystemSetting` key `payment_gateway` (`{ mode }`), default `core_api`.
+    Setiap order menyimpan snapshot `PaymentOrder.gatewayMode`, `snapToken`, dan
+    `snapRedirectUrl`, jadi mengganti mode global tidak mengubah tampilan order lama.
+  - Pemilih 9 metode tetap dipakai. Snap membatasi `enabled_payments` ke metode yang dipilih
+    (`qris → other_qris`, `mandiri_bill → echannel`, `cimb_va → cimb_va`, lainnya sama dengan
+    kode metode).
+  - Setiap perubahan mode wajib re-auth + alasan, ditulis ke `AdminAuditLog`
+    (`PAYMENT_GATEWAY_MODE_CHANGED`) dan `SystemLog` source `PAYOUT`.
+  - Webhook, verifikasi signature, rekonsiliasi, refund, dan kredit CTF tetap gateway-agnostic.
 - **Sumber kebenaran paket (sejak 2026-10-28): tabel `PaymentPackage`, bukan konstanta.**
   `PAYMENT_PACKAGES` di `src/constants/payments.ts` hanya fallback bila tabel belum ada
   (deploy sebelum migrasi). Super Admin mengubah paket di
@@ -132,12 +143,12 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 | Supabase project development | ✅ Aktif | Ref `vtvnurgkhqboygkttzae`, region `ap-south-1` |
 | Vercel project dev backend | ✅ Dibuat | `be-fnc-dev` → `be-fnc-dev.vercel.app` |
 | Vercel project dev frontend | ✅ Dibuat | `fessncurious-dev` → `fessncurious-dev.vercel.app` |
-| Migrasi dev | ✅ Sampai `20261024040000_welcome_ctf_bonus` | Termasuk reserved payout, `Fess.publishedAt`, dan enum `WELCOME_BONUS` |
+| Migrasi dev | ✅ Sampai `20261106090000_payment_gateway_mode` | Diterapkan manual + `migrate resolve` karena DB dev punya drift lama `Fess`/`Report`; jangan `migrate reset` DB dev |
 | Midtrans sandbox keys | ✅ Aktif di dev | `MIDTRANS_SERVER_KEY` / `MIDTRANS_CLIENT_KEY` terpasang sebagai Vercel Sensitive env di `be-fnc-dev`; key sandbox valid walau tanpa prefix `SB-Mid-` |
 | Midtrans Signature Secret Key | ⚠️ Opsional | `MIDTRANS_SIGNATURE_SECRET` (Settings > Access Keys). Bila diisi, verifikasi `signature_key` notifikasi memakai kunci ini lebih dulu; Server Key tetap diterima sebagai cadangan |
 | Midtrans notification URL | ✅ Terverifikasi | `https://be-fnc-dev.vercel.app/api/payments/midtrans/notification`; notifikasi asli QRIS dan BCA VA diterima dan diproses |
-| Dev backend deployment terbaru | Selesai | `dpl_4AdsNFxCAyEchyKvaQWSb9dap7SQ` -> https://be-fnc-dev.vercel.app (welcome bonus; flag off) |
-| Dev frontend deployment terbaru | Selesai | `dpl_B1tkYEbzu3aEN6z2k2QLUAV1cUJf` -> https://fessncurious-dev.vercel.app (bank picker rekening payout; flag off) |
+| Dev backend deployment terbaru | Selesai | `dpl_63JFchip6TrpLHwYUcDihULAFtfZ` -> https://be-fnc-dev.vercel.app (mode gateway Midtrans Core API/Snap) |
+| Dev frontend deployment terbaru | Selesai | `dpl_Ac5VVA1MJChWMqWSLthpM7kq9d4q` -> https://fessncurious-dev.vercel.app (popup Snap + CSP Midtrans) |
 | Flag dev | ✅ Aman | `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false` setelah jendela test |
 | Dev callback / OAuth | ✅ Berfungsi | Midtrans ✅; Google dilaporkan selesai; Meta/Instagram OAuth + callback berfungsi dan tetap opsional untuk base FnC-only |
 | Production | ✅ Tidak disentuh | Tetap menunggu sign-off |
@@ -495,6 +506,7 @@ Catatan: Meta/Instagram **sudah berfungsi** dan bukan gate production. Integrasi
 | 2026-11-05 | **Merge ke production:** PR #4 backend (`ululhikam/be_FnC`) dan frontend (`ululhikam/con.fess_WebApp`) di-merge ke `main` pada 15:00/15:01 UTC, sehingga production kembali dideploy lewat GitHub (bukan `vercel --prod` lokal seperti sebelumnya). Deploy production: backend `dpl_B73hns7M42dF84xGQiwmQXwJM6ux` (`be.fnc.web.id`, 22:00 WIB), frontend `dpl_5u43UWeNTNSz6RFuRrvUSrbVmwFi` (`www.fnc.web.id`, 22:01 WIB). Verifikasi: `GET /api/payments/packages` production mengembalikan 9 metode termasuk `cimb_va`; chunk `TopUpFlow` production memuat handler `PAYMENT_METHOD_UNAVAILABLE`/`PAYMENT_REJECTED`/`PAYMENT_GATEWAY_UNAVAILABLE`. Backend full suite 682/682 lulus sebelum merge. |
 | 2026-11-05 | **Verifikasi jalur error di production (bukti nyata):** dua order QRIS production `FNC-MW3OJQH0-6542F2F614` dan `FNC-MW3OJWBP-C5F60C8011` (22:07–22:08 WIB, setelah deploy) berakhir `FAILED` dengan `midtransStatus=channel_unavailable`, `failedAt` terisi, tanpa VA/QR. `rawResponse.charge_error` menyimpan pesan asli Midtrans `"Merchant pop id is not found"` (HTTP 200). Sebelum perbaikan, order seperti ini menggantung `PENDING`; sekarang user menerima pesan Indonesia yang menyebut metode belum aktif dan menegaskan tidak ada tagihan/saldo terpotong. |
 | 2026-11-05 | **Sisa data lama:** 11 order production (26 Okt–5 Nov, sebelum perbaikan) masih `PENDING` tanpa VA/QR dan tidak akan pernah bisa dibayar. Perlu dibereskan manual agar riwayat user tidak menampilkan transaksi hantu: tandai `FAILED` (`midtransStatus=channel_unavailable`) via `POST /admin/payments/orders/:id/...` atau skrip admin. |
+| 2026-11-06 | **Mode gateway Midtrans (Core API vs Snap popup)** diimplementasikan di branch `feat/payment-gateway-mode` (belum deploy): setting `SystemSetting.payment_gateway`, migrasi aditif `20261106090000_payment_gateway_mode` (`PaymentOrder.gatewayMode`, `snapToken`, `snapRedirectUrl`), endpoint `GET/PATCH /admin/payments/gateway` (Super Admin, re-auth, alasan, audit `PAYMENT_GATEWAY_MODE_CHANGED`), `GET /payments/packages` menyertakan `gateway`, dan `POST /payments/orders` memilih `charge()` atau `createSnapTransaction()` berdasarkan snapshot mode. Frontend: kartu “Gateway pembayaran” di Finance → Pembayaran dan popup Snap di `TopUpFlow` dengan fallback redirect. Webhook, signature, reconcile, refund, dan kredit CTF tidak berubah. 13 test baru (6 gateway, 4 Snap, 1 order Snap, 1 kompatibilitas order lama, 1 order Snap tanpa token); backend full suite **695/695 lulus**; build backend dan frontend lulus; `format:check` frontend hijau. Migrasi sudah diterapkan ke DB dev (region `ap-south-1`) secara manual + `migrate resolve` karena DB dev punya drift lama `Fess`/`Report`; jangan reset DB dev. |
 | 2026-10-24 | Deploy dev: backend `dpl_7DkTGmqcWVXTCugUn8AwKMrW9yad`, frontend `dpl_BAAeh6V3KC6j4aWB7R2enYdMEHUA`; smoke API billing/Instagram lulus, flag pembayaran tetap mati. |
 | 2026-10-24 | E2E fess berbayar dev lulus: 1 CTF didebit (160 → 159), replay idempotent tidak double charge, revenue base Rp80 `PENDING`. Ditemukan dan diperbaiki timeout transaksi `P2028` dengan `maxWait=10s`/`timeout=30s`. |
 | 2026-10-24 | Copy UI biaya diperjelas: `Posting · 1 CTF`, saldo sebelum → sesudah di modal, dan tombol `Posting & Potong 1 CTF`; badge publik `Berbayar · 1 CTF/fess`. Diverifikasi Playwright di dev. |
@@ -532,18 +544,25 @@ Production berjalan di backend `be-fnc` (`https://be.fnc.web.id`) dan frontend `
 | `MIDTRANS_IS_PRODUCTION` | `true` | Sebelumnya `false` walau berisi kunci production. |
 | Signature webhook | Lulus | Signature Secret **dan** Server Key diterima, hex uppercase diterima, secret salah `401`. |
 | `PAYMENTS_ENABLED` | `true` | Aktif atas keputusan pemilik produk. |
+| Mode gateway Midtrans | `core_api` (default) / `snap` | Bisa diubah Super Admin di `/super-admin/keuangan?tab=payments` → kartu “Gateway pembayaran” tanpa deploy. Order lama memakai snapshot `gatewayMode`. |
 | `BASE_PAYOUTS_ENABLED` | `false` | Kill switch payout tetap mati. |
 | CORS | Lulus | `www.fnc.web.id`, `fnc.web.id`, `fessncurious.vercel.app` diterima; origin asing `403`. |
 | **Channel pembayaran Midtrans** | **Aktif di Snap, ditolak di Core API** | Snap production membuat token `201` (akun aktif). Core API production menolak semua metode: `402 Payment channel is not activated.` untuk BNI/BRI/CIMB/Permata/Mandiri/BCA/BSI VA, Mandiri Bill, GoPay, ShopeePay; `404 Merchant pop id is not found` untuk QRIS. Merchant ID `M260082370` sama dengan sandbox (yang 10 metodenya `201`), jadi bukan salah kunci. |
 | **Notification URL Midtrans** | **Belum dipastikan** | Set ke `https://be.fnc.web.id/api/payments/midtrans/notification` di dashboard Midtrans (Settings → Payment → Notification URL). Belum ada `PaymentEvent` production, jadi belum ada notifikasi yang pernah masuk. |
 | Metode ditawarkan | Semua (9) | QRIS, VA BNI/BRI/CIMB Niaga/Permata/BCA, Mandiri Bill, GoPay, ShopeePay. Tidak ada yang disembunyikan; penolakan Midtrans dijelaskan ke user. |
 
-**Kesimpulan:** kode dan kredensial siap. Top-up production **belum bisa dipakai** sampai Midtrans mengaktifkan channel pembayaran untuk merchant production (bukan hal yang bisa dilakukan dari kode). Snap production sudah bisa membuat token, jadi akun sendiri aktif — yang tertunda adalah aktivasi channel Core API. Setelah aktif, ulangi uji top-up kecil dan pastikan `PaymentEvent` berstatus `PROCESSED`.
+**Kesimpulan:** kode dan kredensial siap. Top-up production via **Core API** belum bisa dipakai sampai Midtrans mengaktifkan channel pembayaran untuk merchant production (bukan hal yang bisa dilakukan dari kode). Snap production sudah bisa membuat token, sehingga mode **Snap popup** disiapkan sebagai jalur sementara; tetap wajib diuji popup dan notifikasi nyata sebelum diaktifkan. Setelah kanal Core API aktif, ulangi uji top-up kecil dan pastikan `PaymentEvent` berstatus `PROCESSED`.
+
+**Temuan penting (2026-11-06):** popup Snap di production/dev sebelumnya **tidak akan pernah terbuka** karena dua hal di frontend, bukan di backend:
+1. CSP `script-src` tidak mengizinkan `https://app.midtrans.com` / `https://app.sandbox.midtrans.com`, sehingga `snap.js` diblokir browser (`script-src-elem`) dan kode selalu jatuh ke fallback redirect.
+2. Setelah CSP diperbaiki, popup butuh ±15-18 detik untuk mengubah iframe `#snap-midtrans` dari `display:none` menjadi `display:block`; jangan anggap gagal bila belum muncul dalam 5 detik.
+
+CSP sekarang mengizinkan domain Midtrans pada `script-src`, `connect-src`, `child-src`, dan `frame-src`. Ini wajib ikut ke production bersama fitur Snap.
 
 ### Pre-flight
 
 - [ ] Review dan merge branch `feat/ctf-midtrans` setelah sign-off eksplisit.
-- [ ] Backup database production dan terapkan migrasi additive (`prisma migrate deploy`) sebelum deploy kode, termasuk enum `WELCOME_BONUS`, tabel `PaymentPackage` (`20261028020000_payment_packages`), serta tabel `Coupon`/`CouponRedemption` (`20261028030000_coupons`). Verifikasi region DB production sebelum merge, lalu pastikan 5 paket top-up ikut ter-seed.
+- [ ] Backup database production dan terapkan migrasi additive (`prisma migrate deploy`) sebelum deploy kode, termasuk enum `WELCOME_BONUS`, tabel `PaymentPackage` (`20261028020000_payment_packages`), tabel `Coupon`/`CouponRedemption` (`20261028030000_coupons`), serta kolom gateway `PaymentOrder.gatewayMode`/`snapToken`/`snapRedirectUrl` (`20261106090000_payment_gateway_mode`). Verifikasi region DB production sebelum merge, lalu pastikan 5 paket top-up ikut ter-seed.
 - [ ] Verifikasi kupon promo: buat satu kupon uji, cek pratinjau di halaman top-up, pastikan diskon hanya mengubah harga bayar dan CTF tetap utuh, lalu nonaktifkan kupon uji dan hapus setelah canary.
 - [ ] Isi env production: `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false`, `WELCOME_CTF_BONUS=1`, `MIDTRANS_IS_PRODUCTION=true`, production server/client/merchant key, `PAYMENT_RECONCILE_SECRET` kuat, DB URL, JWT, storage, email.
 - [ ] Pastikan tidak ada key sandbox di project production dan tidak ada key production di frontend.
@@ -559,6 +578,7 @@ Production berjalan di backend `be-fnc` (`https://be.fnc.web.id`) dan frontend `
 - [ ] Verifikasi user baru yang emailnya terverifikasi menerima tepat 1 CTF sekali (ledger `WELCOME_BONUS`, saldo +1, replay tidak menambah), dan user lama tidak mendapat backfill.
 - [ ] Aktifkan `PAYMENTS_ENABLED=true` hanya untuk jendela canary singkat.
 - [ ] Satu top-up internal sekecil mungkin: verifikasi notifikasi asli, saldo naik tepat sekali, satu `CtfLedgerEntry`, dan audit.
+- [ ] Uji mode **Snap popup** dengan nominal terkecil: pastikan `enabled_payments` hanya menampilkan metode yang dipilih, popup/redirect berjalan, webhook masuk, dan saldo naik tepat sekali. Uji juga fallback redirect saat Client Key tidak tersedia.
 - [ ] Satu fess berbayar: verifikasi debit 1 CTF, idempotency replay, `FessCharge`, dan `BaseRevenueEntry` Rp80 `PENDING`.
 - [ ] Verifikasi order expire dan retry/reconcile tidak mengubah saldo.
 - [ ] Pantau minimal satu siklus rekonsiliasi terjadwal dan satu webhook retry.

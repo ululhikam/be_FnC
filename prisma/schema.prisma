@@ -555,6 +555,14 @@ model PaymentOrder {
   status                PaymentOrderStatus @default(PENDING)
   paymentMethod         String?
   paymentChannel        String?
+  /// Mode gateway saat order dibuat: `core_api` atau `snap`. Snapshot ini
+  /// membuat order lama tetap dirender dengan flow yang benar setelah Super
+  /// Admin mengganti mode global.
+  gatewayMode           String?
+  /// Snap token hanya diisi untuk order mode Snap. Dipakai frontend untuk
+  /// membuka popup; redirect URL menjadi fallback bila popup tidak tersedia.
+  snapToken             String?
+  snapRedirectUrl       String?
   midtransTransactionId String?            @unique
   midtransStatus        String?
   qrString              String?

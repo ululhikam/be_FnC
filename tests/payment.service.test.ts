@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ENV } from '../src/config/env.js';
 import { prisma } from '../src/config/prisma.js';
 import { invalidateCache } from '../src/utils/cache.util.js';
@@ -40,6 +40,10 @@ vi.mock('../src/config/prisma.js', () => {
     },
     adminAuditLog: {
       create: vi.fn(),
+    },
+    systemSetting: {
+      findUnique: vi.fn(),
+      upsert: vi.fn(),
     },
     $transaction: vi.fn(async (callback: any) => callback(prisma)),
   };
@@ -139,9 +143,11 @@ describe('PaymentService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     invalidateCache('payment-packages:');
+    invalidateCache('payment-gateway:');
     ENV.PAYMENTS_ENABLED = true;
     ENV.MIDTRANS_SERVER_KEY = 'SB-Mid-server-test';
     ENV.MIDTRANS_IS_PRODUCTION = false;
+    vi.mocked(prisma.systemSetting.findUnique).mockResolvedValue(null);
     vi.mocked(prisma.paymentPackage.findUnique).mockImplementation(
       async (args: any) =>
         (args?.where?.code === packageRow.code ? { ...packageRow } : null) as any
@@ -191,6 +197,10 @@ describe('PaymentService', () => {
     });
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   afterAll(() => {
     ENV.PAYMENTS_ENABLED = originalEnabled;
     ENV.MIDTRANS_SERVER_KEY = originalServerKey;
@@ -204,6 +214,7 @@ describe('PaymentService', () => {
     expect(packages.ctf_per_paid_fess).toBe(1);
     expect(packages.packages.map((pkg) => pkg.code)).toContain('coba_dulu');
     expect(packages.methods.map((method) => method.code)).toContain('bni_va');
+    expect(packages.gateway.mode).toBe('core_api');
   });
 
   it('offers every catalog method, including channels that may still be inactive', async () => {
@@ -266,6 +277,102 @@ describe('PaymentService', () => {
     expect(result.order.status).toBe('pending');
     expect(MidtransService.charge).toHaveBeenCalledOnce();
     expect(prisma.paymentOrder.create).toHaveBeenCalledOnce();
+  });
+
+  it('creates a Snap order when the gateway mode is snap', async () => {
+    vi.mocked(prisma.systemSetting.findUnique).mockResolvedValue({
+      value: { mode: 'snap' },
+      updatedById: null,
+      updatedAt: new Date('2026-11-06T00:00:00.000Z'),
+    } as any);
+    vi.mocked(prisma.paymentOrder.create).mockResolvedValue({
+      ...order,
+      gatewayMode: 'snap',
+    } as any);
+    vi.mocked(prisma.paymentOrder.update).mockResolvedValue({
+      ...order,
+      gatewayMode: 'snap',
+      snapToken: 'snap-token-1',
+      snapRedirectUrl: 'https://app.sandbox.midtrans.com/snap/v3/redirection/abc',
+      midtransStatus: 'pending',
+    } as any);
+    const snapSpy = vi.spyOn(MidtransService, 'createSnapTransaction').mockResolvedValue({
+      token: 'snap-token-1',
+      redirectUrl: 'https://app.sandbox.midtrans.com/snap/v3/redirection/abc',
+      raw: { token: 'snap-token-1' },
+    });
+
+    const result = await PaymentService.createOrder(
+      { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
+      { packageCode: 'coba_dulu', method: 'bni_va', requestKey: 'req-snap-1234' }
+    );
+
+    expect(snapSpy).toHaveBeenCalledOnce();
+    expect(MidtransService.charge).not.toHaveBeenCalled();
+    expect(prisma.paymentOrder.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ gatewayMode: 'snap' }),
+    });
+    expect(prisma.paymentOrder.update).toHaveBeenCalledWith({
+      where: { id: order.id },
+      data: expect.objectContaining({
+        snapToken: 'snap-token-1',
+        snapRedirectUrl: 'https://app.sandbox.midtrans.com/snap/v3/redirection/abc',
+        midtransStatus: 'pending',
+      }),
+    });
+    expect(result.order.gateway_mode).toBe('snap');
+    expect(result.order.instructions).toMatchObject({
+      type: 'snap',
+      token: 'snap-token-1',
+      redirect_url: 'https://app.sandbox.midtrans.com/snap/v3/redirection/abc',
+    });
+  });
+
+  it('keeps a legacy order on the Core API rendering after the global mode becomes snap', async () => {
+    // Order lama belum punya snapshot mode. Setelah Super Admin memindahkan
+    // mode global ke Snap, order lama tidak boleh berubah menjadi panel Snap
+    // kosong (token tidak ada) — tampilannya harus tetap seperti saat dibuat.
+    vi.mocked(prisma.systemSetting.findUnique).mockResolvedValue({
+      value: { mode: 'snap' },
+      updatedById: null,
+      updatedAt: new Date('2026-11-06T00:00:00.000Z'),
+    } as any);
+    vi.mocked(prisma.paymentOrder.findUnique).mockResolvedValue({
+      ...order,
+      gatewayMode: null,
+      snapToken: null,
+      snapRedirectUrl: null,
+      vaNumber: '9888237033712722',
+    } as any);
+
+    const result = await PaymentService.getOrder(
+      { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
+      order.orderId,
+      false
+    );
+
+    expect(result.gateway_mode).toBe('core_api');
+    expect(result.instructions).toMatchObject({
+      type: 'va',
+      bank: 'bni',
+      va_number: '9888237033712722',
+    });
+  });
+
+  it('does not render a snap panel for a snap order that never got a token', () => {
+    // Token Snap bisa gagal dibuat; order seperti ini sudah ditandai FAILED dan
+    // tidak boleh menampilkan panel pembayaran apa pun.
+    const serialized = (PaymentService as any).serializeOrder({
+      ...order,
+      status: 'FAILED',
+      gatewayMode: 'snap',
+      snapToken: null,
+      snapRedirectUrl: null,
+    });
+
+    expect(serialized.gateway_mode).toBe('snap');
+    expect(serialized.instructions).toBeNull();
+    expect(serialized.can_pay).toBe(false);
   });
 
   it('marks the order FAILED and explains the failure when Midtrans rejects the channel', async () => {

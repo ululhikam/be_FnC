@@ -39,6 +39,35 @@ export type AdminPaymentPackageInput = {
 
 export type CreatePaymentPackageInput = AdminPaymentPackageInput & { code: string };
 
+/**
+ * Harga massal: satu harga dasar per CTF untuk seluruh katalog, ditambah bonus
+ * per paket (dalam CTF).
+ *
+ * Nominal rupiah tiap paket TIDAK diubah — hanya jumlah CTF yang dihitung
+ * ulang — sehingga admin cukup mengisi dua hal untuk menyesuaikan semua paket
+ * sekaligus, tanpa menyunting paket satu per satu.
+ */
+export type BulkPriceInput = {
+  pricePerCtf: number;
+  /** Bonus CTF per paket. Wajib lengkap untuk semua paket yang ada. */
+  packages: Array<{ code: string; bonusCtf: number }>;
+  reason: string;
+  password?: string | null;
+};
+
+export type BulkPriceRow = {
+  code: string;
+  name: string;
+  amountIdr: number;
+  /** `floor(amountIdr / pricePerCtf)` — bagian yang dibayar murni. */
+  baseCtf: number;
+  bonusCtf: number;
+  ctfAmount: number;
+  /** Nilai sebelum perubahan, untuk pratinjau "lama → baru". */
+  previousCtfAmount: number;
+  changed: boolean;
+};
+
 export type PaymentPackageView = {
   code: string;
   name: string;
@@ -367,6 +396,178 @@ export class PaymentPackageService {
     );
 
     return toView(saved);
+  }
+
+  /**
+   * Pratinjau harga massal tanpa menulis apa pun.
+   *
+   * Dipakai dialog konsol agar admin melihat CTF hasil hitungan sebelum
+   * menyimpan. Perhitungannya sama persis dengan `bulkPrice`.
+   */
+  static async previewBulkPrice(input: BulkPriceInput) {
+    const rows = await this.listAllRows();
+    return {
+      price_per_ctf: input.pricePerCtf,
+      packages: this.priceRows(rows, input),
+    };
+  }
+
+  /**
+   * Terapkan satu harga dasar per CTF + bonus per paket ke SELURUH paket.
+   *
+   * Nominal rupiah tidak diubah; hanya `ctfAmount` yang dihitung ulang sebagai
+   * `floor(amountIdr / pricePerCtf) + bonus`. Seluruh update berjalan dalam satu
+   * transaksi bersama audit, jadi bila ada paket yang hasilnya di bawah 1 CTF
+   * tidak satu pun paket tersimpan — katalog tidak pernah setengah harga.
+   */
+  static async bulkPrice(
+    currentUser: PaymentPackageActor,
+    input: BulkPriceInput,
+    meta: RequestMeta = {}
+  ) {
+    this.assertSuperAdmin(currentUser);
+    await AdminSecurityService.assertReauth(currentUser.id, input.password);
+    const reason = assertReason(input.reason, 'penyesuaian harga massal');
+
+    if (!Number.isInteger(input.pricePerCtf) || input.pricePerCtf < 100) {
+      fail(422, 'INVALID_PRICE_PER_CTF', 'Harga per CTF minimal Rp100');
+    }
+    if (input.pricePerCtf > 10_000_000) {
+      fail(422, 'INVALID_PRICE_PER_CTF', 'Harga per CTF maksimal Rp10.000.000');
+    }
+
+    const rows = await this.listAllRows();
+    if (!rows.length) fail(409, 'NO_PACKAGES', 'Belum ada paket top-up yang bisa dihargai');
+
+    const plan = this.priceRows(rows, input);
+
+    const tooSmall = plan.filter((item) => item.ctfAmount < 1);
+    if (tooSmall.length) {
+      fail(
+        422,
+        'PACKAGE_CTF_TOO_SMALL',
+        `Harga per CTF terlalu tinggi untuk paket ${tooSmall
+          .map((item) => item.code)
+          .join(', ')}. Turunkan harga per CTF atau tambah bonus.`
+      );
+    }
+
+    const changes = plan.filter((item) => item.changed);
+
+    await prisma.$transaction(async (tx) => {
+      for (const item of changes) {
+        await tx.paymentPackage.update({
+          where: { code: item.code },
+          data: { ctfAmount: item.ctfAmount, updatedById: currentUser.id },
+          select,
+        });
+      }
+
+      await AdminSecurityService.writeAudit(
+        {
+          actorId: currentUser.id,
+          action: 'PAYMENT_PACKAGE_PRICING_CHANGED',
+          targetType: 'PaymentPackage',
+          targetId: 'bulk',
+          reason,
+          metadata: {
+            price_per_ctf: input.pricePerCtf,
+            packages: plan.map((item) => ({
+              code: item.code,
+              amount_idr: item.amountIdr,
+              previous_ctf_amount: item.previousCtfAmount,
+              base_ctf: item.baseCtf,
+              bonus_ctf: item.bonusCtf,
+              ctf_amount: item.ctfAmount,
+            })),
+          },
+          ipAddress: meta.ipAddress,
+          userAgent: meta.userAgent,
+        },
+        tx
+      );
+    });
+
+    invalidateCache(CACHE_PREFIX);
+
+    if (changes.length) {
+      await AdminSecurityService.writeAlert(
+        'PAYOUT',
+        `Super Admin ${currentUser.id} menyetel harga massal Rp${input.pricePerCtf}/CTF untuk ${changes.length} paket. Alasan: ${reason}`,
+        'info'
+      );
+    }
+
+    return {
+      ...(await this.listForAdmin()),
+      price_per_ctf: input.pricePerCtf,
+      changed: changes.length,
+      preview: plan,
+    };
+  }
+
+  /** Semua paket (termasuk nonaktif) — harga massal berlaku untuk semuanya. */
+  private static async listAllRows(): Promise<Row[]> {
+    try {
+      return await prisma.paymentPackage.findMany({
+        orderBy: [{ sortOrder: 'asc' }, { amountIdr: 'asc' }],
+        select,
+      });
+    } catch (error) {
+      if (isMissingTable(error)) {
+        fail(
+          503,
+          'PAYMENT_PACKAGE_TABLE_MISSING',
+          'Tabel paket top-up belum dimigrasi. Jalankan prisma migrate deploy lebih dulu.'
+        );
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Hitung rencana harga untuk semua paket.
+   *
+   * Bonus wajib dikirim untuk setiap paket: kalau satu paket terlewat, admin
+   * tanpa sengaja menghapus bonus paket itu. Kode asing juga ditolak supaya
+   * salah ketik tidak lolos diam-diam.
+   */
+  private static priceRows(rows: Row[], input: BulkPriceInput): BulkPriceRow[] {
+    const bonusByCode = new Map(
+      (input.packages ?? []).map((item) => [item.code, item.bonusCtf])
+    );
+
+    const unknown = [...bonusByCode.keys()].filter(
+      (code) => !rows.some((row) => row.code === code)
+    );
+    if (unknown.length) {
+      fail(422, 'UNKNOWN_PACKAGE_CODE', `Kode paket tidak dikenal: ${unknown.join(', ')}`);
+    }
+
+    const missing = rows.filter((row) => !bonusByCode.has(row.code));
+    if (missing.length) {
+      fail(
+        422,
+        'PACKAGE_BONUS_MISSING',
+        `Bonus wajib diisi untuk semua paket: ${missing.map((row) => row.code).join(', ')}`
+      );
+    }
+
+    return rows.map((row) => {
+      const bonusCtf = Math.max(0, Math.trunc(bonusByCode.get(row.code) ?? 0) || 0);
+      const baseCtf = Math.floor(row.amountIdr / input.pricePerCtf);
+      const ctfAmount = baseCtf + bonusCtf;
+      return {
+        code: row.code,
+        name: row.name,
+        amountIdr: row.amountIdr,
+        baseCtf,
+        bonusCtf,
+        ctfAmount,
+        previousCtfAmount: row.ctfAmount,
+        changed: ctfAmount !== row.ctfAmount,
+      };
+    });
   }
 
   private static assertSuperAdmin(currentUser: PaymentPackageActor) {

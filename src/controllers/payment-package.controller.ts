@@ -94,4 +94,56 @@ export class PaymentPackageController {
       next(error);
     }
   }
+
+  /**
+   * Pratinjau harga massal (tanpa re-auth, tanpa menulis apa pun).
+   *
+   * Terpisah dari `bulkPrice` supaya UI bisa menghitung ulang saat admin
+   * mengetik tanpa meminta kata sandi berulang kali.
+   */
+  static async previewBulkPrice(req: Request, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) {
+        return errorResponse(res, 'Bukan admin', 403, 'FORBIDDEN');
+      }
+      const preview = await PaymentPackageService.previewBulkPrice({
+        pricePerCtf: req.body.price_per_ctf,
+        packages: mapBonusPackages(req.body.packages),
+        reason: '',
+      });
+      return successResponse(res, preview, 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Terapkan harga massal ke semua paket (re-auth + alasan + audit). */
+  static async bulkPrice(req: Request, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) {
+        return errorResponse(res, 'Bukan admin', 403, 'FORBIDDEN');
+      }
+      const result = await PaymentPackageService.bulkPrice(
+        req.user,
+        {
+          pricePerCtf: req.body.price_per_ctf,
+          packages: mapBonusPackages(req.body.packages),
+          reason: req.body.reason,
+          password: req.body.password,
+        },
+        requestMeta(req)
+      );
+      return successResponse(res, result, 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+}
+
+/** `packages[].bonus_ctf` (snake_case API) → `{ code, bonusCtf }` (service). */
+function mapBonusPackages(packages: unknown) {
+  return (Array.isArray(packages) ? packages : []).map((item: any) => ({
+    code: item?.code,
+    bonusCtf: item?.bonus_ctf ?? 0,
+  }));
 }

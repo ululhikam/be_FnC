@@ -260,4 +260,135 @@ describe('PaymentPackageService', () => {
       ).rejects.toMatchObject({ status: 503, code: 'PAYMENT_PACKAGE_TABLE_MISSING' });
     });
   });
+
+  describe('harga massal (satu harga per CTF + bonus)', () => {
+    const rows = [
+      row({ code: 'coba_dulu', name: 'Coba Dulu', amountIdr: 5000, ctfAmount: 25, sortOrder: 10 }),
+      row({ code: 'hemat', name: 'Hemat', amountIdr: 10000, ctfAmount: 55, sortOrder: 20 }),
+    ];
+
+    const priceInput = {
+      pricePerCtf: 600,
+      packages: [
+        { code: 'coba_dulu', bonusCtf: 0 },
+        { code: 'hemat', bonusCtf: 2 },
+      ],
+      reason: 'Menyesuaikan harga dasar CTF menjadi Rp600',
+      password: 'secret123',
+    };
+
+    beforeEach(() => {
+      vi.mocked(prisma.paymentPackage.findMany).mockResolvedValue(rows as any);
+      vi.mocked(prisma.paymentPackage.update).mockImplementation(
+        async ({ where, data }: any) => ({ ...row({ code: where.code }), ...data }) as any
+      );
+    });
+
+    it('menghitung floor(nominal / harga per CTF) lalu menambah bonus', async () => {
+      const preview = await PaymentPackageService.previewBulkPrice(priceInput);
+
+      expect(preview.packages).toEqual([
+        expect.objectContaining({ code: 'coba_dulu', baseCtf: 8, bonusCtf: 0, ctfAmount: 8 }),
+        expect.objectContaining({ code: 'hemat', baseCtf: 16, bonusCtf: 2, ctfAmount: 18 }),
+      ]);
+    });
+
+    it('membulatkan ke bawah supaya CTF tidak melebihi kuota harga dasar', async () => {
+      vi.mocked(prisma.paymentPackage.findMany).mockResolvedValue([
+        row({ code: 'kecil', amountIdr: 1000, ctfAmount: 1 }),
+      ] as any);
+
+      const preview = await PaymentPackageService.previewBulkPrice({
+        ...priceInput,
+        packages: [{ code: 'kecil', bonusCtf: 0 }],
+      });
+
+      expect(preview.packages[0].baseCtf).toBe(1);
+      expect(preview.packages[0].ctfAmount).toBe(1);
+    });
+
+    it('pratinjau tidak menulis apa pun', async () => {
+      const preview = await PaymentPackageService.previewBulkPrice(priceInput);
+
+      expect(preview.price_per_ctf).toBe(600);
+      expect(preview.packages.map((item) => item.ctfAmount)).toEqual([8, 18]);
+      expect(prisma.paymentPackage.update).not.toHaveBeenCalled();
+      expect(prisma.adminAuditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('menyimpan semua paket yang berubah dalam satu transaksi + audit', async () => {
+      const result = await PaymentPackageService.bulkPrice(superAdmin, priceInput);
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.paymentPackage.update).toHaveBeenCalledTimes(2);
+      expect(prisma.paymentPackage.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { code: 'hemat' },
+          data: { ctfAmount: 18, updatedById: superAdmin.id },
+        })
+      );
+
+      const audit = vi.mocked(prisma.adminAuditLog.create).mock.calls[0][0] as any;
+      expect(audit.data.action).toBe('PAYMENT_PACKAGE_PRICING_CHANGED');
+      expect(audit.data.targetId).toBe('bulk');
+      expect(audit.data.metadata.price_per_ctf).toBe(600);
+      expect(audit.data.metadata.packages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: 'hemat', previous_ctf_amount: 55, ctf_amount: 18 }),
+        ])
+      );
+      expect(result.changed).toBe(2);
+    });
+
+    it('melewati paket yang nilainya tidak berubah', async () => {
+      vi.mocked(prisma.paymentPackage.findMany).mockResolvedValue([
+        row({ code: 'hemat', amountIdr: 10000, ctfAmount: 16 }),
+      ] as any);
+
+      const result = await PaymentPackageService.bulkPrice(superAdmin, {
+        ...priceInput,
+        packages: [{ code: 'hemat', bonusCtf: 0 }],
+      });
+
+      expect(prisma.paymentPackage.update).not.toHaveBeenCalled();
+      expect(result.changed).toBe(0);
+    });
+
+    it('menolak harga per CTF yang membuat paket di bawah 1 CTF', async () => {
+      await expect(
+        PaymentPackageService.bulkPrice(superAdmin, { ...priceInput, pricePerCtf: 25000 })
+      ).rejects.toMatchObject({ status: 422, code: 'PACKAGE_CTF_TOO_SMALL' });
+      expect(prisma.paymentPackage.update).not.toHaveBeenCalled();
+    });
+
+    it('menolak harga per CTF di bawah batas minimum', async () => {
+      await expect(
+        PaymentPackageService.bulkPrice(superAdmin, { ...priceInput, pricePerCtf: 99 })
+      ).rejects.toMatchObject({ status: 422, code: 'INVALID_PRICE_PER_CTF' });
+    });
+
+    it('menolak bonus yang tidak lengkap untuk semua paket', async () => {
+      await expect(
+        PaymentPackageService.bulkPrice(superAdmin, {
+          ...priceInput,
+          packages: [{ code: 'hemat', bonusCtf: 2 }],
+        })
+      ).rejects.toMatchObject({ status: 422, code: 'PACKAGE_BONUS_MISSING' });
+    });
+
+    it('menolak kode paket yang tidak dikenal', async () => {
+      await expect(
+        PaymentPackageService.bulkPrice(superAdmin, {
+          ...priceInput,
+          packages: [...priceInput.packages, { code: 'tidak_ada', bonusCtf: 1 }],
+        })
+      ).rejects.toMatchObject({ status: 422, code: 'UNKNOWN_PACKAGE_CODE' });
+    });
+
+    it('menolak Base Admin mengubah harga massal', async () => {
+      await expect(
+        PaymentPackageService.bulkPrice(baseAdmin, priceInput)
+      ).rejects.toMatchObject({ status: 403, code: 'FORBIDDEN' });
+    });
+  });
 });

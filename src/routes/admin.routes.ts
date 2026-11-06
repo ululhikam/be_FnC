@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { AdminController } from '../controllers/admin.controller.js';
+import { AdminAiController } from '../controllers/admin-ai.controller.js';
+import { AdminNotificationController } from '../controllers/admin-notification.controller.js';
 import { BaseRevenueController } from '../controllers/base-revenue.controller.js';
 import { CouponController } from '../controllers/coupon.controller.js';
 import { PlatformAdminController } from '../controllers/platform-admin.controller.js';
@@ -35,6 +37,11 @@ import {
   AdminPaymentPackageCreateSchema,
   AdminPaymentPackageUpdateSchema,
   AdminPaymentPackageStatusSchema,
+  AdminPaymentPackagesRepriceSchema,
+  AdminPaymentPackagesRepricePreviewSchema,
+  AdminBroadcastNotificationSchema,
+  AdminBroadcastPreviewSchema,
+  AdminAiSuggestSchema,
   AdminPaymentGatewaySchema,
   AdminPaymentMethodsSchema,
   AdminCouponCreateSchema,
@@ -416,6 +423,32 @@ router.post(
   PaymentPackageController.create
 );
 
+// Harga massal: satu harga per CTF + bonus per paket, diterapkan ke semua paket
+// sekaligus. Harus didaftarkan SEBELUM `/payments/packages/:code` supaya
+// "pricing" tidak terbaca sebagai kode paket.
+router.post(
+  '/payments/packages/pricing/preview',
+  requireAuth,
+  requireRole('Super Admin'),
+  validateBody(AdminPaymentPackagesRepricePreviewSchema),
+  PaymentPackageController.previewBulkPrice
+);
+
+router.patch(
+  '/payments/packages/pricing',
+  requireAuth,
+  requireRole('Super Admin'),
+  paymentRateLimit({
+    name: 'payment-package-reprice',
+    limit: 10,
+    windowSeconds: 60,
+    message: 'Terlalu banyak penyesuaian harga massal. Coba lagi beberapa saat.',
+    code: 'PAYMENT_PACKAGE_RATE_LIMITED',
+  }),
+  validateBody(AdminPaymentPackagesRepriceSchema),
+  PaymentPackageController.bulkPrice
+);
+
 router.patch(
   '/payments/packages/:code',
   requireAuth,
@@ -562,6 +595,52 @@ router.get(
   requireAuth,
   requireRole('Super Admin'),
   PlatformAdminController.getSystemSettings
+);
+
+// ---------------------------------------------------------------------------
+// Asisten AI konsol. Saran saja — tidak ada penulisan data bisnis di sini.
+// Rate limit dipisah dari aksi pembayaran supaya biaya AI tidak bercampur.
+// ---------------------------------------------------------------------------
+router.post(
+  '/ai/assist',
+  requireAuth,
+  requireRole('Super Admin'),
+  paymentRateLimit({
+    name: 'admin-ai-assist',
+    limit: 20,
+    windowSeconds: 60,
+    message: 'Terlalu banyak permintaan ke asisten AI. Coba lagi beberapa saat.',
+    code: 'AI_RATE_LIMITED',
+  }),
+  validateBody(AdminAiSuggestSchema),
+  AdminAiController.assist
+);
+
+// ---------------------------------------------------------------------------
+// Blast notifikasi sistem (in-app). Pratinjau hanya menghitung penerima;
+// pengiriman wajib re-auth + alasan dan dicatat di audit.
+// ---------------------------------------------------------------------------
+router.post(
+  '/notifications/broadcast/preview',
+  requireAuth,
+  requireRole('Super Admin'),
+  validateBody(AdminBroadcastPreviewSchema),
+  AdminNotificationController.preview
+);
+
+router.post(
+  '/notifications/broadcast',
+  requireAuth,
+  requireRole('Super Admin'),
+  paymentRateLimit({
+    name: 'notification-broadcast',
+    limit: 5,
+    windowSeconds: 300,
+    message: 'Blast notifikasi dibatasi 5 kali per 5 menit. Coba lagi nanti.',
+    code: 'BROADCAST_RATE_LIMITED',
+  }),
+  validateBody(AdminBroadcastNotificationSchema),
+  AdminNotificationController.broadcast
 );
 
 // Super Admin System Monitoring & Security Controls

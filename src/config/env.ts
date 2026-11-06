@@ -206,4 +206,12 @@ export const ENV = {
   AI_TITLE_ENABLED: process.env.AI_TITLE_ENABLED !== 'false',
   AI_TEMPLATE_METADATA_ENABLED: process.env.AI_TEMPLATE_METADATA_ENABLED !== 'false',
   AI_DAILY_TEMPLATE_LIMIT: positiveInt(process.env.AI_DAILY_TEMPLATE_LIMIT, 200, 100_000),
+
+  // Asisten konsol Super Admin. Saran saja: tidak pernah menyimpan apa pun.
+  AI_ASSISTANT_ENABLED: process.env.AI_ASSISTANT_ENABLED !== 'false',
+  AI_DAILY_ASSISTANT_LIMIT: positiveInt(
+    process.env.AI_DAILY_ASSISTANT_LIMIT,
+    500,
+    100_000
+  ),
 };

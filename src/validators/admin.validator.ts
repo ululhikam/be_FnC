@@ -131,6 +131,103 @@ export const AdminPaymentPackageStatusSchema = z.object({
 });
 
 /**
+ * Harga massal: satu harga dasar per CTF + bonus per paket (dalam CTF).
+ *
+ * Nominal rupiah paket tidak diubah; hanya jumlah CTF yang dihitung ulang.
+ * Bonus wajib dikirim untuk semua paket supaya tidak ada yang kehilangan bonus
+ * karena field terlewat — service menolak kode asing maupun paket yang bolong.
+ */
+export const AdminPaymentPackagesRepriceSchema = z.object({
+  price_per_ctf: z
+    .number()
+    .int('Harga per CTF harus bilangan bulat')
+    .min(1, 'Harga per CTF minimal Rp1')
+    .max(10_000_000, 'Harga per CTF maksimal Rp10.000.000'),
+  packages: z
+    .array(
+      z.object({
+        code: z.string().trim().min(1).max(32),
+        bonus_ctf: z
+          .number()
+          .int('Bonus CTF harus bilangan bulat')
+          .min(0, 'Bonus CTF tidak boleh negatif')
+          .max(1_000_000),
+      })
+    )
+    .min(1, 'Minimal satu paket harus dikirim'),
+  reason: z
+    .string()
+    .trim()
+    .min(5, 'Alasan wajib diisi minimal 5 karakter')
+    .max(500, 'Alasan maksimal 500 karakter'),
+  password: z.string().min(1, 'Konfirmasi kata sandi wajib diisi').max(200),
+});
+
+/** Pratinjau harga massal: angka saja, tanpa re-auth dan tanpa menulis. */
+export const AdminPaymentPackagesRepricePreviewSchema =
+  AdminPaymentPackagesRepriceSchema.omit({ reason: true, password: true });
+
+/**
+ * Blast notifikasi sistem ke banyak pengguna sekaligus. `audience` dibatasi
+ * supaya tidak ada opsi "semua termasuk admin" yang tidak disengaja.
+ */
+export const AdminBroadcastNotificationSchema = z.object({
+  title: z
+    .string()
+    .trim()
+    .min(3, 'Judul notifikasi minimal 3 karakter')
+    .max(80, 'Judul notifikasi maksimal 80 karakter'),
+  body: z
+    .string()
+    .trim()
+    .min(5, 'Isi notifikasi minimal 5 karakter')
+    .max(400, 'Isi notifikasi maksimal 400 karakter'),
+  audience: z.enum(['all', 'users', 'base_admins']).default('users'),
+  reason: z
+    .string()
+    .trim()
+    .min(5, 'Alasan wajib diisi minimal 5 karakter')
+    .max(500, 'Alasan maksimal 500 karakter'),
+  password: z.string().min(1, 'Konfirmasi kata sandi wajib diisi').max(200),
+});
+
+/** Pratinjau blast: hanya menghitung penerima, tanpa re-auth. */
+export const AdminBroadcastPreviewSchema = AdminBroadcastNotificationSchema.pick({
+  audience: true,
+});
+
+/**
+ * Saran isi field dari asisten AI. `fields` dibatasi jumlahnya agar prompt
+ * tidak membengkak; nilainya hanya usulan dan tidak pernah disimpan otomatis.
+ *
+ * `fields` boleh kosong untuk mode tanya-jawab murni, tetapi saat itu `message`
+ * wajib diisi supaya tidak ada permintaan kosong yang memakan kuota AI.
+ */
+export const AdminAiSuggestSchema = z
+  .object({
+    context: z.string().trim().max(200).default(''),
+    /** Pertanyaan bebas admin; boleh kosong bila hanya minta isi field. */
+    message: z.string().trim().max(2000).default(''),
+    fields: z
+      .array(
+        z.object({
+          name: z.string().trim().min(1).max(60),
+          label: z.string().trim().min(1).max(120),
+          type: z.enum(['text', 'textarea', 'number', 'select']).default('text'),
+          current_value: z.string().max(2000).default(''),
+          options: z.array(z.string().trim().max(60)).max(30).default([]),
+          hint: z.string().trim().max(200).default(''),
+        })
+      )
+      .max(12, 'Maksimal 12 field per permintaan')
+      .default([]),
+  })
+  .refine((value) => value.fields.length > 0 || value.message.length > 0, {
+    message: 'Kirim minimal satu field atau satu pertanyaan',
+    path: ['message'],
+  });
+
+/**
  * Mode gateway pembayaran platform-wide. Perubahan hanya boleh oleh Super Admin
  * dengan re-auth dan alasan; service menulis `AdminAuditLog` + `SystemLog`.
  */

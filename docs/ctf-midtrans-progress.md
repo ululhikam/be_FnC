@@ -143,12 +143,12 @@ Dokumen ini adalah sumber kebenaran tunggal untuk progres fitur **CTF (Coin to F
 | Supabase project development | ✅ Aktif | Ref `vtvnurgkhqboygkttzae`, region `ap-south-1` |
 | Vercel project dev backend | ✅ Dibuat | `be-fnc-dev` → `be-fnc-dev.vercel.app` |
 | Vercel project dev frontend | ✅ Dibuat | `fessncurious-dev` → `fessncurious-dev.vercel.app` |
-| Migrasi dev | ✅ Sampai `20261024040000_welcome_ctf_bonus` | Termasuk reserved payout, `Fess.publishedAt`, dan enum `WELCOME_BONUS` |
+| Migrasi dev | ✅ Sampai `20261106090000_payment_gateway_mode` | Diterapkan manual + `migrate resolve` karena DB dev punya drift lama `Fess`/`Report`; jangan `migrate reset` DB dev |
 | Midtrans sandbox keys | ✅ Aktif di dev | `MIDTRANS_SERVER_KEY` / `MIDTRANS_CLIENT_KEY` terpasang sebagai Vercel Sensitive env di `be-fnc-dev`; key sandbox valid walau tanpa prefix `SB-Mid-` |
 | Midtrans Signature Secret Key | ⚠️ Opsional | `MIDTRANS_SIGNATURE_SECRET` (Settings > Access Keys). Bila diisi, verifikasi `signature_key` notifikasi memakai kunci ini lebih dulu; Server Key tetap diterima sebagai cadangan |
 | Midtrans notification URL | ✅ Terverifikasi | `https://be-fnc-dev.vercel.app/api/payments/midtrans/notification`; notifikasi asli QRIS dan BCA VA diterima dan diproses |
-| Dev backend deployment terbaru | Selesai | `dpl_4AdsNFxCAyEchyKvaQWSb9dap7SQ` -> https://be-fnc-dev.vercel.app (welcome bonus; flag off) |
-| Dev frontend deployment terbaru | Selesai | `dpl_B1tkYEbzu3aEN6z2k2QLUAV1cUJf` -> https://fessncurious-dev.vercel.app (bank picker rekening payout; flag off) |
+| Dev backend deployment terbaru | Selesai | `dpl_63JFchip6TrpLHwYUcDihULAFtfZ` -> https://be-fnc-dev.vercel.app (mode gateway Midtrans Core API/Snap) |
+| Dev frontend deployment terbaru | Selesai | `dpl_Ac5VVA1MJChWMqWSLthpM7kq9d4q` -> https://fessncurious-dev.vercel.app (popup Snap + CSP Midtrans) |
 | Flag dev | ✅ Aman | `PAYMENTS_ENABLED=false`, `BASE_PAYOUTS_ENABLED=false` setelah jendela test |
 | Dev callback / OAuth | ✅ Berfungsi | Midtrans ✅; Google dilaporkan selesai; Meta/Instagram OAuth + callback berfungsi dan tetap opsional untuk base FnC-only |
 | Production | ✅ Tidak disentuh | Tetap menunggu sign-off |
@@ -552,6 +552,12 @@ Production berjalan di backend `be-fnc` (`https://be.fnc.web.id`) dan frontend `
 | Metode ditawarkan | Semua (9) | QRIS, VA BNI/BRI/CIMB Niaga/Permata/BCA, Mandiri Bill, GoPay, ShopeePay. Tidak ada yang disembunyikan; penolakan Midtrans dijelaskan ke user. |
 
 **Kesimpulan:** kode dan kredensial siap. Top-up production via **Core API** belum bisa dipakai sampai Midtrans mengaktifkan channel pembayaran untuk merchant production (bukan hal yang bisa dilakukan dari kode). Snap production sudah bisa membuat token, sehingga mode **Snap popup** disiapkan sebagai jalur sementara; tetap wajib diuji popup dan notifikasi nyata sebelum diaktifkan. Setelah kanal Core API aktif, ulangi uji top-up kecil dan pastikan `PaymentEvent` berstatus `PROCESSED`.
+
+**Temuan penting (2026-11-06):** popup Snap di production/dev sebelumnya **tidak akan pernah terbuka** karena dua hal di frontend, bukan di backend:
+1. CSP `script-src` tidak mengizinkan `https://app.midtrans.com` / `https://app.sandbox.midtrans.com`, sehingga `snap.js` diblokir browser (`script-src-elem`) dan kode selalu jatuh ke fallback redirect.
+2. Setelah CSP diperbaiki, popup butuh ±15-18 detik untuk mengubah iframe `#snap-midtrans` dari `display:none` menjadi `display:block`; jangan anggap gagal bila belum muncul dalam 5 detik.
+
+CSP sekarang mengizinkan domain Midtrans pada `script-src`, `connect-src`, `child-src`, dan `frame-src`. Ini wajib ikut ke production bersama fitur Snap.
 
 ### Pre-flight
 

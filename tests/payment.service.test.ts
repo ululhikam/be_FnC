@@ -328,6 +328,53 @@ describe('PaymentService', () => {
     });
   });
 
+  it('keeps a legacy order on the Core API rendering after the global mode becomes snap', async () => {
+    // Order lama belum punya snapshot mode. Setelah Super Admin memindahkan
+    // mode global ke Snap, order lama tidak boleh berubah menjadi panel Snap
+    // kosong (token tidak ada) — tampilannya harus tetap seperti saat dibuat.
+    vi.mocked(prisma.systemSetting.findUnique).mockResolvedValue({
+      value: { mode: 'snap' },
+      updatedById: null,
+      updatedAt: new Date('2026-11-06T00:00:00.000Z'),
+    } as any);
+    vi.mocked(prisma.paymentOrder.findUnique).mockResolvedValue({
+      ...order,
+      gatewayMode: null,
+      snapToken: null,
+      snapRedirectUrl: null,
+      vaNumber: '9888237033712722',
+    } as any);
+
+    const result = await PaymentService.getOrder(
+      { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
+      order.orderId,
+      false
+    );
+
+    expect(result.gateway_mode).toBe('core_api');
+    expect(result.instructions).toMatchObject({
+      type: 'va',
+      bank: 'bni',
+      va_number: '9888237033712722',
+    });
+  });
+
+  it('does not render a snap panel for a snap order that never got a token', () => {
+    // Token Snap bisa gagal dibuat; order seperti ini sudah ditandai FAILED dan
+    // tidak boleh menampilkan panel pembayaran apa pun.
+    const serialized = (PaymentService as any).serializeOrder({
+      ...order,
+      status: 'FAILED',
+      gatewayMode: 'snap',
+      snapToken: null,
+      snapRedirectUrl: null,
+    });
+
+    expect(serialized.gateway_mode).toBe('snap');
+    expect(serialized.instructions).toBeNull();
+    expect(serialized.can_pay).toBe(false);
+  });
+
   it('marks the order FAILED and explains the failure when Midtrans rejects the channel', async () => {
     vi.mocked(prisma.paymentOrder.create).mockResolvedValue(order as any);
     vi.mocked(prisma.paymentOrder.update).mockResolvedValue(order as any);

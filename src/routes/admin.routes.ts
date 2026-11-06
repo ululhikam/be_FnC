@@ -4,6 +4,7 @@ import { BaseRevenueController } from '../controllers/base-revenue.controller.js
 import { CouponController } from '../controllers/coupon.controller.js';
 import { PlatformAdminController } from '../controllers/platform-admin.controller.js';
 import { PaymentGatewayController } from '../controllers/payment-gateway.controller.js';
+import { PaymentMethodController } from '../controllers/payment-method.controller.js';
 import { PaymentPackageController } from '../controllers/payment-package.controller.js';
 import { TemplateAdminController } from '../controllers/template-admin.controller.js';
 import {
@@ -35,6 +36,7 @@ import {
   AdminPaymentPackageUpdateSchema,
   AdminPaymentPackageStatusSchema,
   AdminPaymentGatewaySchema,
+  AdminPaymentMethodsSchema,
   AdminCouponCreateSchema,
   AdminCouponUpdateSchema,
   AdminCouponStatusSchema,
@@ -469,6 +471,34 @@ router.patch(
   }),
   validateBody(AdminPaymentGatewaySchema),
   PaymentGatewayController.update
+);
+
+// ---------------------------------------------------------------------------
+// Metode pembayaran yang ditawarkan ke pengguna. Menonaktifkan metode berarti
+// menyembunyikannya dari picker DAN menolaknya saat membuat order. Order lama
+// tidak terpengaruh karena pembacaannya memakai katalog penuh. Wajib re-auth +
+// alasan dan dicatat di audit seperti konfigurasi billing lainnya.
+// ---------------------------------------------------------------------------
+router.get(
+  '/payments/methods',
+  requireAuth,
+  requireRole('Super Admin'),
+  PaymentMethodController.show
+);
+
+router.patch(
+  '/payments/methods',
+  requireAuth,
+  requireRole('Super Admin'),
+  paymentRateLimit({
+    name: 'payment-methods',
+    limit: 20,
+    windowSeconds: 60,
+    message: 'Terlalu banyak perubahan metode pembayaran. Coba lagi beberapa saat.',
+    code: 'PAYMENT_METHODS_RATE_LIMITED',
+  }),
+  validateBody(AdminPaymentMethodsSchema),
+  PaymentMethodController.update
 );
 
 // ---------------------------------------------------------------------------

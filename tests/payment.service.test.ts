@@ -219,9 +219,10 @@ describe('PaymentService', () => {
 
   it('offers every catalog method, including channels that may still be inactive', async () => {
     ENV.PAYMENTS_ENABLED = true;
+    invalidateCache('payment-methods:');
     const { methods } = await PaymentService.getPackages();
-    // Semua metode ditampilkan. Kalau Midtrans menolak karena kanal belum
-    // aktif, user menerima pesan yang jelas (lihat test di bawah).
+    // Default tanpa setting: semua metode ditampilkan. Super Admin dapat
+    // menyembunyikan sebagian lewat `PUT /admin/payments/methods`.
     expect(methods.map((method) => method.code)).toEqual([
       'qris',
       'bca_va',
@@ -244,6 +245,69 @@ describe('PaymentService', () => {
       )
     ).rejects.toMatchObject({ code: 'UNKNOWN_PAYMENT_METHOD', status: 400 });
     expect(prisma.paymentOrder.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects a method disabled by the Super Admin, even from a stale client', async () => {
+    ENV.PAYMENTS_ENABLED = true;
+    vi.mocked(prisma.systemSetting.findUnique).mockImplementation(async (args: any) => {
+      if (args?.where?.key === 'payment_methods') {
+        return { value: { disabled: ['bni_va'] }, updatedById: 'admin_1', updatedAt: new Date() } as any;
+      }
+      return null;
+    });
+
+    await expect(
+      PaymentService.createOrder(
+        { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
+        { packageCode: 'coba_dulu', method: 'bni_va', requestKey: 'req-12345678' }
+      )
+    ).rejects.toMatchObject({ code: 'PAYMENT_METHOD_DISABLED', status: 409 });
+
+    expect(MidtransService.charge).not.toHaveBeenCalled();
+    expect(prisma.paymentOrder.create).not.toHaveBeenCalled();
+  });
+
+  it('offers only the methods that are still enabled', async () => {
+    ENV.PAYMENTS_ENABLED = true;
+    invalidateCache('payment-methods:');
+    vi.mocked(prisma.systemSetting.findUnique).mockImplementation(async (args: any) => {
+      if (args?.where?.key === 'payment_methods') {
+        return { value: { disabled: ['qris', 'gopay'] }, updatedById: 'admin_1', updatedAt: new Date() } as any;
+      }
+      return null;
+    });
+
+    const { methods } = await PaymentService.getPackages();
+    const codes = methods.map((method) => method.code);
+
+    expect(codes).not.toContain('qris');
+    expect(codes).not.toContain('gopay');
+    expect(codes).toContain('bni_va');
+  });
+
+  it('gives the order a 10 minute payment window', async () => {
+    ENV.PAYMENTS_ENABLED = true;
+    vi.mocked(prisma.paymentOrder.create).mockResolvedValue(order as any);
+    vi.mocked(prisma.paymentOrder.update).mockResolvedValue({
+      ...order,
+      midtransTransactionId: 'tx-1',
+      midtransStatus: 'pending',
+    } as any);
+
+    const before = Date.now();
+    await PaymentService.createOrder(
+      { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
+      { packageCode: 'coba_dulu', method: 'bni_va', requestKey: 'req-12345678' }
+    );
+    const after = Date.now();
+
+    const created = vi.mocked(prisma.paymentOrder.create).mock.calls[0][0] as any;
+    const expiresAt: Date = created.data.expiresAt;
+    const windowMs = expiresAt.getTime() - before;
+
+    // Toleransi longgar untuk waktu eksekusi test; intinya bukan 24 jam lagi.
+    expect(windowMs).toBeGreaterThanOrEqual(9 * 60 * 1000);
+    expect(expiresAt.getTime()).toBeLessThanOrEqual(after + 10 * 60 * 1000);
   });
 
   it('refuses to create an order while payments are disabled', async () => {

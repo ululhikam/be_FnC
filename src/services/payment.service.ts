@@ -7,9 +7,9 @@ import { prisma } from '../config/prisma.js';
 import {
   BASE_REVENUE_PER_FESS_IDR,
   CTF_PER_PAID_FESS,
+  PAYMENT_EXPIRY_MINUTES,
   findPaymentMethod,
   normalizeCouponCode,
-  offeredPaymentMethods,
   type PaymentMethod,
   type PaymentMethodCode,
 } from '../constants/payments.js';
@@ -18,6 +18,7 @@ import { CouponService } from './coupon.service.js';
 import { CtfWalletService } from './ctf-wallet.service.js';
 import { MidtransError, MidtransService } from './midtrans.service.js';
 import { PaymentGatewayService } from './payment-gateway.service.js';
+import { PaymentMethodService } from './payment-method.service.js';
 import { PaymentPackageService } from './payment-package.service.js';
 
 export type PaymentUser = {
@@ -157,6 +158,13 @@ function eventKey(payload: Record<string, unknown>) {
 
 export class PaymentService {
   static async getPackages() {
+    // Metode yang dinonaktifkan Super Admin tidak ditawarkan. Order lama tidak
+    // terpengaruh: pembacaannya memakai katalog penuh (`findPaymentMethod`).
+    const [methods, gateway] = await Promise.all([
+      PaymentMethodService.getEnabledMethods(),
+      PaymentGatewayService.getConfig(),
+    ]);
+
     return {
       enabled: ENV.PAYMENTS_ENABLED,
       configured: MidtransService.isConfigured(),
@@ -164,10 +172,10 @@ export class PaymentService {
       ctf_per_paid_fess: CTF_PER_PAID_FESS,
       base_revenue_per_paid_fess_idr: BASE_REVENUE_PER_FESS_IDR,
       packages: await PaymentPackageService.listActive(),
-      methods: offeredPaymentMethods(),
+      methods,
       // Mode gateway bersifat platform-wide. Frontend memakai `snap_popup_ready`
       // untuk memutuskan popup atau redirect tanpa pernah melihat Server Key.
-      gateway: await PaymentGatewayService.getConfig(),
+      gateway,
     };
   }
 
@@ -192,6 +200,17 @@ export class PaymentService {
     if (!pkg) throw paymentError('UNKNOWN_PACKAGE', 'Paket top-up tidak ditemukan', 400);
     const method = findPaymentMethod(input.method);
     if (!method) throw paymentError('UNKNOWN_PAYMENT_METHOD', 'Metode pembayaran tidak dikenal', 400);
+
+    // Ditolak di server, bukan hanya disembunyikan di UI: klien lama atau
+    // request manual tetap tidak bisa memakai metode yang dinonaktifkan.
+    // Dibaca fresh supaya perubahan toggle langsung berlaku.
+    if (!(await PaymentMethodService.isEnabled(method.code, { fresh: true }))) {
+      throw paymentError(
+        'PAYMENT_METHOD_DISABLED',
+        `Metode ${method.label} sedang tidak tersedia. Pilih metode pembayaran lain.`,
+        409
+      );
+    }
 
     const normalizedCoupon = input.couponCode ? normalizeCouponCode(input.couponCode) : '';
     if (input.couponCode && !normalizedCoupon) {
@@ -221,7 +240,7 @@ export class PaymentService {
       .toString('hex')
       .toUpperCase()}`;
     const now = new Date();
-    const initialExpiry = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    const initialExpiry = new Date(now.getTime() + PAYMENT_EXPIRY_MINUTES * 60 * 1000);
 
     let order: PaymentOrder;
     try {
@@ -407,6 +426,18 @@ export class PaymentService {
       (action) => action.name === 'deeplink-redirect' || action.name === 'go-pay-deeplink'
     );
 
+    // Batas waktu ke user tidak pernah melebihi 10 menit. Kalau kanal memberi
+    // masa berlaku lebih pendek dan masih valid, nilai itu yang dipakai. Order
+    // yang telat dibayar tetap dikreditkan lewat `settleOrder` (menerima
+    // status EXPIRED) karena uangnya benar-benar masuk.
+    const gatewayExpiry = result.expiresAt;
+    const finalExpiry =
+      gatewayExpiry &&
+      gatewayExpiry.getTime() > Date.now() &&
+      gatewayExpiry.getTime() < initialExpiry.getTime()
+        ? gatewayExpiry
+        : initialExpiry;
+
     const updated = await prisma.paymentOrder.update({
       where: { id: order.id },
       data: {
@@ -419,7 +450,7 @@ export class PaymentService {
         billerCode: result.billerCode,
         billKey: result.billKey,
         actions: result.actions ? (result.actions as Prisma.InputJsonValue) : undefined,
-        expiresAt: result.expiresAt || initialExpiry,
+        expiresAt: finalExpiry,
         rawResponse: result.raw as Prisma.InputJsonValue,
         lastSyncedAt: new Date(),
       },

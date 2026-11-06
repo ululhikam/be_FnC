@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { ENV } from '../config/env.js';
 import type { PaymentMethodCode } from '../constants/payments.js';
+import { PAYMENT_EXPIRY_MINUTES } from '../constants/payments.js';
 import { parseMidtransDate } from '../utils/midtrans-date.util.js';
 
 export type MidtransChargeInput = {
@@ -171,6 +172,15 @@ export class MidtransService {
       custom_field2: input.packageCode,
     };
 
+    // Core API memakai `custom_expiry` (bukan `expiry`, yang diabaikan Core
+    // API). Docs Midtrans: berlaku untuk semua metode kecuali kartu kredit.
+    // Tanpa parameter ini VA/QRIS berlaku jauh lebih lama daripada countdown
+    // aplikasi sehingga order bisa EXPIRED saat uangnya tetap masuk.
+    payload.custom_expiry = {
+      expiry_duration: PAYMENT_EXPIRY_MINUTES,
+      unit: 'minute',
+    };
+
     switch (input.method) {
       case 'qris':
         payload.payment_type = 'qris';
@@ -253,7 +263,9 @@ export class MidtransService {
       callbacks: {
         finish: callbackUrl(input.orderId),
       },
-      expiry: { unit: 'hours', duration: 24 },
+      // Snap memakai unit jamak ("minutes"), berbeda dari `custom_expiry` Core
+      // API yang memakai "minute". Nilainya harus sama dengan `expiresAt` order.
+      expiry: { unit: 'minutes', duration: PAYMENT_EXPIRY_MINUTES },
       custom_field1: 'ctf_topup',
       custom_field2: input.packageCode,
     };
@@ -489,7 +501,9 @@ export class MidtransService {
       ? (raw.va_numbers as Array<{ va_number?: string }>)
       : [];
     const rawExpiry = parseMidtransDate(raw.expiry_time);
-    const expiresAt = rawExpiry || new Date(Date.now() + 24 * 60 * 60 * 1000);
+    // Fallback saja: `expiresAt` order ditetapkan oleh pemanggil (10 menit),
+    // jadi nilai ini hanya dipakai bila field itu tidak diisi.
+    const expiresAt = rawExpiry || new Date(Date.now() + PAYMENT_EXPIRY_MINUTES * 60 * 1000);
 
     return {
       transactionId: typeof raw.transaction_id === 'string' ? raw.transaction_id : undefined,

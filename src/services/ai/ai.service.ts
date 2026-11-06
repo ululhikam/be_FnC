@@ -24,17 +24,23 @@ import {
   TITLE_MAX_OUTPUT_TOKENS,
   TITLE_PROMPT_VERSION,
   TITLE_SYSTEM_PROMPT,
+  ADMIN_ASSIST_MAX_OUTPUT_TOKENS,
+  ADMIN_ASSIST_PROMPT_VERSION,
+  ADMIN_ASSIST_SYSTEM_PROMPT,
+  buildAdminAssistUserPrompt,
   buildTemplateUserPrompt,
   buildTitleUserPrompt,
 } from './prompts.js';
 import {
   parseJsonObject,
+  sanitizeAssistantOutput,
   sanitizeTemplateMetadata,
   sanitizeTitle,
 } from './sanitize.js';
 
 export const AI_TITLE_KIND = 'fess_title';
 export const AI_TEMPLATE_KIND = 'template_metadata';
+export const AI_ASSIST_KIND = 'admin_assistant';
 
 export interface TitleRequest {
   baseId: string;
@@ -83,6 +89,41 @@ export interface TemplateMetadataResult {
   provider: string;
   model: string;
   cached: boolean;
+  promptVersion: string;
+  latencyMs: number;
+}
+
+/** Satu field formulir yang boleh diusulkan asisten. */
+export interface AssistantField {
+  name: string;
+  label: string;
+  type?: 'text' | 'textarea' | 'number' | 'select';
+  currentValue?: string;
+  options?: string[];
+  hint?: string;
+}
+
+/** Usulan asisten untuk satu field. Selalu berupa saran, tidak pernah disimpan. */
+export interface AssistantSuggestion {
+  field: string;
+  label: string;
+  value: string;
+  reason: string | null;
+}
+
+export interface AssistantRequest {
+  /** Label layar yang sedang dibuka, mis. "Keuangan · Paket top-up CTF". */
+  context?: string | null;
+  fields: AssistantField[];
+  /** Pertanyaan admin; boleh kosong bila hanya minta usulan isi field. */
+  message?: string | null;
+}
+
+export interface AssistantResult {
+  reply: string;
+  suggestions: AssistantSuggestion[];
+  provider: string;
+  model: string;
   promptVersion: string;
   latencyMs: number;
 }
@@ -309,6 +350,85 @@ export class AiService {
       latencyMs,
     };
   }
+
+  /** Kill switch asisten konsol: `AI_ENABLED` + `AI_ASSISTANT_ENABLED`. */
+  static isAssistantEnabled(): boolean {
+    return Boolean(ENV.AI_ENABLED && ENV.AI_ASSISTANT_ENABLED);
+  }
+
+  /**
+   * Asisten konsol Super Admin: menjawab pertanyaan dan/atau mengusulkan isi
+   * field formulir.
+   *
+   * Tidak ada fallback karangan: bila AI mati, kuota habis, atau keluarannya
+   * tidak lolos sanitasi, hasilnya `null` dan controller memberi error. Saran
+   * yang salah lebih berbahaya daripada tidak ada saran.
+   */
+  static async assistAdmin(
+    request: AssistantRequest,
+    deps: GenerateTitleDeps = {}
+  ): Promise<AssistantResult | null> {
+    const promptVersion = ADMIN_ASSIST_PROMPT_VERSION;
+    const fields = (Array.isArray(request.fields) ? request.fields : [])
+      .map((field) => ({
+        name: String(field?.name || '').trim(),
+        label: String(field?.label || '').trim(),
+        type: field?.type || 'text',
+        currentValue: String(field?.currentValue ?? ''),
+        options: Array.isArray(field?.options) ? field.options.map(String) : [],
+        hint: String(field?.hint || ''),
+      }))
+      .filter((field) => field.name && field.label);
+
+    if (!fields.length && !String(request.message || '').trim()) return null;
+    if (!AiService.isAssistantEnabled() && !deps.primary) return null;
+
+    const providers = resolveProviders(deps);
+    if (!providers.primary) return null;
+
+    if (!(await consumeAssistantQuota())) {
+      await logAi('muted', 'Kuota asisten konsol habis; permintaan ditolak.', 'AI_ADMIN');
+      return null;
+    }
+
+    const startedAt = Date.now();
+    const outcome = await completeWithFailover(
+      providers,
+      {
+        system: ADMIN_ASSIST_SYSTEM_PROMPT,
+        user: buildAdminAssistUserPrompt({
+          context: request.context,
+          message: request.message,
+          fields,
+        }),
+        maxOutputTokens: ADMIN_ASSIST_MAX_OUTPUT_TOKENS,
+      },
+      (text) => {
+        const parsed = parseJsonObject(text);
+        return parsed ? sanitizeAssistantOutput(parsed, fields) : null;
+      },
+      startedAt,
+      'AI_ADMIN'
+    );
+
+    if (!outcome) {
+      await logAi('error', 'Asisten konsol gagal memberi jawaban yang valid.', 'AI_ADMIN');
+      return null;
+    }
+
+    const byName = new Map(fields.map((field) => [field.name, field]));
+    return {
+      reply: outcome.value.reply,
+      suggestions: outcome.value.suggestions.map((item) => ({
+        ...item,
+        label: byName.get(item.field)?.label || item.field,
+      })),
+      provider: outcome.completion.provider || outcome.provider.name,
+      model: outcome.completion.model || outcome.provider.model,
+      promptVersion,
+      latencyMs: outcome.completion.latencyMs || Date.now() - startedAt,
+    };
+  }
 }
 
 // ── Jalur provider bersama ─────────────────────────────────────────────────
@@ -333,7 +453,7 @@ interface FailoverOutcome<T> {
  * Error 4xx dari provider dianggap final: tidak ada gunanya mengulang dengan
  * kredensial yang sama di provider yang sama.
  */
-async function completeWithFailover<T>(
+export async function completeWithFailover<T>(
   providers: ResolvedProviders,
   payload: FailoverPayload,
   parse: (text: string) => T | null,
@@ -564,6 +684,26 @@ async function consumeTemplateQuota(): Promise<boolean> {
   }
 }
 
+/** Plafon asisten konsol: harian global + laju per menit (tanpa per base). */
+async function consumeAssistantQuota(): Promise<boolean> {
+  const day = new Date().toISOString().slice(0, 10);
+  try {
+    const daily = await RateLimitService.consume(
+      `ai:assistant:${day}`,
+      ENV.AI_DAILY_ASSISTANT_LIMIT,
+      86400
+    );
+    if (!daily.allowed) return false;
+
+    const rpm = await RateLimitService.consume('ai:rpm', ENV.AI_RPM_LIMIT, 60);
+    return rpm.allowed;
+  } catch (err: any) {
+    // Konsol admin tetap boleh bekerja walau pengecekan kuota bermasalah.
+    await logAi('muted', `Cek kuota asisten gagal: ${clip(String(err?.message || err), 300)}`);
+    return true;
+  }
+}
+
 // ── Helper kecil ───────────────────────────────────────────────────────────
 
 /** Batas total tunggu satu permintaan: `AI_TIMEOUT_MS + 1s`, maksimum 8s. */
@@ -590,9 +730,9 @@ function clip(value: string, max: number): string {
   return value.length > max ? value.slice(0, max) : value;
 }
 
-type AiLogSource = 'AI_TITLE' | 'AI_TEMPLATE';
+export type AiLogSource = 'AI_TITLE' | 'AI_TEMPLATE' | 'AI_ADMIN' | 'AI_ASSISTANT';
 
-async function logAi(
+export async function logAi(
   tone: 'ok' | 'info' | 'muted' | 'error',
   message: string,
   source: AiLogSource = 'AI_TITLE'

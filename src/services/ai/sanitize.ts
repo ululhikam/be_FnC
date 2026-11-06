@@ -309,3 +309,120 @@ function clampConfidence(raw: unknown): number {
   if (!Number.isFinite(value)) return 0.5;
   return Math.min(1, Math.max(0, Math.round(value * 100) / 100));
 }
+
+// ── Asisten konsol Super Admin ─────────────────────────────────────────────
+
+export const ASSISTANT_REPLY_MAX_CHARS = 1200;
+export const ASSISTANT_VALUE_MAX_CHARS = 500;
+export const ASSISTANT_MAX_SUGGESTIONS = 12;
+export const ASSISTANT_MAX_REASON_CHARS = 160;
+
+export interface AssistantFieldSpec {
+  name: string;
+  type?: string;
+}
+
+export interface AssistantSuggestion {
+  field: string;
+  value: string;
+  reason: string | null;
+}
+
+export interface AssistantOutput {
+  reply: string;
+  suggestions: AssistantSuggestion[];
+}
+
+/**
+ * Bersihkan jawaban asisten konsol.
+ *
+ * Hanya field yang benar-benar ada di formulir yang boleh diusulkan — model
+ * tidak bisa "mengarang" nama field baru. Nilai numerik dipaksa berisi angka
+ * saja supaya tidak ada teks yang masuk ke input angka lalu gagal validasi.
+ * Mengembalikan `null` bila tidak ada isi yang berguna.
+ */
+export function sanitizeAssistantOutput(
+  raw: unknown,
+  allowed: AssistantFieldSpec[]
+): AssistantOutput | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const source = raw as Record<string, unknown>;
+
+  const reply = cleanAssistantReply(source.reply);
+  const allowedByName = new Map(
+    (Array.isArray(allowed) ? allowed : [])
+      .map((field) => [String(field?.name || '').trim(), String(field?.type || 'text')] as const)
+      .filter(([name]) => Boolean(name))
+  );
+
+  const seen = new Set<string>();
+  const suggestions: AssistantSuggestion[] = [];
+  const list = Array.isArray(source.suggestions) ? source.suggestions : [];
+
+  for (const item of list) {
+    if (suggestions.length >= ASSISTANT_MAX_SUGGESTIONS) break;
+    if (!item || typeof item !== 'object') continue;
+
+    const entry = item as Record<string, unknown>;
+    const field = String(entry.field ?? '').trim();
+    if (!field || seen.has(field) || !allowedByName.has(field)) continue;
+
+    const value = cleanAssistantValue(entry.value, allowedByName.get(field) || 'text');
+    if (!value) continue;
+
+    seen.add(field);
+    suggestions.push({
+      field,
+      value,
+      reason: cleanOneLine(entry.reason, ASSISTANT_MAX_REASON_CHARS) || null,
+    });
+  }
+
+  if (!reply && !suggestions.length) return null;
+  return { reply, suggestions };
+}
+
+/** Balasan boleh beberapa baris, tetapi tetap dibatasi panjangnya. */
+function cleanAssistantReply(raw: unknown): string {
+  const text = String(raw ?? '')
+    .normalize('NFC')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[*_`#>]+/g, '')
+    .replace(/[^\S\n]+$/gm, '')
+    .trim();
+
+  if (!text) return '';
+  const lines = text.split('\n').slice(0, 8);
+  return truncateAtWord(lines.join('\n').trim(), ASSISTANT_REPLY_MAX_CHARS);
+}
+
+/**
+ * Nilai field: tanpa markup/emoji/kontrol. Untuk field angka, hanya digit yang
+ * dipertahankan (pemisah ribuan dibuang) agar cocok dengan input `type=number`.
+ */
+function cleanAssistantValue(raw: unknown, type: string): string {
+  const text = String(raw ?? '')
+    .normalize('NFC')
+    .replace(ZERO_WIDTH_RE, '')
+    .replace(CONTROL_RE, ' ')
+    .replace(TAG_RE, ' ')
+    .replace(EMOJI_RE, '')
+    .trim();
+
+  if (!text) return '';
+
+  if (type === 'number') {
+    const digits = text.replace(/[^\d]/g, '');
+    return digits ? digits.slice(0, 18) : '';
+  }
+
+  const cleaned = text
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+    .replace(/^["'“”‘’(\[]+|["'“”‘’)\]]+$/g, '');
+
+  return truncateAtWord(cleaned, ASSISTANT_VALUE_MAX_CHARS);
+}

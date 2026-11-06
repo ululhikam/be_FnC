@@ -17,6 +17,7 @@ import { parseMidtransDate } from '../utils/midtrans-date.util.js';
 import { CouponService } from './coupon.service.js';
 import { CtfWalletService } from './ctf-wallet.service.js';
 import { MidtransError, MidtransService } from './midtrans.service.js';
+import { PaymentGatewayService } from './payment-gateway.service.js';
 import { PaymentPackageService } from './payment-package.service.js';
 
 export type PaymentUser = {
@@ -164,6 +165,9 @@ export class PaymentService {
       base_revenue_per_paid_fess_idr: BASE_REVENUE_PER_FESS_IDR,
       packages: await PaymentPackageService.listActive(),
       methods: offeredPaymentMethods(),
+      // Mode gateway bersifat platform-wide. Frontend memakai `snap_popup_ready`
+      // untuk memutuskan popup atau redirect tanpa pernah melihat Server Key.
+      gateway: await PaymentGatewayService.getConfig(),
     };
   }
 
@@ -208,6 +212,10 @@ export class PaymentService {
       return { order: this.serializeOrder(existing), idempotent: true };
     }
 
+    // Dibaca fresh (tanpa cache) supaya perubahan toggle Super Admin langsung
+    // berlaku untuk order berikutnya. Nilai ini disimpan sebagai snapshot.
+    const gatewayMode = await PaymentGatewayService.getMode({ fresh: true });
+
     const orderId = `FNC-${Date.now().toString(36).toUpperCase()}-${crypto
       .randomBytes(5)
       .toString('hex')
@@ -248,6 +256,7 @@ export class PaymentService {
             status: PaymentOrderStatus.PENDING,
             paymentMethod: method.code,
             paymentChannel: paymentChannelFor(method.code),
+            gatewayMode,
             expiresAt: initialExpiry,
           },
         });
@@ -271,29 +280,51 @@ export class PaymentService {
       throw error;
     }
 
-    let result;
+    const chargeInput = {
+      orderId: order.orderId,
+      amountIdr: order.amountIdr,
+      packageCode: order.packageCode,
+      packageName: order.packageName,
+      method: method.code,
+      customer: { name: user.username, email: user.email },
+    };
+
+    let result: Awaited<ReturnType<typeof MidtransService.charge>> | null = null;
+    let snapResult: Awaited<ReturnType<typeof MidtransService.createSnapTransaction>> | null = null;
     try {
-      result = await MidtransService.charge({
-        orderId: order.orderId,
-        amountIdr: order.amountIdr,
-        packageCode: order.packageCode,
-        packageName: order.packageName,
-        method: method.code,
-        customer: { name: user.username, email: user.email },
-      });
+      if (gatewayMode === 'snap') {
+        snapResult = await MidtransService.createSnapTransaction(chargeInput);
+      } else {
+        result = await MidtransService.charge(chargeInput);
+      }
     } catch (error) {
       const midtransError = error instanceof MidtransError ? error : null;
       const details = midtransError?.details as
-        | { httpStatus?: number; status_code?: unknown; status_message?: unknown }
+        | {
+            httpStatus?: number;
+            status_code?: unknown;
+            status_message?: unknown;
+            error_messages?: unknown;
+          }
         | undefined;
       const httpStatus = Number(details?.httpStatus);
       const bodyStatus = Number(details?.status_code);
-      const midtransMessage = String(details?.status_message ?? midtransError?.message ?? '');
+      const errorMessages = Array.isArray(details?.error_messages)
+        ? details.error_messages.map((message) => String(message)).filter(Boolean)
+        : [];
+      const midtransMessage = String(
+        details?.status_message ?? errorMessages[0] ?? midtransError?.message ?? ''
+      );
       // Midtrans bisa membalas HTTP 200 dengan `status_code` 4xx di body
       // (channel belum aktif). Itu penolakan pasti, bukan status tak pasti,
       // jadi order harus FAILED agar user tidak menunggu pembayaran hantu.
       const explicitRejection =
-        (httpStatus >= 400 && httpStatus < 500) || (bodyStatus >= 400 && bodyStatus < 500);
+        (httpStatus >= 400 && httpStatus < 500) ||
+        (bodyStatus >= 400 && bodyStatus < 500) ||
+        // Snap hanya punya dua hasil: token dibuat, atau tidak. Kegagalan
+        // membuat token berarti tidak ada tagihan yang bisa dibayar, jadi
+        // jangan biarkan order menggantung PENDING tanpa token.
+        (gatewayMode === 'snap' && midtransError?.code === 'MIDTRANS_SNAP_FAILED');
       const channelInactive =
         bodyStatus === 402 ||
         httpStatus === 402 ||
@@ -313,7 +344,9 @@ export class PaymentService {
               charge_error: {
                 code: midtransError?.code || 'MIDTRANS_ERROR',
                 message: midtransError?.message || 'Gagal membuat transaksi Midtrans',
+                gateway_mode: gatewayMode,
                 httpStatus: httpStatus || null,
+                error_messages: errorMessages,
               },
             } as Prisma.InputJsonValue,
           },
@@ -334,6 +367,32 @@ export class PaymentService {
           409
         );
       }
+      throw paymentError(
+        'PAYMENT_GATEWAY_UNAVAILABLE',
+        'Layanan pembayaran sedang tidak dapat dihubungi. Tidak ada tagihan yang dibuat; ' +
+          'coba lagi beberapa saat lagi.',
+        503
+      );
+    }
+
+    // Snap: simpan token + redirect URL. Status pembayaran tetap ditentukan
+    // webhook / Status API, bukan callback popup di browser.
+    if (snapResult) {
+      const updated = await prisma.paymentOrder.update({
+        where: { id: order.id },
+        data: {
+          midtransStatus: 'pending',
+          snapToken: snapResult.token,
+          snapRedirectUrl: snapResult.redirectUrl,
+          rawResponse: snapResult.raw as Prisma.InputJsonValue,
+          expiresAt: initialExpiry,
+          lastSyncedAt: new Date(),
+        },
+      });
+      return { order: this.serializeOrder(updated), idempotent: false };
+    }
+
+    if (!result) {
       throw paymentError(
         'PAYMENT_GATEWAY_UNAVAILABLE',
         'Layanan pembayaran sedang tidak dapat dihubungi. Tidak ada tagihan yang dibuat; ' +
@@ -992,9 +1051,22 @@ export class PaymentService {
     const canPay =
       order.status === PaymentOrderStatus.PENDING &&
       (!expiresAt || expiresAt.getTime() > Date.now());
+    // Order lama tidak punya `gatewayMode`; perlakukan sebagai Core API agar
+    // tampilannya tidak berubah setelah mode global dipindah ke Snap.
+    const gatewayMode = order.gatewayMode === 'snap' ? 'snap' : 'core_api';
 
     let instructions: Record<string, unknown> | null = null;
-    if (method?.code === 'qris') {
+    if (gatewayMode === 'snap') {
+      instructions = order.snapToken
+        ? {
+            type: 'snap',
+            token: order.snapToken,
+            redirect_url: order.snapRedirectUrl,
+            client_key: ENV.MIDTRANS_CLIENT_KEY || null,
+            script_url: MidtransService.snapScriptUrl(),
+          }
+        : null;
+    } else if (method?.code === 'qris') {
       instructions = {
         type: 'qris',
         qr_string: order.qrString,
@@ -1027,6 +1099,7 @@ export class PaymentService {
       original_amount_idr: order.amountIdr + order.discountIdr,
       currency: order.currency,
       status: order.status.toLowerCase(),
+      gateway_mode: gatewayMode,
       payment_method: order.paymentMethod,
       payment_method_label: method?.label ?? null,
       payment_channel: order.paymentChannel,

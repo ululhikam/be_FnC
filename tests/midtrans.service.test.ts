@@ -77,6 +77,130 @@ describe('MidtransService', () => {
     );
   });
 
+  it('maps each supported payment method to Snap enabled_payments', () => {
+    const base = {
+      orderId: 'FNC-ORDER-SNAP',
+      amountIdr: 10000,
+      packageCode: 'hemat',
+      packageName: 'Hemat',
+      customer: { name: 'tester', email: 'tester@example.com' },
+    } as const;
+
+    const enabled = (method: any) =>
+      (MidtransService.buildSnapPayload({ ...base, method }).enabled_payments as string[])[0];
+
+    expect(enabled('qris')).toBe('other_qris');
+    expect(enabled('mandiri_bill')).toBe('echannel');
+    expect(enabled('cimb_va')).toBe('cimb_va');
+    expect(enabled('bca_va')).toBe('bca_va');
+    expect(enabled('bni_va')).toBe('bni_va');
+    expect(enabled('bri_va')).toBe('bri_va');
+    expect(enabled('permata_va')).toBe('permata_va');
+    expect(enabled('gopay')).toBe('gopay');
+    expect(enabled('shopeepay')).toBe('shopeepay');
+
+    const payload = MidtransService.buildSnapPayload({ ...base, method: 'qris' });
+    expect(payload.transaction_details).toEqual({
+      order_id: 'FNC-ORDER-SNAP',
+      gross_amount: 10000,
+    });
+    expect(payload.payment_type).toBeUndefined();
+    expect((payload.callbacks as any).finish).toContain('FNC-ORDER-SNAP');
+  });
+
+  it('creates a Snap transaction and returns the token and redirect URL', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          token: 'snap-token-1',
+          redirect_url: 'https://app.sandbox.midtrans.com/snap/v3/redirection/abc',
+        }),
+        { status: 201, headers: { 'Content-Type': 'application/json' } }
+      )
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await MidtransService.createSnapTransaction({
+      orderId: 'FNC-ORDER-SNAP',
+      amountIdr: 5000,
+      packageCode: 'coba_dulu',
+      packageName: 'Coba Dulu',
+      method: 'qris',
+      customer: { name: 'tester', email: 'tester@example.com' },
+    });
+
+    expect(result.token).toBe('snap-token-1');
+    expect(result.redirectUrl).toBe('https://app.sandbox.midtrans.com/snap/v3/redirection/abc');
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0][0])).toContain(
+      'app.sandbox.midtrans.com/snap/v1/transactions'
+    );
+    const auth = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
+    expect(auth.Authorization).toMatch(/^Basic /);
+    expect(auth.Authorization).not.toContain(ENV.MIDTRANS_SERVER_KEY);
+  });
+
+  it('surfaces Snap error_messages and rejects a response without a token', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            error_messages: ['Payment channel is not activated.'],
+          }),
+          { status: 401, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    );
+
+    const promise = MidtransService.createSnapTransaction({
+      orderId: 'FNC-ORDER-SNAP',
+      amountIdr: 5000,
+      packageCode: 'coba_dulu',
+      packageName: 'Coba Dulu',
+      method: 'bca_va',
+      customer: { name: 'tester' },
+    });
+
+    await expect(promise).rejects.toMatchObject({
+      code: 'MIDTRANS_SNAP_FAILED',
+      details: expect.objectContaining({
+        httpStatus: 401,
+        error_messages: ['Payment channel is not activated.'],
+      }),
+    });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ token: 'only-token' }), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      )
+    );
+
+    await expect(
+      MidtransService.createSnapTransaction({
+        orderId: 'FNC-ORDER-SNAP',
+        amountIdr: 5000,
+        packageCode: 'coba_dulu',
+        packageName: 'Coba Dulu',
+        method: 'bca_va',
+        customer: { name: 'tester' },
+      })
+    ).rejects.toMatchObject({ code: 'MIDTRANS_SNAP_FAILED' });
+  });
+
+  it('points snap.js at the active Midtrans environment', () => {
+    ENV.MIDTRANS_IS_PRODUCTION = false;
+    expect(MidtransService.snapScriptUrl()).toBe(
+      'https://app.sandbox.midtrans.com/snap/snap.js'
+    );
+    ENV.MIDTRANS_IS_PRODUCTION = true;
+    expect(MidtransService.snapScriptUrl()).toBe('https://app.midtrans.com/snap/snap.js');
+  });
+
   it('verifies the SHA512 notification signature in constant time', () => {
     const serverKey = ENV.MIDTRANS_SERVER_KEY;
     const payload = {

@@ -32,6 +32,12 @@ export type MidtransChargeResult = {
   raw: Record<string, unknown>;
 };
 
+export type MidtransSnapResult = {
+  token: string;
+  redirectUrl: string;
+  raw: Record<string, unknown>;
+};
+
 export class MidtransError extends Error {
   status: number;
   code: string;
@@ -94,6 +100,29 @@ function baseUrl() {
     : 'https://api.sandbox.midtrans.com/v2';
 }
 
+function snapBaseUrl() {
+  return ENV.MIDTRANS_IS_PRODUCTION
+    ? 'https://app.midtrans.com/snap/v1'
+    : 'https://app.sandbox.midtrans.com/snap/v1';
+}
+
+/**
+ * Nilai `enabled_payments` Snap untuk setiap metode katalog. Pemetaan ini
+ * berbeda dari `payment_type` Core API: QRIS memakai `other_qris`, dan
+ * Mandiri Bill memakai `echannel`.
+ */
+const SNAP_ENABLED_PAYMENTS: Record<PaymentMethodCode, string> = {
+  qris: 'other_qris',
+  bca_va: 'bca_va',
+  bni_va: 'bni_va',
+  bri_va: 'bri_va',
+  cimb_va: 'cimb_va',
+  permata_va: 'permata_va',
+  mandiri_bill: 'echannel',
+  gopay: 'gopay',
+  shopeepay: 'shopeepay',
+};
+
 function callbackUrl(orderId: string) {
   const base = ENV.FRONTEND_URL.replace(/\/$/, '');
   return `${base}/wallet?payment=finish&order_id=${encodeURIComponent(orderId)}`;
@@ -111,6 +140,13 @@ export class MidtransService {
   /** Signature Secret Key sudah diisi (verifikasi tidak bergantung Server Key). */
   static hasSignatureSecret() {
     return Boolean(ENV.MIDTRANS_SIGNATURE_SECRET.trim());
+  }
+
+  /** URL snap.js untuk environment yang sedang aktif (production/sandbox). */
+  static snapScriptUrl() {
+    return ENV.MIDTRANS_IS_PRODUCTION
+      ? 'https://app.midtrans.com/snap/snap.js'
+      : 'https://app.sandbox.midtrans.com/snap/snap.js';
   }
 
   static buildChargePayload(input: MidtransChargeInput): Record<string, unknown> {
@@ -183,6 +219,109 @@ export class MidtransService {
     }
 
     return payload;
+  }
+
+  /**
+   * Payload Snap. `enabled_payments` tetap diisi dengan metode yang dipilih
+   * pengguna supaya popup Snap tidak menampilkan kanal lain dan pilihan di
+   * aplikasi tetap bermakna.
+   */
+  static buildSnapPayload(input: MidtransChargeInput): Record<string, unknown> {
+    const enabledPayment = SNAP_ENABLED_PAYMENTS[input.method];
+    if (!enabledPayment) {
+      throw new MidtransError('INVALID_PAYMENT_METHOD', 'Metode pembayaran tidak didukung', 400);
+    }
+
+    return {
+      transaction_details: {
+        order_id: input.orderId,
+        gross_amount: input.amountIdr,
+      },
+      item_details: [
+        {
+          id: input.packageCode,
+          price: input.amountIdr,
+          quantity: 1,
+          name: input.packageName.slice(0, 50),
+        },
+      ],
+      customer_details: {
+        first_name: input.customer.name.slice(0, 50),
+        ...(input.customer.email ? { email: input.customer.email } : {}),
+      },
+      enabled_payments: [enabledPayment],
+      callbacks: {
+        finish: callbackUrl(input.orderId),
+      },
+      expiry: { unit: 'hours', duration: 24 },
+      custom_field1: 'ctf_topup',
+      custom_field2: input.packageCode,
+    };
+  }
+
+  /**
+   * Buat transaksi Snap (popup). Respons sukses berisi `token` dan
+   * `redirect_url`; status pembayaran tetap ditentukan oleh webhook/Status API.
+   */
+  static async createSnapTransaction(input: MidtransChargeInput): Promise<MidtransSnapResult> {
+    assertConfigured();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    let response: Response;
+    try {
+      response = await fetch(`${snapBaseUrl()}/transactions`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          Authorization: basicAuthHeader(),
+        },
+        body: JSON.stringify(this.buildSnapPayload(input)),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      const isAbort = error instanceof Error && error.name === 'AbortError';
+      throw new MidtransError(
+        isAbort ? 'MIDTRANS_TIMEOUT' : 'MIDTRANS_NETWORK_ERROR',
+        isAbort
+          ? 'Midtrans tidak merespons tepat waktu'
+          : 'Tidak dapat terhubung ke Midtrans',
+        502
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    const text = await response.text();
+    let raw: Record<string, unknown> = {};
+    try {
+      raw = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+    } catch {
+      raw = { raw_text: text.slice(0, 2000) };
+    }
+
+    const errorMessages = Array.isArray(raw.error_messages)
+      ? raw.error_messages.map((message) => String(message)).filter(Boolean)
+      : [];
+    const token = typeof raw.token === 'string' ? raw.token : '';
+    const redirectUrl = typeof raw.redirect_url === 'string' ? raw.redirect_url : '';
+
+    if (!response.ok || !token || !redirectUrl) {
+      throw new MidtransError(
+        'MIDTRANS_SNAP_FAILED',
+        errorMessages[0] || 'Midtrans menolak permintaan pembayaran',
+        502,
+        {
+          httpStatus: response.status,
+          error_messages: errorMessages,
+          status_code: raw.status_code,
+          status_message: raw.status_message,
+        }
+      );
+    }
+
+    return { token, redirectUrl, raw };
   }
 
   static async charge(input: MidtransChargeInput): Promise<MidtransChargeResult> {

@@ -3,6 +3,7 @@ import { AdminController } from '../controllers/admin.controller.js';
 import { BaseRevenueController } from '../controllers/base-revenue.controller.js';
 import { CouponController } from '../controllers/coupon.controller.js';
 import { PlatformAdminController } from '../controllers/platform-admin.controller.js';
+import { PaymentGatewayController } from '../controllers/payment-gateway.controller.js';
 import { PaymentPackageController } from '../controllers/payment-package.controller.js';
 import { TemplateAdminController } from '../controllers/template-admin.controller.js';
 import {
@@ -33,6 +34,7 @@ import {
   AdminPaymentPackageCreateSchema,
   AdminPaymentPackageUpdateSchema,
   AdminPaymentPackageStatusSchema,
+  AdminPaymentGatewaySchema,
   AdminCouponCreateSchema,
   AdminCouponUpdateSchema,
   AdminCouponStatusSchema,
@@ -440,6 +442,33 @@ router.post(
   }),
   validateBody(AdminPaymentPackageStatusSchema),
   PaymentPackageController.setStatus
+);
+
+// ---------------------------------------------------------------------------
+// Mode gateway pembayaran (Core API vs Snap). Perubahan memengaruhi cara
+// transaksi baru dibuat, jadi wajib re-auth + alasan dan dicatat di audit.
+// Order lama tetap memakai snapshot `gatewayMode` masing-masing.
+// ---------------------------------------------------------------------------
+router.get(
+  '/payments/gateway',
+  requireAuth,
+  requireRole('Super Admin'),
+  PaymentGatewayController.show
+);
+
+router.patch(
+  '/payments/gateway',
+  requireAuth,
+  requireRole('Super Admin'),
+  paymentRateLimit({
+    name: 'payment-gateway-mode',
+    limit: 10,
+    windowSeconds: 60,
+    message: 'Terlalu banyak perubahan mode gateway. Coba lagi beberapa saat.',
+    code: 'PAYMENT_GATEWAY_RATE_LIMITED',
+  }),
+  validateBody(AdminPaymentGatewaySchema),
+  PaymentGatewayController.update
 );
 
 // ---------------------------------------------------------------------------

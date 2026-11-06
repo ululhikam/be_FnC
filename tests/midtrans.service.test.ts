@@ -49,6 +49,36 @@ describe('MidtransService', () => {
     expect(payload.custom_field2).toBe('coba_dulu');
   });
 
+  it('caps the payment window of every Core API method at 10 minutes', () => {
+    const base = {
+      orderId: 'FNC-ORDER-EXP',
+      amountIdr: 10000,
+      packageCode: 'hemat',
+      packageName: 'Hemat',
+      customer: { name: 'tester' },
+    } as const;
+
+    // Docs Midtrans: `custom_expiry` berlaku untuk semua metode kecuali kartu
+    // kredit, jadi setiap metode katalog memakai batas 10 menit yang sama.
+    for (const method of [
+      'qris',
+      'bca_va',
+      'bni_va',
+      'bri_va',
+      'permata_va',
+      'cimb_va',
+      'mandiri_bill',
+      'gopay',
+      'shopeepay',
+    ]) {
+      const payload = MidtransService.buildChargePayload({ ...base, method: method as any });
+      expect(payload.custom_expiry).toEqual({ expiry_duration: 10, unit: 'minute' });
+      // `expiry` (gaya Snap) tidak dipakai: nilainya divalidasi Core API sebagai
+      // parameter tak dikenal sehingga tidak berpengaruh.
+      expect(payload.expiry).toBeUndefined();
+    }
+  });
+
   it('maps each supported payment method to the right Core API fields', () => {
     const base = {
       orderId: 'FNC-ORDER-2',
@@ -106,6 +136,8 @@ describe('MidtransService', () => {
     });
     expect(payload.payment_type).toBeUndefined();
     expect((payload.callbacks as any).finish).toContain('FNC-ORDER-SNAP');
+    // Snap memakai `expiry` dan unit jamak, batasnya sama: 10 menit.
+    expect(payload.expiry).toEqual({ unit: 'minutes', duration: 10 });
   });
 
   it('creates a Snap transaction and returns the token and redirect URL', async () => {
@@ -308,6 +340,38 @@ describe('MidtransService', () => {
     expect(result.expiresAt?.toISOString()).toBe('2026-10-25T00:00:00.000Z');
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(String(fetchMock.mock.calls[0][0])).toContain('api.sandbox.midtrans.com/v2/charge');
+  });
+
+  it('falls back to a 10 minute expiry when Midtrans omits expiry_time', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            transaction_id: 'tx-2',
+            transaction_status: 'pending',
+            status_code: '201',
+            payment_type: 'bank_transfer',
+          }),
+          { status: 201, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    );
+
+    const before = Date.now();
+    const result = await MidtransService.charge({
+      orderId: 'FNC-ORDER-2',
+      amountIdr: 5000,
+      packageCode: 'coba_dulu',
+      packageName: 'Coba Dulu',
+      method: 'bni_va',
+      customer: { name: 'tester' },
+    });
+    const after = Date.now();
+
+    const expiresAt = result.expiresAt?.getTime() ?? 0;
+    expect(expiresAt).toBeGreaterThanOrEqual(before + 10 * 60 * 1000 - 1000);
+    expect(expiresAt).toBeLessThanOrEqual(after + 10 * 60 * 1000 + 1000);
   });
 
   it('surfaces Midtrans rejection details without leaking the server key', async () => {

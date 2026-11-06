@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { PageQuerySchema } from './pagination.validator.js';
 import { TEMPLATES } from '../constants/templates.js';
+import { PAYMENT_METHOD_CODES } from '../constants/payments.js';
 
 /** Semua key template yang valid — otomatis ikut saat template baru ditambah. */
 const TEMPLATE_KEYS = TEMPLATES.map((t) => t.key) as [string, ...string[]];
@@ -137,6 +138,30 @@ export const AdminPaymentGatewaySchema = z.object({
   mode: z.enum(['core_api', 'snap'], {
     errorMap: () => ({ message: 'Mode gateway harus core_api atau snap' }),
   }),
+  reason: z
+    .string()
+    .trim()
+    .min(5, 'Alasan wajib diisi minimal 5 karakter')
+    .max(500, 'Alasan maksimal 500 karakter'),
+  password: z.string().min(1, 'Konfirmasi kata sandi wajib diisi').max(200),
+});
+
+/** Kode metode untuk validator: seluruh katalog, bukan hanya yang aktif. */
+const paymentMethodCodes = PAYMENT_METHOD_CODES as [string, ...string[]];
+
+/**
+ * Metode pembayaran yang ditawarkan ke pengguna. Super Admin mengirim daftar
+ * lengkap metode yang **aktif**; service menyimpannya sebagai daftar
+ * nonaktif. Re-auth + alasan wajib karena ini mengubah jalur uang.
+ */
+export const AdminPaymentMethodsSchema = z.object({
+  enabled: z
+    .array(
+      z.enum(paymentMethodCodes, {
+        errorMap: () => ({ message: 'Kode metode pembayaran tidak dikenal' }),
+      })
+    )
+    .min(1, 'Minimal satu metode pembayaran harus tetap aktif'),
   reason: z
     .string()
     .trim()

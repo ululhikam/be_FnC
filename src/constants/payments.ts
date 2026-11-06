@@ -97,25 +97,49 @@ export const PAYMENT_METHODS: PaymentMethod[] = [
 ];
 
 /**
- * Semua metode di `PAYMENT_METHODS` ditawarkan ke user.
+ * Batas waktu pembayaran order top-up, dalam menit.
  *
- * Catatan 5 Nov 2026: dashboard Midtrans menandai CIMB Niaga, BNI, BRI, GoPay,
- * Mandiri Bill, dan Permata sebagai Active, tetapi Core API production masih
- * membalas `402 Payment channel is not activated.` untuk semuanya. Karena status
- * dashboard tidak bisa dijadikan patokan, metode tidak lagi disembunyikan:
- * semua ditampilkan, dan bila Midtrans menolak, user menerima pesan yang jelas
- * (`chargeRejectionMessage` di `payment.service.ts`) bukan error mentah.
+ * Nilai ini sengaja berupa konstanta, bukan setting: batas 10 menit adalah
+ * keputusan produk (window pembayaran yang wajar), bukan parameter operasional.
+ * Dipakai di tiga tempat yang harus konsisten:
+ *   - `initialExpiry` order (snapshot `expiresAt` di database),
+ *   - `expiry` payload Snap dan `custom_expiry` payload Core API,
+ *   - fallback `expiresAt` di `mapChargeResponse` saat Midtrans tidak mengirim
+ *     `expiry_time`.
+ */
+export const PAYMENT_EXPIRY_MINUTES = 10;
+
+/**
+ * Katalog penuh. Dipakai untuk membaca order lama dan sebagai sumber daftar
+ * metode yang boleh diaktifkan Super Admin.
  *
- * Kalau nanti ada metode yang harus disembunyikan, filter di
- * `offeredPaymentMethods` dan tolak di `createOrder`.
+ * Catatan 5 Nov 2026: dashboard Midtrans menandai beberapa kanal sebagai Active,
+ * tetapi Core API production masih membalas `402 Payment channel is not
+ * activated.` untuk semuanya. Status dashboard tidak bisa dijadikan patokan,
+ * jadi urusan "kanal mana yang tampil ke user" diserahkan ke toggle Super Admin
+ * (`PaymentMethodService`), bukan ke konstanta ini.
  */
 export function findPaymentMethod(code: string): PaymentMethod | undefined {
   return PAYMENT_METHODS.find((method) => method.code === code);
 }
 
-/** Daftar metode untuk `/payments/packages`: seluruh katalog, tanpa filter. */
-export function offeredPaymentMethods(): PaymentMethod[] {
-  return PAYMENT_METHODS;
+/** Semua kode katalog sebagai tuple, untuk `z.enum` dan validasi input. */
+export const PAYMENT_METHOD_CODES = PAYMENT_METHODS.map((method) => method.code) as [
+  PaymentMethodCode,
+  ...PaymentMethodCode[],
+];
+
+/**
+ * Daftar metode yang ditawarkan ke user, berdasarkan kode yang dinonaktifkan.
+ * Tanpa argumen hasilnya seluruh katalog (dipakai test dan jalur yang belum
+ * membaca setting).
+ */
+export function offeredPaymentMethods(
+  disabledCodes: readonly string[] = []
+): PaymentMethod[] {
+  if (!disabledCodes.length) return PAYMENT_METHODS;
+  const disabled = new Set(disabledCodes);
+  return PAYMENT_METHODS.filter((method) => !disabled.has(method.code));
 }
 
 export const PAYMENT_PACKAGES: PaymentPackage[] = [

@@ -9,6 +9,7 @@ import {
   CTF_PER_PAID_FESS,
   PAYMENT_EXPIRY_MINUTES,
   findPaymentMethod,
+  methodAllowsAmount,
   normalizeCouponCode,
   type PaymentMethod,
   type PaymentMethodCode,
@@ -63,6 +64,11 @@ function paymentError(code: string, message: string, status = 400) {
   return error;
 }
 
+/** Format rupiah untuk pesan error yang dibaca user. */
+function rupiahIdr(value: number) {
+  return `Rp${Math.max(0, Math.round(value)).toLocaleString('id-ID')}`;
+}
+
 function isUniqueConstraintError(error: unknown) {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 }
@@ -99,6 +105,26 @@ function chargeRejectionMessage(method: PaymentMethod): string {
     `${method.label} belum bisa dipakai untuk top-up saat ini karena kanal pembayarannya ` +
     'belum aktif di Midtrans. Tidak ada tagihan yang dibuat dan saldo CTF-mu tidak terpotong. ' +
     'Pilih metode pembayaran lain, atau coba lagi nanti.'
+  );
+}
+
+/**
+ * Tolak metode yang nominalnya di bawah batas minimum (VA bank Rp10.000).
+ * Pesan menyebut nominal yang dibutuhkan supaya user tahu harus pilih paket
+ * berapa, bukan sekadar "gagal".
+ *
+ * `amountLabel` menjelaskan nominal yang dicek ("Paket Hemat (Rp10.000)" atau
+ * "Total setelah kupon (Rp8.000)") agar pesan tidak menyesatkan saat kupon
+ * menurunkan tagihan.
+ */
+function assertMethodAmount(method: PaymentMethod, amountIdr: number, amountLabel: string) {
+  if (methodAllowsAmount(method, amountIdr)) return;
+  throw paymentError(
+    'PAYMENT_METHOD_MIN_AMOUNT',
+    `${method.label} minimal transaksi ${rupiahIdr(method.minAmountIdr as number)}. ` +
+      `${amountLabel} belum mencapai batas itu — pilih paket yang lebih besar, ` +
+      'atau bayar dengan QRIS/e-wallet.',
+    422
   );
 }
 
@@ -172,7 +198,16 @@ export class PaymentService {
       ctf_per_paid_fess: CTF_PER_PAID_FESS,
       base_revenue_per_paid_fess_idr: BASE_REVENUE_PER_FESS_IDR,
       packages: await PaymentPackageService.listActive(),
-      methods,
+      // Urutan sudah mengikuti pilihan Super Admin. `min_amount_idr` dikirim
+      // supaya UI bisa menonaktifkan metode yang tidak memenuhi batas nominal
+      // sebelum user menekan tombol bayar (server tetap memvalidasi ulang).
+      methods: methods.map((method) => ({
+        code: method.code,
+        label: method.label,
+        group: method.group,
+        description: method.description,
+        min_amount_idr: method.minAmountIdr ?? null,
+      })),
       // Mode gateway bersifat platform-wide. Frontend memakai `snap_popup_ready`
       // untuk memutuskan popup atau redirect tanpa pernah melihat Server Key.
       gateway,
@@ -231,6 +266,13 @@ export class PaymentService {
       return { order: this.serializeOrder(existing), idempotent: true };
     }
 
+    // Batas minimum per metode (VA bank Rp10.000). Ditegakkan di server karena
+    // Midtrans menolak tagihan VA di bawah batas tersebut; UI hanya
+    // menonaktifkan tombolnya supaya user tidak menabrak error di akhir.
+    // Diletakkan setelah pemeriksaan idempotensi agar replay request yang sama
+    // tetap mengembalikan order lama, bukan error baru.
+    assertMethodAmount(method, pkg.amountIdr, `Paket ${pkg.name} (${rupiahIdr(pkg.amountIdr)})`);
+
     // Dibaca fresh (tanpa cache) supaya perubahan toggle Super Admin langsung
     // berlaku untuk order berikutnya. Nilai ini disimpan sebagai snapshot.
     const gatewayMode = await PaymentGatewayService.getMode({ fresh: true });
@@ -259,6 +301,12 @@ export class PaymentService {
           discountIdr = reservation.discountIdr;
           couponCode = reservation.code;
         }
+
+        // Kupon bisa menurunkan tagihan di bawah batas minimum metode. Kalau
+        // tidak dicek di sini, order VA tercatat PENDING padahal Midtrans akan
+        // menolaknya. Transaksi di-rollback sehingga kuota kupon tidak terpakai.
+        const payable = pkg.amountIdr - discountIdr;
+        assertMethodAmount(method, payable, `Total setelah kupon (${rupiahIdr(payable)})`);
 
         return tx.paymentOrder.create({
           data: {

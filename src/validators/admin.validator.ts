@@ -250,6 +250,9 @@ const paymentMethodCodes = PAYMENT_METHOD_CODES as [string, ...string[]];
  * Metode pembayaran yang ditawarkan ke pengguna. Super Admin mengirim daftar
  * lengkap metode yang **aktif**; service menyimpannya sebagai daftar
  * nonaktif. Re-auth + alasan wajib karena ini mengubah jalur uang.
+ *
+ * `order` (opsional) mengatur urutan tampil dari atas ke bawah. Kode yang tidak
+ * disebut diletakkan di belakang mengikuti urutan katalog.
  */
 export const AdminPaymentMethodsSchema = z.object({
   enabled: z
@@ -259,6 +262,14 @@ export const AdminPaymentMethodsSchema = z.object({
       })
     )
     .min(1, 'Minimal satu metode pembayaran harus tetap aktif'),
+  order: z
+    .array(
+      z.enum(paymentMethodCodes, {
+        errorMap: () => ({ message: 'Kode metode pembayaran pada urutan tidak dikenal' }),
+      })
+    )
+    .max(PAYMENT_METHOD_CODES.length, 'Urutan metode melebihi jumlah metode di katalog')
+    .optional(),
   reason: z
     .string()
     .trim()

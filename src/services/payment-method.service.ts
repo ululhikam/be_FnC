@@ -12,10 +12,13 @@ import {
  * Metode pembayaran yang ditawarkan ke pengguna.
  * ---------------------------------------------------------------------------
  * Super Admin dapat menyembunyikan metode tertentu tanpa deploy. Setting
- * disimpan di `SystemSetting` (key `payment_methods`) sebagai daftar kode yang
- * **dinonaktifkan**, bukan daftar yang aktif:
- *   - default (belum ada setting) = semua metode tampil, sama seperti dulu;
- *   - metode baru di katalog otomatis tampil.
+ * disimpan di `SystemSetting` (key `payment_methods`):
+ *   - `disabled` = daftar kode yang **dinonaktifkan**. Default (belum ada
+ *     setting) = semua metode tampil, sama seperti dulu; metode baru di katalog
+ *     otomatis tampil.
+ *   - `order` = urutan tampil pilihan Super Admin. Kode yang tidak disebut
+ *     diletakkan di belakang mengikuti urutan katalog, sehingga metode baru
+ *     tetap muncul walau admin belum mengurutkannya.
  *
  * Yang diatur hanyalah tampilan/penawaran. Order lama tetap dibaca memakai
  * katalog penuh (`findPaymentMethod`) sehingga instruksi pembayarannya tidak
@@ -41,17 +44,26 @@ export type PaymentMethodAdminRow = {
   group: string;
   description: string;
   enabled: boolean;
+  /** Nominal paket minimum, `null` bila metode ini tidak punya batas. */
+  min_amount_idr: number | null;
 };
 
 export type PaymentMethodAdminView = {
   source: 'database' | 'default';
   methods: PaymentMethodAdminRow[];
+  /** Urutan tampil yang berlaku (kode, dari atas ke bawah). */
+  order: string[];
   enabled_count: number;
   disabled_count: number;
   /** Batas waktu pembayaran yang berlaku (konstanta, bukan setting). */
   expiry_minutes: number;
   updated_at: string | null;
   updated_by_id: string | null;
+};
+
+type PaymentMethodConfig = {
+  disabled: string[];
+  order: string[];
 };
 
 function fail(status: number, code: string, message: string): never {
@@ -87,6 +99,29 @@ function normalizeDisabled(value: unknown): string[] {
   return [...seen];
 }
 
+/**
+ * Normalisasi urutan tampil. Kode asing dibuang, duplikat diabaikan, dan kode
+ * katalog yang belum disebut ditambahkan di belakang agar daftar selalu
+ * lengkap (tidak ada metode yang hilang hanya karena urutan belum diisi).
+ */
+function normalizeOrder(value: unknown): string[] {
+  const raw =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>).order
+      : value;
+
+  const seen = new Set<string>();
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (isCatalogCode(item)) seen.add(item as string);
+    }
+  }
+  for (const code of CATALOG_CODES) {
+    if (!seen.has(code)) seen.add(code);
+  }
+  return [...seen];
+}
+
 async function readSetting() {
   try {
     return await prisma.systemSetting.findUnique({
@@ -100,21 +135,33 @@ async function readSetting() {
 }
 
 export class PaymentMethodService {
-  /** Kode yang dinonaktifkan. `fresh` dipakai saat membuat order. */
-  static async getDisabledCodes(options: { fresh?: boolean } = {}): Promise<string[]> {
-    if (options.fresh) {
+  /** Konfigurasi metode (nonaktif + urutan). `fresh` dipakai saat membuat order. */
+  static async getConfig(options: { fresh?: boolean } = {}): Promise<PaymentMethodConfig> {
+    const read = async () => {
       const setting = await readSetting();
-      return normalizeDisabled(setting?.value);
-    }
-    return getOrSet(CACHE_KEY, CACHE_TTL_MS, async () => {
-      const setting = await readSetting();
-      return normalizeDisabled(setting?.value);
-    });
+      return {
+        disabled: normalizeDisabled(setting?.value),
+        order: normalizeOrder(setting?.value),
+      };
+    };
+    if (options.fresh) return read();
+    return getOrSet(CACHE_KEY, CACHE_TTL_MS, read);
   }
 
-  /** Metode yang boleh dipilih pengguna pada order baru (urutan katalog). */
+  /** Kode yang dinonaktifkan. `fresh` dipakai saat membuat order. */
+  static async getDisabledCodes(options: { fresh?: boolean } = {}): Promise<string[]> {
+    return (await this.getConfig(options)).disabled;
+  }
+
+  /** Urutan tampil metode dari atas ke bawah (seluruh katalog). */
+  static async getMethodOrder(options: { fresh?: boolean } = {}): Promise<string[]> {
+    return (await this.getConfig(options)).order;
+  }
+
+  /** Metode yang boleh dipilih pengguna pada order baru (urutan pilihan admin). */
   static async getEnabledMethods(options: { fresh?: boolean } = {}) {
-    return offeredPaymentMethods(await this.getDisabledCodes(options));
+    const { disabled, order } = await this.getConfig(options);
+    return offeredPaymentMethods(disabled, order);
   }
 
   /**
@@ -127,24 +174,35 @@ export class PaymentMethodService {
     return !disabled.includes(code);
   }
 
-  /** Payload konsol Super Admin: seluruh katalog beserta status aktifnya. */
+  /** Payload konsol Super Admin: seluruh katalog sesuai urutan, plus status aktif. */
   static async getAdminView(): Promise<PaymentMethodAdminView> {
-    const [setting, disabled] = await Promise.all([
+    const [setting, { disabled, order }] = await Promise.all([
       readSetting(),
-      this.getDisabledCodes({ fresh: true }),
+      this.getConfig({ fresh: true }),
     ]);
     const hidden = new Set(disabled);
-    const methods: PaymentMethodAdminRow[] = PAYMENT_METHODS.map((method) => ({
-      code: method.code,
-      label: method.label,
-      group: method.group,
-      description: method.description,
-      enabled: !hidden.has(method.code),
-    }));
+    const byCode = new Map<string, (typeof PAYMENT_METHODS)[number]>(
+      PAYMENT_METHODS.map((method) => [method.code, method])
+    );
+    const methods: PaymentMethodAdminRow[] = order.flatMap((code) => {
+      const method = byCode.get(code);
+      if (!method) return [];
+      return [
+        {
+          code: method.code,
+          label: method.label,
+          group: method.group,
+          description: method.description,
+          enabled: !hidden.has(method.code),
+          min_amount_idr: method.minAmountIdr ?? null,
+        },
+      ];
+    });
 
     return {
       source: setting ? ('database' as const) : ('default' as const),
       methods,
+      order,
       enabled_count: methods.filter((method) => method.enabled).length,
       disabled_count: methods.filter((method) => !method.enabled).length,
       expiry_minutes: PAYMENT_EXPIRY_MINUTES,
@@ -154,12 +212,18 @@ export class PaymentMethodService {
   }
 
   /**
-   * Simpan daftar metode aktif. `enabled` adalah daftar kode yang dicentang
-   * Super Admin; sisanya disimpan sebagai daftar nonaktif.
+   * Simpan daftar metode aktif dan urutan tampilnya. `enabled` adalah daftar
+   * kode yang dicentang Super Admin; sisanya disimpan sebagai daftar nonaktif.
+   * `order` opsional: bila tidak dikirim, urutan sebelumnya dipertahankan.
    */
   static async setEnabled(
     currentUser: PaymentMethodActor,
-    input: { enabled: string[]; reason: string; password?: string | null },
+    input: {
+      enabled: string[];
+      order?: string[];
+      reason: string;
+      password?: string | null;
+    },
     meta: PaymentMethodRequestMeta = {}
   ) {
     if (currentUser.role !== 'Super Admin') {
@@ -181,28 +245,53 @@ export class PaymentMethodService {
       fail(422, 'PAYMENT_METHODS_EMPTY', 'Minimal satu metode pembayaran harus tetap aktif');
     }
 
+    const previousSetting = await readSetting();
+    const previousDisabled = normalizeDisabled(previousSetting?.value);
+    const previousOrder = normalizeOrder(previousSetting?.value);
+    const previousEnabled = offeredPaymentMethods(previousDisabled, previousOrder).map(
+      (method) => method.code
+    );
+
+    // Urutan divalidasi terhadap katalog, bukan terhadap daftar aktif: admin
+    // boleh mengurutkan metode yang sedang nonaktif agar tidak hilang saat
+    // diaktifkan lagi.
+    let order = previousOrder;
+    if (input.order !== undefined) {
+      if (!Array.isArray(input.order)) {
+        fail(422, 'INVALID_PAYMENT_METHOD_ORDER', 'Urutan metode pembayaran tidak valid');
+      }
+      for (const code of input.order) {
+        if (!isCatalogCode(code)) {
+          fail(
+            422,
+            'INVALID_PAYMENT_METHOD_ORDER',
+            `Metode pembayaran tidak dikenal pada urutan: ${String(code)}`
+          );
+        }
+      }
+      order = normalizeOrder(input.order);
+    }
+
     const cleanReason = String(input.reason ?? '').trim();
     if (cleanReason.length < 5) {
       fail(422, 'REASON_REQUIRED', 'Alasan perubahan metode wajib diisi minimal 5 karakter');
     }
 
-    const previousSetting = await readSetting();
-    const previousDisabled = normalizeDisabled(previousSetting?.value);
-    const previousEnabled = offeredPaymentMethods(previousDisabled).map((method) => method.code);
     // Disimpan sebagai daftar nonaktif agar metode baru di katalog otomatis
     // tampil tanpa perlu diaktifkan manual.
     const disabled = CATALOG_CODES.filter((code) => !enabled.has(code));
+    const value = { disabled, order };
 
     await prisma.systemSetting.upsert({
       where: { key: PAYMENT_METHODS_SETTING_KEY },
       create: {
         key: PAYMENT_METHODS_SETTING_KEY,
-        value: { disabled },
-        description: 'Metode pembayaran yang disembunyikan dari pengguna',
+        value,
+        description: 'Metode pembayaran yang disembunyikan dari pengguna dan urutan tampilnya',
         updatedById: currentUser.id,
       },
       update: {
-        value: { disabled },
+        value,
         updatedById: currentUser.id,
       },
     });
@@ -217,6 +306,8 @@ export class PaymentMethodService {
         previous_enabled: previousEnabled,
         enabled: [...enabled],
         disabled,
+        previous_order: previousOrder,
+        order,
       },
       ipAddress: meta.ipAddress,
       userAgent: meta.userAgent,

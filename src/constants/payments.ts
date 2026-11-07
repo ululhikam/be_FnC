@@ -33,7 +33,21 @@ export type PaymentMethod = {
   label: string;
   group: 'qris' | 'va' | 'ewallet';
   description: string;
+  /**
+   * Nominal paket terendah yang boleh dibayar dengan metode ini. `undefined`
+   * berarti tanpa batas khusus (hanya batas Midtrans `MIN_CHARGEABLE_IDR`).
+   */
+  minAmountIdr?: number;
 };
+
+/**
+ * Minimum transaksi untuk Virtual Account / bill payment.
+ *
+ * Midtrans menolak tagihan VA di bawah Rp10.000, jadi batas ini ditegakkan di
+ * katalog (bukan di UI saja) supaya klien lama dan request manual ikut ditolak
+ * sebelum order dibuat. QRIS dan e-wallet tidak punya batas ini.
+ */
+export const VA_MIN_AMOUNT_IDR = 10_000;
 
 /**
  * Katalog semua metode yang dikenal kode: dipakai untuk menampilkan pilihan ke
@@ -51,36 +65,42 @@ export const PAYMENT_METHODS: PaymentMethod[] = [
     label: 'BCA Virtual Account',
     group: 'va',
     description: 'Bayar dari m-BCA atau ATM BCA.',
+    minAmountIdr: VA_MIN_AMOUNT_IDR,
   },
   {
     code: 'bni_va',
     label: 'BNI Virtual Account',
     group: 'va',
     description: 'Bayar dari mobile banking atau ATM BNI.',
+    minAmountIdr: VA_MIN_AMOUNT_IDR,
   },
   {
     code: 'bri_va',
     label: 'BRI Virtual Account',
     group: 'va',
     description: 'Bayar dari BRImo atau ATM BRI.',
+    minAmountIdr: VA_MIN_AMOUNT_IDR,
   },
   {
     code: 'cimb_va',
     label: 'CIMB Niaga Virtual Account',
     group: 'va',
     description: 'Bayar dari OCTO Mobile atau ATM CIMB Niaga.',
+    minAmountIdr: VA_MIN_AMOUNT_IDR,
   },
   {
     code: 'permata_va',
     label: 'Permata Virtual Account',
     group: 'va',
     description: 'Bayar dari PermataMobile atau ATM Permata.',
+    minAmountIdr: VA_MIN_AMOUNT_IDR,
   },
   {
     code: 'mandiri_bill',
     label: 'Mandiri Bill Payment',
     group: 'va',
     description: 'Bayar lewat Livin\' atau ATM Mandiri dengan kode billing.',
+    minAmountIdr: VA_MIN_AMOUNT_IDR,
   },
   {
     code: 'gopay',
@@ -133,13 +153,38 @@ export const PAYMENT_METHOD_CODES = PAYMENT_METHODS.map((method) => method.code)
  * Daftar metode yang ditawarkan ke user, berdasarkan kode yang dinonaktifkan.
  * Tanpa argumen hasilnya seluruh katalog (dipakai test dan jalur yang belum
  * membaca setting).
+ *
+ * `orderedCodes` adalah urutan tampil pilihan Super Admin. Kode yang tidak
+ * disebut diletakkan di belakang mengikuti urutan katalog, sehingga metode baru
+ * tetap muncul walau admin belum mengurutkannya.
  */
 export function offeredPaymentMethods(
-  disabledCodes: readonly string[] = []
+  disabledCodes: readonly string[] = [],
+  orderedCodes: readonly string[] = []
 ): PaymentMethod[] {
-  if (!disabledCodes.length) return PAYMENT_METHODS;
   const disabled = new Set(disabledCodes);
-  return PAYMENT_METHODS.filter((method) => !disabled.has(method.code));
+  const visible = PAYMENT_METHODS.filter((method) => !disabled.has(method.code));
+  if (!orderedCodes.length) return visible;
+
+  const rank = new Map<string, number>();
+  orderedCodes.forEach((code, index) => {
+    if (!rank.has(code)) rank.set(code, index);
+  });
+  const fallback = orderedCodes.length;
+  // `sort` stabil di Node modern: kode tanpa urutan mempertahankan urutan katalog.
+  return [...visible].sort(
+    (a, b) => (rank.get(a.code) ?? fallback) - (rank.get(b.code) ?? fallback)
+  );
+}
+
+/**
+ * Apakah nominal tagihan memenuhi batas minimum metode. Dipakai server saat
+ * membuat order dan dikirim ke frontend lewat katalog agar tombol metode bisa
+ * dinonaktifkan sebelum user memilih.
+ */
+export function methodAllowsAmount(method: PaymentMethod, amountIdr: number): boolean {
+  if (!method.minAmountIdr) return true;
+  return Number(amountIdr) >= method.minAmountIdr;
 }
 
 export const PAYMENT_PACKAGES: PaymentPackage[] = [

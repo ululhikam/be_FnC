@@ -127,11 +127,11 @@ describe('PaymentMethodService', () => {
       where: { key: 'payment_methods' },
       create: expect.objectContaining({
         key: 'payment_methods',
-        value: { disabled: ['gopay'] },
+        value: { disabled: ['gopay'], order: ALL_CODES },
         updatedById: 'admin_1',
       }),
       update: expect.objectContaining({
-        value: { disabled: ['gopay'] },
+        value: { disabled: ['gopay'], order: ALL_CODES },
         updatedById: 'admin_1',
       }),
     });
@@ -183,5 +183,81 @@ describe('PaymentMethodService', () => {
     ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
 
     expect(prisma.systemSetting.upsert).not.toHaveBeenCalled();
+  });
+
+  it('applies the display order chosen by the Super Admin', async () => {
+    vi.mocked(prisma.systemSetting.findUnique).mockResolvedValue({
+      value: { disabled: [], order: ['gopay', 'qris', 'bca_va'] },
+    } as any);
+
+    const methods = await PaymentMethodService.getEnabledMethods({ fresh: true });
+    const codes = methods.map((method) => method.code);
+
+    expect(codes.slice(0, 3)).toEqual(['gopay', 'qris', 'bca_va']);
+    // Metode yang belum diurutkan tetap tampil setelahnya, tanpa duplikat.
+    expect(codes).toHaveLength(ALL_CODES.length);
+    expect(new Set(codes).size).toBe(ALL_CODES.length);
+  });
+
+  it('keeps the previous order when only the enabled list is saved', async () => {
+    let stored: any = { value: { disabled: [], order: ['shopeepay', 'qris'] } };
+    vi.mocked(prisma.systemSetting.findUnique).mockImplementation(async () => stored);
+    vi.mocked(prisma.systemSetting.upsert).mockImplementation(async (args: any) => {
+      stored = { value: args.update.value, updatedById: 'admin_1', updatedAt: new Date() };
+      return stored;
+    });
+
+    await PaymentMethodService.setEnabled(superAdmin, {
+      enabled: ALL_CODES.filter((code) => code !== 'gopay'),
+      reason: 'Matikan GoPay sementara',
+      password: 'rahasia',
+    });
+
+    const saved = vi.mocked(prisma.systemSetting.upsert).mock.calls[0][0] as any;
+    expect(saved.update.value.order.slice(0, 2)).toEqual(['shopeepay', 'qris']);
+    expect(saved.update.value.disabled).toEqual(['gopay']);
+  });
+
+  it('stores a new order together with the enabled list', async () => {
+    let stored: any = null;
+    vi.mocked(prisma.systemSetting.findUnique).mockImplementation(async () => stored);
+    vi.mocked(prisma.systemSetting.upsert).mockImplementation(async (args: any) => {
+      stored = { value: args.update.value, updatedById: 'admin_1', updatedAt: new Date() };
+      return stored;
+    });
+
+    const view = await PaymentMethodService.setEnabled(superAdmin, {
+      enabled: ALL_CODES,
+      order: ['qris', 'gopay', 'shopeepay'],
+      reason: 'QRIS dan e-wallet paling sering dipakai',
+      password: 'rahasia',
+    });
+
+    expect(view.order.slice(0, 3)).toEqual(['qris', 'gopay', 'shopeepay']);
+    expect(view.order).toHaveLength(ALL_CODES.length);
+    expect(view.methods[0].code).toBe('qris');
+  });
+
+  it('rejects an unknown code in the order list', async () => {
+    await expect(
+      PaymentMethodService.setEnabled(superAdmin, {
+        enabled: ALL_CODES,
+        order: ['qris', 'bitcoin'],
+        reason: 'Coba urutan tidak dikenal',
+        password: 'rahasia',
+      })
+    ).rejects.toMatchObject({ code: 'INVALID_PAYMENT_METHOD_ORDER', status: 422 });
+
+    expect(prisma.systemSetting.upsert).not.toHaveBeenCalled();
+  });
+
+  it('exposes the VA minimum amount in the admin view', async () => {
+    const view = await PaymentMethodService.getAdminView();
+    const byCode = new Map(view.methods.map((method) => [method.code, method]));
+
+    expect(byCode.get('bca_va')?.min_amount_idr).toBe(10_000);
+    expect(byCode.get('mandiri_bill')?.min_amount_idr).toBe(10_000);
+    expect(byCode.get('qris')?.min_amount_idr).toBeNull();
+    expect(byCode.get('gopay')?.min_amount_idr).toBeNull();
   });
 });

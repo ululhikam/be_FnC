@@ -285,6 +285,113 @@ describe('PaymentService', () => {
     expect(codes).toContain('bni_va');
   });
 
+  it('follows the display order chosen by the Super Admin', async () => {
+    ENV.PAYMENTS_ENABLED = true;
+    invalidateCache('payment-methods:');
+    vi.mocked(prisma.systemSetting.findUnique).mockImplementation(async (args: any) => {
+      if (args?.where?.key === 'payment_methods') {
+        return {
+          value: {
+            disabled: [],
+            order: ['gopay', 'shopeepay', 'qris', 'bca_va'],
+          },
+          updatedById: 'admin_1',
+          updatedAt: new Date(),
+        } as any;
+      }
+      return null;
+    });
+
+    const { methods } = await PaymentService.getPackages();
+    const codes = methods.map((method) => method.code);
+
+    // Kode yang disebut admin tampil lebih dulu sesuai urutannya.
+    expect(codes.slice(0, 4)).toEqual(['gopay', 'shopeepay', 'qris', 'bca_va']);
+    // Kode yang belum diurutkan tetap muncul, di belakang, mengikuti katalog.
+    expect(codes).toContain('bni_va');
+    expect(codes).toContain('mandiri_bill');
+    expect(codes).toHaveLength(9);
+  });
+
+  it('exposes the per-method minimum amount to the client', async () => {
+    ENV.PAYMENTS_ENABLED = true;
+    invalidateCache('payment-methods:');
+    const { methods } = await PaymentService.getPackages();
+    const byCode = new Map(methods.map((method) => [method.code, method]));
+
+    expect(byCode.get('bca_va')?.min_amount_idr).toBe(10_000);
+    expect(byCode.get('mandiri_bill')?.min_amount_idr).toBe(10_000);
+    expect(byCode.get('qris')?.min_amount_idr).toBeNull();
+    expect(byCode.get('gopay')?.min_amount_idr).toBeNull();
+  });
+
+  it('refuses a VA order below the Rp10.000 minimum', async () => {
+    ENV.PAYMENTS_ENABLED = true;
+
+    // Paket Coba Dulu = Rp5.000, di bawah minimum VA.
+    const promise = PaymentService.createOrder(
+      { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
+      { packageCode: 'coba_dulu', method: 'bni_va', requestKey: 'req-12345678' }
+    );
+
+    await expect(promise).rejects.toMatchObject({
+      code: 'PAYMENT_METHOD_MIN_AMOUNT',
+      status: 422,
+    });
+    await expect(promise).rejects.toThrow(/minimal transaksi Rp10\.000/);
+    await expect(promise).rejects.toThrow(/pilih paket yang lebih besar/);
+    expect(MidtransService.charge).not.toHaveBeenCalled();
+    expect(prisma.paymentOrder.create).not.toHaveBeenCalled();
+  });
+
+  it('still allows the same Rp5.000 package through QRIS', async () => {
+    ENV.PAYMENTS_ENABLED = true;
+    vi.mocked(prisma.paymentOrder.create).mockResolvedValue(order as any);
+    vi.mocked(prisma.paymentOrder.update).mockResolvedValue(order as any);
+
+    const result = await PaymentService.createOrder(
+      { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
+      { packageCode: 'coba_dulu', method: 'qris', requestKey: 'req-12345678' }
+    );
+
+    expect(result.order.order_id).toBe(order.orderId);
+    expect(MidtransService.charge).toHaveBeenCalledOnce();
+  });
+
+  it('rejects a VA order whose coupon drops the payable amount below the minimum', async () => {
+    // Paket Rp10.000 dengan kupon Rp2.000 -> tagihan Rp8.000, di bawah minimum VA.
+    vi.mocked(prisma.paymentPackage.findUnique).mockImplementation(async (args: any) => {
+      if (args?.where?.code === 'hemat') {
+        return {
+          ...packageRow,
+          code: 'hemat',
+          name: 'Hemat',
+          amountIdr: 10_000,
+          ctfAmount: 55,
+        } as any;
+      }
+      return args?.where?.code === packageRow.code ? { ...packageRow } : null;
+    });
+    vi.mocked(prisma.coupon.findUnique).mockResolvedValue(couponRow as any);
+
+    await expect(
+      PaymentService.createOrder(
+        { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
+        {
+          packageCode: 'hemat',
+          method: 'bni_va',
+          requestKey: 'req-12345678',
+          couponCode: 'HEMAT10',
+        }
+      )
+    ).rejects.toMatchObject({ code: 'PAYMENT_METHOD_MIN_AMOUNT', status: 422 });
+
+    // Tidak ada order yang tertinggal. Di database nyata transaksi di-rollback
+    // sehingga kuota kupon juga kembali; mock Prisma di sini tidak meniru
+    // rollback, jadi yang diperiksa hanya pembuatan order.
+    expect(prisma.paymentOrder.create).not.toHaveBeenCalled();
+  });
+
   it('gives the order a 10 minute payment window', async () => {
     ENV.PAYMENTS_ENABLED = true;
     vi.mocked(prisma.paymentOrder.create).mockResolvedValue(order as any);
@@ -297,7 +404,7 @@ describe('PaymentService', () => {
     const before = Date.now();
     await PaymentService.createOrder(
       { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
-      { packageCode: 'coba_dulu', method: 'bni_va', requestKey: 'req-12345678' }
+      { packageCode: 'coba_dulu', method: 'qris', requestKey: 'req-12345678' }
     );
     const after = Date.now();
 
@@ -331,7 +438,7 @@ describe('PaymentService', () => {
 
     const result = await PaymentService.createOrder(
       { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
-      { packageCode: 'coba_dulu', method: 'bni_va', requestKey: 'req-12345678' }
+      { packageCode: 'coba_dulu', method: 'qris', requestKey: 'req-12345678' }
     );
 
     expect(result.idempotent).toBe(false);
@@ -368,7 +475,7 @@ describe('PaymentService', () => {
 
     const result = await PaymentService.createOrder(
       { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
-      { packageCode: 'coba_dulu', method: 'bni_va', requestKey: 'req-snap-1234' }
+      { packageCode: 'coba_dulu', method: 'qris', requestKey: 'req-snap-1234' }
     );
 
     expect(snapSpy).toHaveBeenCalledOnce();
@@ -499,7 +606,7 @@ describe('PaymentService', () => {
       { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
       {
         packageCode: 'coba_dulu',
-        method: 'bni_va',
+        method: 'qris',
         requestKey: 'req-12345678',
         couponCode: 'hemat10',
       }
@@ -548,7 +655,7 @@ describe('PaymentService', () => {
         { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
         {
           packageCode: 'coba_dulu',
-          method: 'bni_va',
+          method: 'qris',
           requestKey: 'req-12345678',
           couponCode: 'HEMAT10',
         }
@@ -572,7 +679,7 @@ describe('PaymentService', () => {
         { id: 'usr_1', username: 'tester', email: 'tester@example.com' },
         {
           packageCode: 'coba_dulu',
-          method: 'bni_va',
+          method: 'qris',
           requestKey: 'req-12345678',
           couponCode: 'LAINNYA',
         }

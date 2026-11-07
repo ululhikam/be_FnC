@@ -28,6 +28,7 @@ export class PaymentMethodController {
         req.user,
         {
           enabled: req.body.enabled,
+          order: req.body.order,
           reason: req.body.reason,
           password: req.body.password,
         },
